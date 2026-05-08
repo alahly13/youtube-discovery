@@ -78,6 +78,7 @@ export const YouTubeLocalFilterSchema = z.object({
     language: z.string().nullable().default(null),
     hasThumbnail: z.enum(["any", "yes", "no"]).default("any"),
     hasDescription: z.enum(["any", "yes", "no"]).default("any"),
+    shortsLikeOnly: z.boolean().default(false),
     sort: z
       .enum([
         "api_order",

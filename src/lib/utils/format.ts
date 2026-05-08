@@ -28,6 +28,20 @@ export function formatDuration(seconds: number | null | undefined) {
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
+export function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return "Unknown date";
+  }
+
+  const timestamp = Date.parse(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return "Unknown date";
+  }
+
+  return Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" }).format(timestamp);
+}
+
 export function formatItemType(type: YouTubeDiscoveryItemType) {
   return type
     .split("_")

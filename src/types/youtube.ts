@@ -12,6 +12,7 @@ export const YOUTUBE_ITEM_TYPES = [
 export type YouTubeDiscoveryItemType = (typeof YOUTUBE_ITEM_TYPES)[number];
 
 export type YouTubeSearchResourceType = "video" | "channel" | "playlist";
+export type YouTubeSearchResourceSelection = "ALL" | YouTubeSearchResourceType;
 
 export type YouTubeLiveBroadcastContent = "none" | "live" | "upcoming" | "completed";
 
@@ -92,6 +93,7 @@ export interface YouTubeResultFilters {
   language: string | null;
   hasThumbnail: "any" | "yes" | "no";
   hasDescription: "any" | "yes" | "no";
+  shortsLikeOnly: boolean;
   sort:
     | "api_order"
     | "latest"
@@ -131,6 +133,7 @@ export const DEFAULT_YOUTUBE_RESULT_FILTERS: YouTubeResultFilters = {
   language: null,
   hasThumbnail: "any",
   hasDescription: "any",
+  shortsLikeOnly: false,
   sort: "api_order",
   strictMetadata: false,
 };

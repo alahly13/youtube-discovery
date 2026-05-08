@@ -26,13 +26,13 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
     >
       <body className="min-h-full">
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "try{const t=localStorage.getItem('youtube-discovery-theme');const d=t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches;if(d)document.documentElement.classList.add('dark')}catch{}",
+              "try{const t=localStorage.getItem('youtube-discovery-theme');const d=t?t==='dark':true;document.documentElement.classList.toggle('dark',d)}catch{document.documentElement.classList.add('dark')}",
           }}
         />
         {children}

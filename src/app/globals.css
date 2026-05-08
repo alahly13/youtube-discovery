@@ -23,22 +23,22 @@
 }
 
 .dark {
-  --background: #131318;
-  --foreground: #e4e1e9;
-  --surface: #1b1b20;
-  --surface-muted: #1f1f24;
-  --surface-raised: #2a292f;
-  --border: #35343a;
-  --muted: #c8b8b5;
-  --primary: #ffb3af;
-  --primary-strong: #ff5357;
-  --primary-soft: #5f3e3d;
-  --ai: #d0bcff;
-  --ai-soft: #571bc1;
+  --background: #09090d;
+  --foreground: #f4f4f5;
+  --surface: #111116;
+  --surface-muted: #19191f;
+  --surface-raised: #23232b;
+  --border: #30303a;
+  --muted: #b7b0b6;
+  --primary: #ff2a3d;
+  --primary-strong: #ff0033;
+  --primary-soft: #36161d;
+  --ai: #9b8cff;
+  --ai-soft: #241949;
   --success: #34d399;
   --warning: #fbbf24;
   --danger: #ffb4ab;
-  --ring: #ff5357;
+  --ring: #ff2a3d;
 }
 
 @theme inline {
@@ -68,6 +68,12 @@
 html {
   min-height: 100%;
   background: var(--background);
+  color-scheme: light;
+  scroll-padding-top: 5rem;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 body {
@@ -75,6 +81,23 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
   min-height: 100%;
+}
+
+/* Theme transitions are scoped to paint-level properties so the global dark
+   default can switch smoothly without resizing the dense Search, Watch,
+   Channel, and Playlist workspaces. */
+body,
+.research-surface,
+button,
+input,
+select,
+textarea,
+a {
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    opacity 180ms ease;
 }
 
 button,
@@ -90,6 +113,15 @@ textarea {
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   border: 1px solid var(--border);
   border-radius: 0.75rem;
+}
+
+/* The 12-column workspace grid is shared by the search and viewing routes to
+   keep filters, result cards, players, and sidebars from overlapping across
+   laptop, desktop, and ultra-wide canvases. */
+.workspace-grid-12 {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
 }
 
 .line-clamp-2 {

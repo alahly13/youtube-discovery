@@ -1,4 +1,8 @@
-import type { NormalizedYouTubeDiscoveryItem, YouTubeSearchSettings } from "@/types/youtube";
+import type {
+  NormalizedYouTubeDiscoveryItem,
+  YouTubeSearchResourceSelection,
+  YouTubeSearchSettings,
+} from "@/types/youtube";
 
 export const YOUTUBE_MANIFEST_TYPES = [
   "youtube_search",
@@ -38,23 +42,32 @@ export interface YouTubeManifest {
   platform: "youtube";
   title: string;
   query: string | null;
+  resourceTypes: YouTubeSearchResourceSelection[];
   source: {
     kind: "search" | "channel" | "playlist" | "link" | "collection" | "ai";
     id: string | null;
     label: string;
   };
   searchSettingsSnapshot: Partial<YouTubeSearchSettings> | null;
+  createdAt: string;
+  fetchedAt: string;
+  pageSize: number | null;
   pagesFetched: number;
   nextPageToken: string | null;
   quotaCostEstimate: number;
+  region: string | null;
+  language: string | null;
   status: YouTubeManifestStatus;
   itemCount: number;
+  totalItemsCollected: number;
   uniqueItemCount: number;
   duplicateCount: number;
+  duplicatesCount: number;
   collectedAt: string;
   warnings: YouTubeManifestWarning[];
   errors: YouTubeManifestWarning[];
   normalizedItems: NormalizedYouTubeDiscoveryItem[];
+  items: NormalizedYouTubeDiscoveryItem[];
   saved?: boolean;
 }
 

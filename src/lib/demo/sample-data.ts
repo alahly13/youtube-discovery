@@ -6,6 +6,7 @@ export const sampleManifest: YouTubeManifest = {
   platform: "youtube",
   title: "Sample manifest: YouTube metadata research",
   query: "ai agents 2026",
+  resourceTypes: ["video"],
   source: {
     kind: "search",
     id: "ai agents 2026",
@@ -19,13 +20,20 @@ export const sampleManifest: YouTubeManifest = {
     maxItems: 25,
     order: "relevance",
   },
+  createdAt: new Date("2026-05-08T00:00:00.000Z").toISOString(),
+  fetchedAt: new Date("2026-05-08T00:00:00.000Z").toISOString(),
+  pageSize: 25,
   pagesFetched: 0,
   nextPageToken: null,
   quotaCostEstimate: 0,
+  region: "US",
+  language: "en",
   status: "draft",
   itemCount: 4,
+  totalItemsCollected: 4,
   uniqueItemCount: 4,
   duplicateCount: 0,
+  duplicatesCount: 0,
   collectedAt: new Date("2026-05-08T00:00:00.000Z").toISOString(),
   warnings: [
     {
@@ -136,4 +144,7 @@ export const sampleManifest: YouTubeManifest = {
       rawJson: null,
     },
   ],
+  items: [],
 };
+
+sampleManifest.items = sampleManifest.normalizedItems;

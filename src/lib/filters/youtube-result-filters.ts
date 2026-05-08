@@ -48,6 +48,7 @@ function matchesFilters(item: NormalizedYouTubeDiscoveryItem, filters: YouTubeRe
     matchesOptionalText(item.language, filters.language) &&
     matchesPresence(item.thumbnailUrl, filters.hasThumbnail) &&
     matchesPresence(item.description, filters.hasDescription) &&
+    (!filters.shortsLikeOnly || item.isShortsLike || item.itemType === "shorts_like") &&
     (filters.itemTypes.length === 0 || filters.itemTypes.includes(item.itemType))
   );
 }

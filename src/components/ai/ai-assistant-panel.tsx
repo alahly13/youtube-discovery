@@ -4,7 +4,7 @@ import { Bot, Loader2, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import type { YouTubeManifest } from "@/types/manifest";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
-import type { AiAssistantResponse } from "@/lib/ai/youtube-ai-schemas";
+import type { AiAssistantRequest, AiAssistantResponse } from "@/lib/ai/youtube-ai-schemas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -26,11 +26,12 @@ export function AiAssistantPanel({
 
     try {
       const endpoint = selectedItem ? "/api/ai/youtube-video-explorer" : "/api/ai/youtube-manifest-assistant";
+      const scope = selectedItem ? "selected_video" : getManifestAiScope(manifest.manifestType);
       const result = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scope: selectedItem ? "selected_video" : "current_search_manifest",
+          scope,
           prompt,
           selectedVideoId: selectedItem?.platformItemId,
           manifestSnapshot: {
@@ -52,7 +53,7 @@ export function AiAssistantPanel({
     <Card className="border-ai/30">
       <CardHeader
         title="Scoped AI assistant"
-        eyebrow={selectedItem ? `Selected video: ${selectedItem.platformItemId}` : "Current Search Manifest"}
+        eyebrow={selectedItem ? `Selected video: ${selectedItem.platformItemId}` : getManifestScopeLabel(manifest.manifestType)}
         action={<Badge tone="ai">Grounded only</Badge>}
       />
       <div className="space-y-3">
@@ -94,4 +95,35 @@ export function AiAssistantPanel({
       </div>
     </Card>
   );
+}
+
+function getManifestAiScope(manifestType: YouTubeManifest["manifestType"]): AiAssistantRequest["scope"] {
+  // AI scope follows the active manifest type so Search, Channel, and Playlist
+  // pages cannot accidentally ask the model to reason beyond the current
+  // normalized metadata set.
+  if (manifestType === "youtube_channel_uploads") {
+    return "current_channel_uploads_manifest";
+  }
+
+  if (manifestType === "youtube_playlist") {
+    return "current_playlist_manifest";
+  }
+
+  if (manifestType === "youtube_link_explorer") {
+    return "current_link_explorer_manifest";
+  }
+
+  return "current_search_manifest";
+}
+
+function getManifestScopeLabel(manifestType: YouTubeManifest["manifestType"]) {
+  if (manifestType === "youtube_channel_uploads") {
+    return "Scoped to current channel manifest";
+  }
+
+  if (manifestType === "youtube_playlist") {
+    return "Scoped to current playlist manifest";
+  }
+
+  return "Scoped to current search manifest";
 }

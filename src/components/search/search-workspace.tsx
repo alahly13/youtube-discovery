@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Filter, Loader2, Save, Search } from "lucide-react";
+import { Download, Filter, Loader2, Save, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { YouTubeManifest } from "@/types/manifest";
 import type { NormalizedYouTubeDiscoveryItem, YouTubeResultFilters, YouTubeSearchSettings } from "@/types/youtube";
@@ -37,6 +37,17 @@ export function SearchWorkspace() {
   const [error, setError] = useState<string | null>(null);
 
   const filteredItems = useMemo(() => applyYouTubeResultPipeline(manifest.normalizedItems, filters), [manifest, filters]);
+  // Active chip metadata for the search workspace local-filter bar.
+  // This keeps chip rendering and clear-button behavior bound to the single filters state source of truth,
+  // so quick-clear actions cannot drift into a no-op UI path.
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{ key: "keyword" | "minViews" | "maxViews" | "sort"; label: string }> = [];
+    if (filters.keyword.trim()) chips.push({ key: "keyword", label: `Keyword: ${filters.keyword.trim()}` });
+    if (filters.minViews !== null) chips.push({ key: "minViews", label: `Min views: ${filters.minViews}` });
+    if (filters.maxViews !== null) chips.push({ key: "maxViews", label: `Max views: ${filters.maxViews}` });
+    if (filters.sort !== DEFAULT_YOUTUBE_RESULT_FILTERS.sort) chips.push({ key: "sort", label: `Sort: ${filters.sort.replaceAll("_", " ")}` });
+    return chips;
+  }, [filters]);
 
   async function runSearch() {
     setLoading(true);
@@ -102,6 +113,30 @@ export function SearchWorkspace() {
         </Card>
         <div className="space-y-4 xl:col-span-6">
           <div className="research-surface flex flex-wrap items-center justify-between gap-2 p-4"><p className="text-xs text-muted">local search → local filters → local sort → render</p><div className="flex gap-2"><Badge tone="success">No filter API calls</Badge><Badge>{filteredItems.length} shown</Badge></div></div>
+          {activeFilterChips.length ? (
+            <div className="flex flex-wrap gap-2">
+              {activeFilterChips.map((chip) => (
+                <Badge key={chip.key} className="flex items-center gap-2">
+                  <span>{chip.label}</span>
+                  <button
+                    type="button"
+                    aria-label="clear"
+                    className="rounded-sm p-0.5 transition hover:bg-black/10 dark:hover:bg-white/10"
+                    onClick={() => {
+                      setFilters((current) => {
+                        if (chip.key === "keyword") return { ...current, keyword: "" };
+                        if (chip.key === "minViews") return { ...current, minViews: null };
+                        if (chip.key === "maxViews") return { ...current, maxViews: null };
+                        return { ...current, sort: DEFAULT_YOUTUBE_RESULT_FILTERS.sort };
+                      });
+                    }}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+          ) : null}
           <div className="grid gap-4 md:grid-cols-2">{filteredItems.map((item) => <YouTubeItemCard key={`${item.itemType}-${item.platformItemId}`} item={item} onAiExplore={setSelectedItem} />)}</div>
         </div>
         <div className="xl:col-span-3"><AiAssistantPanel manifest={manifest} selectedItem={selectedItem} /></div>

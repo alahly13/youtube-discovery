@@ -168,7 +168,7 @@ Forbidden public secrets:
 - `src/app/globals.css`: design tokens and global layout safeguards; avoid one-off color systems.
 - `src/app/layout.tsx`: root metadata, fonts, and theme boot script.
 - `src/components/layout/*`: app shell, navigation, theme toggle; keep provider secrets out.
-- `src/components/search/search-workspace.tsx`: main client search experience; local filters do not call YouTube.
+- `src/components/search/search-workspace.tsx`: main client search experience; local filters do not call YouTube, and active filter chips support direct quick-clear mutations on filter state.
 - `src/components/youtube/youtube-item-card.tsx`: video/channel/playlist item card; preserves zero numeric values.
 - `src/components/ai/ai-assistant-panel.tsx`: scoped AI client panel; sends only manifest snapshots.
 - `src/components/manifests/manifest-summary.tsx`: temporary manifest status and quota summary.

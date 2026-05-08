@@ -207,3 +207,79 @@ No migrations created or applied.
 ### Whether `db:apply` was run
 
 No.
+
+## 2026-05-08 (P2 filter-chip clear fix)
+
+### Date/time
+
+2026-05-08 14:42 UTC.
+
+### Agent/model if known
+
+Codex GPT-5.3-Codex.
+
+### Task summary
+
+Fixed local filter active-chip clear controls so clicking each chip clear button actually mutates and clears the corresponding filter.
+
+### Reason/root cause
+
+The local filter chip UI exposed an interactive clear affordance without a functioning state mutation path, creating a misleading no-op clear workflow.
+
+### Files changed
+
+- `src/components/search/search-workspace.tsx`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Added active filter chip derivation from current `filters` state (`keyword`, `minViews`, `maxViews`, non-default `sort`).
+- Added rendered chip clear controls with `aria-label="clear"` and explicit `onClick` handlers that reset only the targeted filter key.
+- Preserved manifest-first boundary: quick-clear is local state mutation only and does not call provider APIs.
+- Added a high-value maintenance comment documenting chip state ownership and no-op regression risk.
+
+### Architecture impact
+
+No architecture redesign. This is a surgical UX/state fix inside the search workspace local filter surface.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact when relevant
+
+None; filter clear remains local-only with zero provider quota usage.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run lint`: passed.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+Only currently exposed filter keys are represented as chips; any future filter fields must be added to the chip mapping to preserve quick-clear parity.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No migrations created or applied.
+
+### Whether `db:apply` was run
+
+No.
+

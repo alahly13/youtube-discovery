@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# youtube-discovery
 
-## Getting Started
+Professional Next.js 16 SaaS workspace for discovering, filtering, saving, exporting, and AI-analyzing public YouTube metadata through official YouTube Data API workflows only.
 
-First, run the development server:
+## Current Stack
 
-```bash
+- Next.js `16.2.6` App Router
+- React `19.2.4`
+- TypeScript strict mode
+- Tailwind CSS 4 CSS-first tokens
+- Prisma 7 schema and migration for Supabase PostgreSQL
+- Zod route validation
+- lucide-react icons
+- Framer Motion, Zustand, TanStack Query, FlexSearch installed for richer follow-on UX/state/search work
+- Google GenAI server-only helper routes
+
+## Local Setup
+
+Use PowerShell from the repo root:
+
+```powershell
+npm install
+Copy-Item .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Set real secrets only in root `.env.local` locally or Vercel Project Settings for deployments. Do not place env files under `src/`; the scripts warn about unsupported `.local.env` and `src/.local.env`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+For a linked Vercel project, sync local envs with:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```powershell
+vercel env pull .env.local --yes
+```
 
-## Learn More
+## Required Environment Variables
 
-To learn more about Next.js, take a look at the following resources:
+Server-only:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `DATABASE_URL`
+- `YOUTUBE_API_KEY`
+- `YOUTUBE_API_BASE_URL`
+- `YOUTUBE_DEFAULT_REGION`
+- `YOUTUBE_DEFAULT_RELEVANCE_LANGUAGE`
+- `YOUTUBE_SEARCH_PAGE_SIZE`
+- `YOUTUBE_SEARCH_MAX_PAGES`
+- `YOUTUBE_SEARCH_MAX_ITEMS`
+- `YOUTUBE_SEARCH_DELAY_MS`
+- `YOUTUBE_SEARCH_CONCURRENCY`
+- `YOUTUBE_DAILY_QUOTA_BUDGET`
+- `ENABLE_YOUTUBE_MANIFEST_PERSISTENCE`
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL`
+- `AI_MANIFEST_MAX_ITEMS`
+- `AI_MANIFEST_MAX_CHARS`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Browser-safe:
 
-## Deploy on Vercel
+- `NEXT_PUBLIC_APP_URL`
+- `NEXT_PUBLIC_SUPABASE_URL` only if client Supabase auth is added
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` only if client Supabase auth is added
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Never create `NEXT_PUBLIC_YOUTUBE_API_KEY` or `NEXT_PUBLIC_GEMINI_API_KEY`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Verification
+
+```powershell
+npm run db:validate
+npm run lint
+npm run typecheck
+npm run build
+```
+
+`npm run db:apply` is guarded and refuses to run unless `CONFIRM_DB_APPLY=true` and a real `DATABASE_URL` are present:
+
+```powershell
+$env:CONFIRM_DB_APPLY="true"; npm run db:apply
+```
+
+Do not run destructive database commands such as `prisma migrate reset`.
+
+## Implemented Surface
+
+- App shell with responsive navigation and theme toggle
+- Dashboard at `/`
+- Search workspace at `/search`
+- AI workspace at `/ai-search`
+- Link Explorer at `/link-explorer`
+- Channels, playlists, manifests, collections, saved library, history, and settings routes
+- Server-only YouTube adapter modules for search/details/channel uploads/playlist flows
+- API routes for YouTube search/details/link/channel/playlist/manifests
+- AI routes for scoped Gemini assistants
+- Prisma 7 schema and initial migration for durable manifest/search/fetch/quota/AI concepts
+
+Live YouTube calls require `YOUTUBE_API_KEY`. Live Gemini calls require `GEMINI_API_KEY`. Missing keys return honest unavailable states instead of crashing the app.

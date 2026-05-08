@@ -2,25 +2,49 @@
   "name": "youtube-discovery",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "env:validate": "node scripts/app-validate-env.mjs",
+    "db:generate": "prisma generate",
+    "db:validate": "node scripts/db-validate-env.mjs && prisma validate",
+    "db:status": "node scripts/db-status.mjs",
+    "db:apply": "node scripts/db-apply.mjs",
+    "typecheck": "npm run db:generate && tsc --noEmit --incremental false",
+    "build": "npm run env:validate && npm run db:generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify": "npm run lint && npm run typecheck && npm run build"
   },
   "dependencies": {
+    "@google/genai": "^2.0.0",
+    "@next/env": "^16.2.6",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
+    "@tanstack/react-query": "^5.100.9",
+    "flexsearch": "^0.8.212",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^1.14.0",
     "next": "16.2.6",
+    "pg": "^8.20.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "server-only": "^0.0.1",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

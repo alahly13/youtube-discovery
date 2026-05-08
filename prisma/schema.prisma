@@ -1,0 +1,364 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Platform {
+  YOUTUBE
+}
+
+enum YouTubeItemType {
+  VIDEO
+  SHORTS_LIKE
+  CHANNEL
+  PLAYLIST
+  LIVE
+  UPCOMING
+  COMPLETED_LIVE
+  POST_UNSUPPORTED
+}
+
+enum VideoSourceType {
+  SEARCH
+  CHANNEL
+  PLAYLIST
+  LINK
+  COLLECTION
+  RELATED
+}
+
+enum ManifestType {
+  YOUTUBE_SEARCH
+  YOUTUBE_CHANNEL_UPLOADS
+  YOUTUBE_PLAYLIST
+  YOUTUBE_RELATED_VIDEOS
+  YOUTUBE_SAVED_COLLECTION
+  YOUTUBE_AI_RESULT_SET
+  YOUTUBE_LINK_EXPLORER
+}
+
+enum ManifestStatus {
+  DRAFT
+  RUNNING
+  COMPLETE
+  PARTIAL
+  FAILED
+  STOPPED
+  MAX_ITEMS_REACHED
+  QUOTA_LIMITED
+  PROVIDER_LIMITED
+  EXPIRED
+}
+
+enum FetchJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETE
+  PARTIAL
+  FAILED
+  STOPPED
+  QUOTA_LIMITED
+}
+
+enum AiScopeType {
+  SEARCH_MANIFEST
+  CHANNEL_UPLOADS_MANIFEST
+  PLAYLIST_MANIFEST
+  LINK_EXPLORER_MANIFEST
+  SAVED_LIBRARY
+  COLLECTION
+  SELECTED_VIDEO
+}
+
+model VideoSource {
+  id               String          @id @default(cuid())
+  platform         Platform        @default(YOUTUBE)
+  sourceType       VideoSourceType
+  externalSourceId String
+  title            String?
+  canonicalUrl     String?
+  rawJson          Json?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  manifests        Manifest[]
+  fetchJobs        FetchJob[]
+
+  @@unique([platform, sourceType, externalSourceId])
+  @@index([sourceType, updatedAt])
+}
+
+model YouTubeVideo {
+  id                   String         @id @default(cuid())
+  platform             Platform       @default(YOUTUBE)
+  platformVideoId      String
+  canonicalUrl         String         @unique
+  title                String
+  description          String?
+  thumbnailUrl         String?
+  channelId            String?
+  channelTitle         String?
+  publishedAt          DateTime?
+  durationSeconds      Int?
+  viewsCount           BigInt?
+  likesCount           BigInt?
+  commentsCount        BigInt?
+  language             String?
+  region               String?
+  categoryId           String?
+  tags                 String[]       @default([])
+  isEmbeddable         Boolean?
+  liveBroadcastContent String?
+  isShortsLike         Boolean        @default(false)
+  rawJson              Json?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  manifestItems        ManifestItem[]
+  savedVideos          SavedVideo[]
+
+  @@unique([platform, platformVideoId])
+  @@index([channelId, publishedAt])
+  @@index([isShortsLike])
+}
+
+model YouTubeChannel {
+  id                    String         @id @default(cuid())
+  platform              Platform       @default(YOUTUBE)
+  platformChannelId     String
+  handle                String?
+  title                 String
+  description           String?
+  thumbnailUrl          String?
+  uploadsPlaylistId     String?
+  publishedAt           DateTime?
+  subscriberCount       BigInt?
+  videoCount            BigInt?
+  viewCount             BigInt?
+  rawJson               Json?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  manifestItems         ManifestItem[]
+
+  @@unique([platform, platformChannelId])
+  @@index([handle])
+}
+
+model YouTubePlaylist {
+  id                 String         @id @default(cuid())
+  platform           Platform       @default(YOUTUBE)
+  platformPlaylistId String
+  title              String
+  description        String?
+  thumbnailUrl       String?
+  channelId          String?
+  channelTitle       String?
+  publishedAt        DateTime?
+  itemCount          Int?
+  rawJson            Json?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  manifestItems      ManifestItem[]
+
+  @@unique([platform, platformPlaylistId])
+  @@index([channelId])
+}
+
+model Manifest {
+  id                     String         @id @default(cuid())
+  ownerId                String         @default("local")
+  manifestType           ManifestType
+  platform               Platform       @default(YOUTUBE)
+  title                  String
+  query                  String?
+  sourceId               String?
+  source                 VideoSource?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  searchSettingsSnapshot Json?
+  pagesFetched           Int            @default(0)
+  nextPageToken          String?
+  quotaCostEstimate      Int            @default(0)
+  status                 ManifestStatus @default(DRAFT)
+  itemCount              Int            @default(0)
+  duplicateCount         Int            @default(0)
+  warnings               String[]       @default([])
+  errors                 String[]       @default([])
+  collectedAt            DateTime       @default(now())
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  items                  ManifestItem[]
+  searchJobs             SearchJob[]
+  fetchJobs              FetchJob[]
+  aiSessions             AiSession[]
+
+  @@index([ownerId, updatedAt])
+  @@index([manifestType, status])
+}
+
+model ManifestItem {
+  id                 String          @id @default(cuid())
+  manifestId         String
+  manifest           Manifest        @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+  itemType           YouTubeItemType
+  platformItemId     String
+  position           Int?
+  playlistPosition   Int?
+  sourcePage         Int?
+  sourcePageToken    String?
+  title              String
+  canonicalUrl       String?
+  videoId            String?
+  video              YouTubeVideo?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  channelRecordId    String?
+  channelRecord      YouTubeChannel? @relation(fields: [channelRecordId], references: [id], onDelete: SetNull)
+  playlistRecordId   String?
+  playlistRecord     YouTubePlaylist? @relation(fields: [playlistRecordId], references: [id], onDelete: SetNull)
+  normalizedJson     Json
+  rawJson            Json?
+  collectedAt        DateTime        @default(now())
+
+  @@unique([manifestId, itemType, platformItemId])
+  @@index([manifestId, position])
+  @@index([platformItemId])
+}
+
+model SavedVideo {
+  id        String       @id @default(cuid())
+  ownerId   String       @default("local")
+  videoId   String
+  video     YouTubeVideo @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  notes     String?
+  tags      String[]     @default([])
+  createdAt DateTime     @default(now())
+
+  @@unique([ownerId, videoId])
+  @@index([ownerId, createdAt])
+}
+
+model Collection {
+  id          String   @id @default(cuid())
+  ownerId     String   @default("local")
+  title       String
+  description String?
+  itemCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId, updatedAt])
+}
+
+model SearchJob {
+  id          String         @id @default(cuid())
+  ownerId     String         @default("local")
+  manifestId  String?
+  manifest    Manifest?      @relation(fields: [manifestId], references: [id], onDelete: SetNull)
+  status      FetchJobStatus @default(QUEUED)
+  settings    Json
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+model FetchJob {
+  id          String             @id @default(cuid())
+  ownerId     String             @default("local")
+  sourceId    String?
+  source      VideoSource?       @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  manifestId  String?
+  manifest    Manifest?          @relation(fields: [manifestId], references: [id], onDelete: SetNull)
+  status      FetchJobStatus     @default(QUEUED)
+  sourceKind  VideoSourceType
+  cursor      String?
+  maxItems    Int?
+  attempts    FetchPageAttempt[]
+  events      FetchJobEvent[]
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([ownerId, status, updatedAt])
+  @@index([sourceId, updatedAt])
+}
+
+model FetchPageAttempt {
+  id              String   @id @default(cuid())
+  fetchJobId      String
+  fetchJob        FetchJob @relation(fields: [fetchJobId], references: [id], onDelete: Cascade)
+  pageToken       String?
+  pageNumber      Int
+  providerMethod  String
+  quotaCost       Int      @default(0)
+  status          String
+  itemCount       Int      @default(0)
+  errorCode       String?
+  errorMessage    String?
+  startedAt       DateTime @default(now())
+  finishedAt      DateTime?
+
+  @@index([fetchJobId, pageNumber])
+}
+
+model FetchJobEvent {
+  id         String   @id @default(cuid())
+  fetchJobId String
+  fetchJob   FetchJob @relation(fields: [fetchJobId], references: [id], onDelete: Cascade)
+  level      String
+  message    String
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([fetchJobId, createdAt])
+}
+
+model ProviderRequestLog {
+  id             String   @id @default(cuid())
+  ownerId        String   @default("local")
+  platform       Platform @default(YOUTUBE)
+  operation      String
+  quotaCost      Int      @default(0)
+  status         String
+  requestSummary Json?
+  responseSummary Json?
+  errorCode      String?
+  createdAt      DateTime @default(now())
+
+  @@index([ownerId, createdAt])
+  @@index([platform, operation, createdAt])
+}
+
+model QuotaUsageEvent {
+  id          String   @id @default(cuid())
+  ownerId     String   @default("local")
+  platform    Platform @default(YOUTUBE)
+  operation   String
+  units       Int
+  manifestId  String?
+  sourceId    String?
+  createdAt   DateTime @default(now())
+
+  @@index([ownerId, createdAt])
+  @@index([platform, operation, createdAt])
+}
+
+model AiSession {
+  id              String      @id @default(cuid())
+  ownerId         String      @default("local")
+  scopeType       AiScopeType
+  manifestId      String?
+  manifest        Manifest?   @relation(fields: [manifestId], references: [id], onDelete: SetNull)
+  selectedVideoId String?
+  model           String
+  prompt          String
+  responseJson    Json?
+  evidenceRefs    Json?
+  itemCountUsed   Int         @default(0)
+  charCountUsed   Int         @default(0)
+  safetyStatus    String      @default("scoped")
+  createdAt       DateTime    @default(now())
+
+  @@index([ownerId, createdAt])
+  @@index([scopeType, createdAt])
+}

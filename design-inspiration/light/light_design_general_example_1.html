@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Research Intelligence - Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@500&amp;family=Inter:wght@400;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        /* Mapping Google Fonts to Tailwind Config Families */
+        :root {
+            --font-inter: 'Inter', sans-serif;
+            --font-geist-sans: 'Geist', sans-serif;
+            --font-geist-mono: 'Geist Mono', monospace;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "tertiary": "#5a5a5e",
+                        "on-surface-variant": "#5e3f3c",
+                        "surface": "#f9f9fb",
+                        "primary-container": "#e60023",
+                        "secondary": "#5340db",
+                        "primary-fixed-dim": "#ffb3ad",
+                        "on-secondary": "#ffffff",
+                        "surface-container": "#edeef0",
+                        "on-error": "#ffffff",
+                        "on-primary-fixed": "#410004",
+                        "on-tertiary-fixed": "#1b1b1f",
+                        "tertiary-container": "#737277",
+                        "inverse-on-surface": "#f0f0f2",
+                        "tertiary-fixed-dim": "#c8c5cb",
+                        "secondary-fixed-dim": "#c6c0ff",
+                        "outline": "#936e6b",
+                        "on-surface": "#1a1c1d",
+                        "tertiary-fixed": "#e4e1e7",
+                        "on-secondary-fixed": "#150066",
+                        "surface-container-highest": "#e2e2e4",
+                        "inverse-primary": "#ffb3ad",
+                        "on-error-container": "#93000a",
+                        "surface-tint": "#c0001b",
+                        "surface-container-lowest": "#ffffff",
+                        "primary": "#b7001a",
+                        "error": "#ba1a1a",
+                        "surface-dim": "#d9dadc",
+                        "secondary-container": "#6d5df6",
+                        "on-secondary-container": "#fffbff",
+                        "on-primary-container": "#fff7f6",
+                        "surface-bright": "#f9f9fb",
+                        "primary-fixed": "#ffdad7",
+                        "background": "#f9f9fb",
+                        "surface-container-low": "#f3f3f5",
+                        "on-primary": "#ffffff",
+                        "on-primary-fixed-variant": "#930012",
+                        "secondary-fixed": "#e4dfff",
+                        "surface-variant": "#e2e2e4",
+                        "on-secondary-fixed-variant": "#3d22c6",
+                        "on-tertiary-container": "#fcf8fe",
+                        "surface-container-high": "#e8e8ea",
+                        "inverse-surface": "#2f3132",
+                        "on-background": "#1a1c1d",
+                        "on-tertiary": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "on-tertiary-fixed-variant": "#47464b",
+                        "outline-variant": "#e8bcb8"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "container-margin": "24px",
+                        "unit": "4px",
+                        "gutter": "16px",
+                        "section-padding": "32px",
+                        "content-gap": "12px"
+                    },
+                    "fontFamily": {
+                        "body-sm": ["var(--font-inter)"],
+                        "code-id": ["var(--font-geist-mono)"],
+                        "display-lg": ["var(--font-geist-sans)"],
+                        "body-base": ["var(--font-inter)"],
+                        "headline-md": ["var(--font-geist-sans)"],
+                        "label-caps": ["var(--font-inter)"]
+                    },
+                    "fontSize": {
+                        "body-sm": ["13px", { "lineHeight": "1.5", "letterSpacing": "0", "fontWeight": "400" }],
+                        "code-id": ["12px", { "lineHeight": "1", "letterSpacing": "0.02em", "fontWeight": "500" }],
+                        "display-lg": ["32px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "600" }],
+                        "body-base": ["14px", { "lineHeight": "1.6", "letterSpacing": "0", "fontWeight": "400" }],
+                        "headline-md": ["20px", { "lineHeight": "1.4", "letterSpacing": "-0.01em", "fontWeight": "500" }],
+                        "label-caps": ["11px", { "lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-background text-on-surface font-body-base text-body-base antialiased selection:bg-primary-fixed selection:text-on-primary-fixed">
+<div class="flex min-h-screen">
+<!-- SideNavBar Shared Component -->
+<nav class="flex flex-col h-full py-6 px-4 fixed left-0 top-0 z-50 bg-surface-container-low dark:bg-surface-dim border-r border-surface-container-highest w-64">
+<!-- Header -->
+<div class="flex items-center gap-3 mb-8 px-2">
+<div class="w-10 h-10 rounded-lg bg-surface-container-highest flex items-center justify-center overflow-hidden border border-surface-container-highest">
+<img alt="Research Lab Logo" class="w-full h-full object-cover opacity-80" data-alt="A sleek, minimalist vector logo featuring intersecting geometric lines forming an abstract 'A', set against a subtle, gradient white and pale gray background. The lighting is crisp and even, evoking a modern, high-tech SaaS brand identity. The color palette consists solely of pristine whites, soft silvers, and deep charcoal grays to maintain a premium, research-grade aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuB6jwOsVOPDOfvIwxKIpUNFYmMIyAi5Axy4uw0N1RfGf-LGYj4U9QIWxATQOvrbMQgVEM6e2U_LuYBZPH6z9cnh-horjwl1hDoEZdLC26CEIpbBmKr3Jd9rRRLMtD_7PVgZehXt8Ux9cGQTnbpLKn0WAAJ8K1Bjet6HwyIV8q6EFyMoe7fOsuHRHOVItptena1v4psedSz8LNnvb5f2fcGLyaaX5iuN6c7XmMuaaRzGO0JvgRXHjtjCfedlmOM4BJRWqYrvTSFy47o"/>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md text-primary tracking-tight">Project Alpha</h1>
+<p class="font-body-sm text-body-sm text-tertiary">Active Research</p>
+</div>
+</div>
+<!-- CTA -->
+<button class="mb-6 w-full py-2 px-4 bg-on-surface text-on-primary rounded-lg font-body-sm text-body-sm flex items-center justify-center gap-2 hover:bg-tertiary transition-colors">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                New Analysis
+            </button>
+<!-- Main Nav -->
+<div class="flex-1 space-y-1">
+<!-- Active Tab: Search -->
+<a class="flex items-center gap-3 px-3 py-2 text-on-secondary-container dark:text-on-secondary-fixed bg-secondary-fixed dark:bg-secondary-container rounded-lg transition-transform duration-100 hover:bg-surface-container-high" href="#">
+<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">search</span>
+<span class="font-body-sm text-body-sm font-medium">Search</span>
+</a>
+<!-- Inactive Tabs -->
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant dark:text-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-inverse-surface rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">hub</span>
+<span class="font-body-sm text-body-sm">Channels</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant dark:text-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-inverse-surface rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">subscriptions</span>
+<span class="font-body-sm text-body-sm">Playlists</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant dark:text-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-inverse-surface rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">auto_awesome</span>
+<span class="font-body-sm text-body-sm">AI Research</span>
+</a>
+</div>
+<!-- Footer Nav -->
+<div class="mt-auto space-y-1 pt-6 border-t border-surface-container-highest">
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant dark:text-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-inverse-surface rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="font-body-sm text-body-sm">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-on-surface-variant dark:text-surface-variant hover:text-on-surface hover:bg-surface-container-high dark:hover:bg-inverse-surface rounded-lg transition-colors" href="#">
+<span class="material-symbols-outlined text-[20px]">help</span>
+<span class="font-body-sm text-body-sm">Support</span>
+</a>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="ml-64 flex-1 flex flex-col min-w-0">
+<!-- TopNavBar Shared Component -->
+<header class="flex justify-between items-center h-16 w-full px-6 sticky top-0 z-40 bg-surface dark:bg-surface-dim border-b border-surface-container-highest dark:border-outline-variant">
+<!-- Left: Search Bar & Product Name -->
+<div class="flex items-center gap-6">
+<div class="text-headline-md font-headline-md font-bold text-primary dark:text-inverse-primary">
+                        Research Intelligence
+                    </div>
+<div class="hidden md:flex items-center px-3 py-1.5 bg-surface-container-lowest border border-surface-container-highest rounded-lg w-64 focus-within:border-primary transition-colors">
+<span class="material-symbols-outlined text-tertiary text-[18px] mr-2">search</span>
+<input class="bg-transparent border-none p-0 text-body-sm font-body-sm w-full focus:ring-0 text-on-surface placeholder:text-tertiary" placeholder="Quick find..." type="text"/>
+</div>
+</div>
+<!-- Right: Actions & Profile -->
+<div class="flex items-center gap-4">
+<div class="font-code-id text-code-id text-tertiary bg-surface-container-low px-2.5 py-1 rounded-md border border-surface-container-highest">
+                        Quota: 85%
+                    </div>
+<div class="flex items-center gap-2">
+<button class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors">
+<span class="material-symbols-outlined text-[20px]">account_balance_wallet</span>
+</button>
+<button class="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-low transition-colors relative">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full"></span>
+</button>
+</div>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-surface-container-highest cursor-pointer ml-2">
+<img alt="User profile" class="w-full h-full object-cover" data-alt="A professional headshot of a young woman with a neutral, focused expression. The lighting is studio-quality, high-key white, casting soft, flattering shadows. She is set against a pure, pristine white background, ensuring the focus remains entirely on her features. The overall tone is modern, corporate, and seamlessly integrates with a clean light-mode dashboard aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBF6H_8-6vMFeDJxmDYLIz4lhGGjZycfdFLJOgZW5-ZEtchF9mb-wEZoIkiqoV1dtTNwIdD8tmw8jcIpua-CDlGgjaRmAkAloFCQbOTAKBvvNTYQ05WgJH8oLSvqsUGbhbMNd0pwhaH4HhVThlP6DwgJsK25kL0FYTZoZLZWuowuM-iSTh0JI0VXtXPtMHlrF_mrPM2d4uEhx0cQT_wc5Jin-6b6y7quRTl6V2hR7bP3H7TgGnEn7swZblaoTs0W1i-_FbPxWzJZlg"/>
+</div>
+</div>
+</header>
+<!-- Dashboard Canvas -->
+<main class="flex-1 p-container-margin xl:p-section-padding space-y-container-margin overflow-y-auto">
+<!-- Command Area (Bento Top Row) -->
+<div class="grid grid-cols-1 xl:grid-cols-12 gap-gutter">
+<!-- Main Search Command -->
+<div class="xl:col-span-8 bg-surface-container-lowest border border-surface-container-highest rounded-xl p-6 flex flex-col justify-center shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
+<h2 class="font-headline-md text-headline-md text-on-surface mb-4">Discovery Command</h2>
+<div class="relative flex items-center w-full mb-6 group">
+<span class="material-symbols-outlined absolute left-4 text-tertiary text-[24px] group-focus-within:text-primary transition-colors">search</span>
+<input class="w-full pl-12 pr-4 py-4 bg-surface text-body-base font-body-base border border-surface-container-highest rounded-lg focus:border-primary focus:ring-1 focus:ring-primary focus:bg-surface-container-lowest transition-all placeholder:text-tertiary outline-none" placeholder="Enter keywords, channel ID, or paste a YouTube URL..." type="text"/>
+<button class="absolute right-2 px-4 py-2 bg-primary text-on-primary rounded-md font-body-sm text-body-sm font-medium hover:bg-surface-tint transition-colors">
+                                Execute
+                            </button>
+</div>
+<div class="flex flex-wrap items-center gap-3">
+<span class="font-label-caps text-label-caps text-tertiary mr-2">Quick Actions:</span>
+<button class="px-3 py-1.5 bg-surface-container-low border border-surface-container-highest hover:bg-surface-container-high rounded-md font-body-sm text-body-sm text-on-surface transition-colors flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px]">youtube_searched_for</span>
+                                Search YouTube
+                            </button>
+<button class="px-3 py-1.5 bg-surface-container-low border border-surface-container-highest hover:bg-surface-container-high rounded-md font-body-sm text-body-sm text-on-surface transition-colors flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px]">account_circle</span>
+                                Explore Channel
+                            </button>
+<button class="px-3 py-1.5 bg-surface-container-low border border-surface-container-highest hover:bg-surface-container-high rounded-md font-body-sm text-body-sm text-on-surface transition-colors flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px]">link</span>
+                                Analyze Link
+                            </button>
+</div>
+</div>
+<!-- Environment Status -->
+<div class="xl:col-span-4 bg-surface-container-lowest border border-surface-container-highest rounded-xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.02)] flex flex-col">
+<div class="flex justify-between items-center mb-6">
+<h2 class="font-headline-md text-headline-md text-on-surface">System Status</h2>
+<span class="flex items-center gap-1.5 bg-surface-container px-2 py-1 rounded font-code-id text-code-id text-tertiary">
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+                                Live Sync
+                            </span>
+</div>
+<div class="space-y-4 flex-1">
+<div>
+<div class="flex justify-between text-body-sm font-body-sm mb-1">
+<span class="text-tertiary">API Quota Burn</span>
+<span class="font-code-id text-on-surface">85%</span>
+</div>
+<div class="w-full bg-surface-container-high rounded-full h-1.5 overflow-hidden">
+<div class="bg-primary h-1.5 rounded-full" style="width: 85%"></div>
+</div>
+</div>
+<div class="pt-4 border-t border-surface-container-highest">
+<p class="font-label-caps text-label-caps text-tertiary mb-2">Active Processing Worker</p>
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary animate-pulse">memory</span>
+<div>
+<p class="font-code-id text-code-id text-on-surface">JOB_IDX_9021A</p>
+<p class="font-body-sm text-[11px] text-tertiary">Indexing 450 channel videos</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Stats Grid (Bento Middle Row) -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<!-- Stat 1 -->
+<div class="bg-surface-container-lowest border border-surface-container-highest rounded-xl p-5 flex flex-col justify-between h-32 hover:bg-surface transition-colors cursor-default">
+<div class="flex items-center justify-between">
+<span class="font-label-caps text-label-caps text-tertiary tracking-wider">Total Searches</span>
+<span class="material-symbols-outlined text-tertiary text-[20px]">manage_search</span>
+</div>
+<div class="font-display-lg text-display-lg text-on-surface tracking-tight">
+                            4,281
+                        </div>
+</div>
+<!-- Stat 2 -->
+<div class="bg-surface-container-lowest border border-surface-container-highest rounded-xl p-5 flex flex-col justify-between h-32 hover:bg-surface transition-colors cursor-default">
+<div class="flex items-center justify-between">
+<span class="font-label-caps text-label-caps text-tertiary tracking-wider">Saved Manifests</span>
+<span class="material-symbols-outlined text-tertiary text-[20px]">folder_special</span>
+</div>
+<div class="font-display-lg text-display-lg text-on-surface tracking-tight">
+                            128
+                        </div>
+</div>
+<!-- Stat 3 -->
+<div class="bg-surface-container-lowest border border-surface-container-highest rounded-xl p-5 flex flex-col justify-between h-32 hover:bg-surface transition-colors cursor-default">
+<div class="flex items-center justify-between">
+<span class="font-label-caps text-label-caps text-tertiary tracking-wider">Quota Units Utilized</span>
+<span class="material-symbols-outlined text-tertiary text-[20px]">data_usage</span>
+</div>
+<div class="flex items-baseline gap-1">
+<span class="font-display-lg text-display-lg text-on-surface tracking-tight">1.2k</span>
+<span class="font-code-id text-code-id text-tertiary">/ 50k</span>
+</div>
+</div>
+</div>
+<!-- Recent Manifests Table (Bento Bottom Row) -->
+<div class="bg-surface-container-lowest border border-surface-container-highest rounded-xl overflow-hidden shadow-[0_4px_20px_rgba(0,0,0,0.02)] flex flex-col">
+<div class="px-6 py-5 border-b border-surface-container-highest flex justify-between items-center bg-surface-container-lowest">
+<h2 class="font-headline-md text-headline-md text-on-surface">Recent Manifests</h2>
+<button class="font-body-sm text-body-sm text-secondary hover:text-on-secondary-fixed-variant transition-colors flex items-center gap-1">
+                            View All <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-low border-b border-surface-container-highest">
+<th class="px-6 py-3 font-label-caps text-label-caps text-tertiary font-semibold tracking-wider w-5/12">Title / Target</th>
+<th class="px-6 py-3 font-label-caps text-label-caps text-tertiary font-semibold tracking-wider w-2/12">Type</th>
+<th class="px-6 py-3 font-label-caps text-label-caps text-tertiary font-semibold tracking-wider w-2/12 text-right">Items</th>
+<th class="px-6 py-3 font-label-caps text-label-caps text-tertiary font-semibold tracking-wider w-3/12">Status</th>
+</tr>
+</thead>
+<tbody class="font-body-base text-body-base text-on-surface divide-y divide-surface-container-highest">
+<!-- Row 1 -->
+<tr class="hover:bg-surface transition-colors">
+<td class="px-6 py-4">
+<div class="font-medium">Tech Review Landscape Q3</div>
+<div class="font-code-id text-[11px] text-tertiary mt-0.5">MNF_90A2_TR</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded-md bg-surface-container border border-surface-container-highest font-code-id text-code-id text-tertiary">
+                                            Search
+                                        </span>
+</td>
+<td class="px-6 py-4 font-code-id text-code-id text-right">
+                                        1,045
+                                    </td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-surface-container-highest"></span>
+<span class="font-body-sm text-body-sm text-tertiary">Complete</span>
+</div>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="bg-surface hover:bg-surface-container-low transition-colors">
+<td class="px-6 py-4">
+<div class="font-medium text-primary">MKBHD Channel Full Archive</div>
+<div class="font-code-id text-[11px] text-tertiary mt-0.5">CH_UCBJycsmduvYEL83C_A</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded-md bg-primary-fixed border border-outline-variant font-code-id text-code-id text-on-primary-fixed">
+                                            Channel
+                                        </span>
+</td>
+<td class="px-6 py-4 font-code-id text-code-id text-right">
+                                        1,680
+                                    </td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+<span class="font-body-sm text-body-sm text-secondary">Syncing...</span>
+</div>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="hover:bg-surface transition-colors">
+<td class="px-6 py-4">
+<div class="font-medium">AI Agent Tutorials 2026</div>
+<div class="font-code-id text-[11px] text-tertiary mt-0.5">MNF_11B4_AI</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded-md bg-surface-container border border-surface-container-highest font-code-id text-code-id text-tertiary">
+                                            Search
+                                        </span>
+</td>
+<td class="px-6 py-4 font-code-id text-code-id text-right">
+                                        420
+                                    </td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-surface-container-highest"></span>
+<span class="font-body-sm text-body-sm text-tertiary">Complete</span>
+</div>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="bg-surface hover:bg-surface-container-low transition-colors">
+<td class="px-6 py-4">
+<div class="font-medium">Design System Development</div>
+<div class="font-code-id text-[11px] text-tertiary mt-0.5">PL_1090_UIX</div>
+</td>
+<td class="px-6 py-4">
+<span class="inline-flex items-center px-2 py-0.5 rounded-md bg-surface-container border border-surface-container-highest font-code-id text-code-id text-tertiary">
+                                            Playlist
+                                        </span>
+</td>
+<td class="px-6 py-4 font-code-id text-code-id text-right">
+                                        85
+                                    </td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-surface-container-highest"></span>
+<span class="font-body-sm text-body-sm text-tertiary">Complete</span>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</main>
+</div>
+</div>
+</body></html>

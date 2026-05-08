@@ -1,26 +1,100 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f9f9fb;
+  --foreground: #1a1c1d;
+  --surface: #ffffff;
+  --surface-muted: #f3f3f5;
+  --surface-raised: #edeef0;
+  --border: #d8dbe1;
+  --muted: #5a5a5e;
+  --primary: #b7001a;
+  --primary-strong: #e60023;
+  --primary-soft: #ffdad7;
+  --ai: #5340db;
+  --ai-soft: #e4dfff;
+  --success: #13795b;
+  --warning: #9a6700;
+  --danger: #ba1a1a;
+  --ring: #e60023;
+  --sidebar-width: 16rem;
+}
+
+.dark {
+  --background: #131318;
+  --foreground: #e4e1e9;
+  --surface: #1b1b20;
+  --surface-muted: #1f1f24;
+  --surface-raised: #2a292f;
+  --border: #35343a;
+  --muted: #c8b8b5;
+  --primary: #ffb3af;
+  --primary-strong: #ff5357;
+  --primary-soft: #5f3e3d;
+  --ai: #d0bcff;
+  --ai-soft: #571bc1;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #ffb4ab;
+  --ring: #ff5357;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
+  --color-primary-soft: var(--primary-soft);
+  --color-ai: var(--ai);
+  --color-ai-soft: var(--ai-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--background);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
+  min-height: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* Shared terminal surface rules protect dense route tables/cards from layout
+   drift across the dashboard, search workspace, and future saved-library pages. */
+.research-surface {
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

@@ -1,34 +1,36 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
-import { DEFAULT_WATCH_SETTINGS, WATCH_SETTINGS_STORAGE_KEY, type WatchExperienceSettings } from "@/lib/watch-settings";
+import { useEffect, useRef } from "react";
+import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 
-interface YtPlayer { destroy?: () => void; }
-interface YtPlayerCtor { new (element: HTMLElement, config: { videoId: string; playerVars: Record<string, number> }): YtPlayer; }
-interface YtNamespace { Player?: YtPlayerCtor; }
-declare global { interface Window { YT?: YtNamespace; onYouTubeIframeAPIReady?: () => void; } }
+declare global { interface Window { YT?: { Player?: new (element: HTMLElement, config: unknown) => { destroy?: () => void } }; onYouTubeIframeAPIReady?: () => void } }
 
 export function WatchPlayer({ videoId }: { videoId: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const playerRef = useRef<YtPlayer | null>(null);
-  const settings = useMemo<WatchExperienceSettings>(() => {
-    try { return { ...DEFAULT_WATCH_SETTINGS, ...(JSON.parse(localStorage.getItem(WATCH_SETTINGS_STORAGE_KEY) ?? "{}") as Partial<WatchExperienceSettings>) }; } catch { return DEFAULT_WATCH_SETTINGS; }
-  }, []);
+  const playerRef = useRef<{ destroy?: () => void } | null>(null);
+  const watchSettings = useYouTubeWorkspaceStore((s) => s.watchSettings);
 
   useEffect(() => {
-    const init = () => {
+    const initializePlayer = () => {
       if (!window.YT?.Player || !containerRef.current) return;
+      playerRef.current?.destroy?.();
       playerRef.current = new window.YT.Player(containerRef.current, {
         videoId,
-        playerVars: { autoplay: settings.defaultAutoplay ? 1 : 0, controls: settings.showPlayerControls ? 1 : 0, rel: 0, modestbranding: 1 },
+        events: { onReady: () => undefined, onStateChange: () => undefined },
+        playerVars: { autoplay: watchSettings.defaultAutoplay ? 1 : 0, controls: watchSettings.showPlayerControls ? 1 : 0, rel: 0, modestbranding: 1 },
       });
     };
-    if (window.YT?.Player) init(); else {
-      const script = document.createElement("script"); script.src = "https://www.youtube.com/iframe_api"; document.body.appendChild(script);
-      window.onYouTubeIframeAPIReady = init;
+
+    if (window.YT?.Player) initializePlayer();
+    else {
+      const script = document.createElement("script");
+      script.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(script);
+      window.onYouTubeIframeAPIReady = initializePlayer;
     }
+
     return () => playerRef.current?.destroy?.();
-  }, [videoId, settings.defaultAutoplay, settings.showPlayerControls]);
+  }, [videoId, watchSettings.defaultAutoplay, watchSettings.showPlayerControls]);
 
   return <div className="aspect-video w-full overflow-hidden rounded-xl border border-border bg-black" ref={containerRef} />;
 }

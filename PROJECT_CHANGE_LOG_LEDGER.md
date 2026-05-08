@@ -207,3 +207,82 @@ No migrations created or applied.
 ### Whether `db:apply` was run
 
 No.
+
+## 2026-05-08 (search/watch refinement)
+
+### Date/time
+
+2026-05-08 16:05 UTC.
+
+### Agent/model if known
+
+Codex GPT-5.3-Codex.
+
+### Task summary
+
+Refined Search workspace UI into cleaner 12-column production layout with explicit provider vs local search boundaries, wired resource selection including ALL behavior, and stabilized watch/settings linkage through shared persisted workspace store.
+
+### Reason/root cause
+
+Follow-up UX request required clearer separation of provider calls versus local filtering, stronger dark-first ergonomics, and watch settings consistency.
+
+### Files changed
+
+- `src/components/search/search-workspace.tsx`
+- `src/components/watch/watch-player.tsx`
+- `src/app/settings/page.tsx`
+
+### Technical details
+
+- Rebuilt Search page sections using `workspace-grid-12` for non-overlapping card alignment and consistent spacing.
+- Added top provider search bar with explicit resource type selector (`ALL`, `video`, `channel`, `playlist`) and submit-only provider call behavior.
+- Added separate local in-results search/filter panel that only mutates local filter state and render pipeline.
+- Added active filter chips display and manifest export actions in local-results control surface.
+- Switched watch player setting source to Zustand persisted workspace store so settings updates affect player behavior.
+- Ensured IFrame API initialization includes `onReady`/`onStateChange` hooks and controlled autoplay/controls parameters.
+
+### Architecture impact
+
+Strengthens manifest-first contract: provider search remains explicit; local search/filter/sort remains local-only.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact when relevant
+
+No additional provider calls were introduced in local filtering paths.
+
+### AI scope/safety impact when relevant
+
+No scope expansion; AI panel remains tied to current manifest context.
+
+### Verification run and results
+
+- `npm run lint`: passed.
+- `npm run typecheck`: passed.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+- Search filter panel still implements a focused subset of advanced filter controls.
+- `/channels/[channelId]` and `/playlists/[playlistId]` parity with requested naming/context remains partial and currently scaffold-first.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No migrations created or applied.
+
+### Whether `db:apply` was run
+
+No.

@@ -1,5 +1,35 @@
 # PROJECT_CHANGE_LOG_LEDGER
 
+## 2026-05-09 (Update Favicon and Cleanup)
+
+### Date/time
+
+2026-05-09 ~23:17 UTC
+
+### Task summary
+
+Replaced the default Next.js favicon with the custom `browser_tab_icon.png`. Also removed an accidentally tracked AI-generated image.
+
+### Reason/root cause
+
+User requested `F:\discovery\youtube-discovery\public\browser_tab_icon.png` to be used as the browser tab icon. Cleaned up a stray image that was added in a previous commit.
+
+### Files changed
+
+- Added `src/app/icon.png` (copied from `public/browser_tab_icon.png`)
+- Deleted `src/app/favicon.ico`
+- Deleted `public/Gemini_Generated_Image_uvsm19uvsm19uvsm-removebg-preview.png`
+
+### Verification
+
+- Verified `icon.png` presence in `src/app`.
+- Successfully pushed changes.
+
+### Secrets printed: No
+### Migrations created/applied: No
+### db:apply run: No
+
+---
 ## 2026-05-09 (Vercel Build SSR Fix)
 
 ### Date/time

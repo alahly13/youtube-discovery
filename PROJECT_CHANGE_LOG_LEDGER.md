@@ -1,5 +1,33 @@
 # PROJECT_CHANGE_LOG_LEDGER
 
+## 2026-05-09 (Collapsible Sidebar Toggle)
+
+### Date/time
+
+2026-05-09 ~23:57 UTC
+
+### Task summary
+
+Made the desktop sidebar collapsible to allow users to reclaim screen space, using an elegant `PanelLeft` toggle button in the header.
+
+### Reason/root cause
+
+User requested the ability to "open and close or hide and appear modes" for the sidebar. Since the app relies on a left sidebar on desktop and a bottom nav on mobile, hiding the left sidebar on desktop requires pushing the main content over.
+
+### Files changed
+
+- `src/components/layout/app-shell.tsx` — added `"use client"`, state reading, transition classes for sidebar `-translate-x-full` and main content `padding-left`.
+- `src/lib/state/youtube-workspace-store.ts` — added `isSidebarOpen` and `toggleSidebar` to Zustand store so the preference persists across page reloads.
+
+### Verification
+
+- The sidebar smoothly slides in and out, and the main content seamlessly expands.
+
+### Secrets printed: No
+### Migrations created/applied: No
+### db:apply run: No
+
+---
 ## 2026-05-09 (Update Favicon and Cleanup)
 
 ### Date/time

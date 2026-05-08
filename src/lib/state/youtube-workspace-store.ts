@@ -36,9 +36,11 @@ interface YouTubeWorkspaceStore {
   currentManifest: YouTubeManifest | null;
   savedManifestIds: string[];
   watchSettings: WatchExperienceSettings;
+  isSidebarOpen: boolean;
   setCurrentManifest: (manifest: YouTubeManifest | null) => void;
   markManifestSaved: (manifestId: string) => void;
   updateWatchSettings: (settings: Partial<WatchExperienceSettings>) => void;
+  toggleSidebar: () => void;
 }
 
 // This client store preserves non-secret workspace context across Search,
@@ -51,6 +53,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       currentManifest: null,
       savedManifestIds: [],
       watchSettings: DEFAULT_WATCH_SETTINGS,
+      isSidebarOpen: true,
       setCurrentManifest: (manifest) => set({ currentManifest: manifest }),
       markManifestSaved: (manifestId) =>
         set((state) => ({
@@ -69,6 +72,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
             ...settings,
           },
         })),
+      toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
     }),
     {
       name: "youtube-discovery-workspace",
@@ -76,6 +80,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         currentManifest: state.currentManifest,
         savedManifestIds: state.savedManifestIds,
         watchSettings: state.watchSettings,
+        isSidebarOpen: state.isSidebarOpen,
       }),
     },
   ),

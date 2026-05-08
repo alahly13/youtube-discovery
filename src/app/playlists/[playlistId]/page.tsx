@@ -1,18 +1,25 @@
-import { ListVideo } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
-import { WorkspacePage } from "@/components/pages/workspace-page";
+import { PlaylistExplorerWorkspace } from "@/components/playlists/playlist-explorer-workspace";
 
-export default async function PlaylistDetailPage({ params }: { params: Promise<{ playlistId: string }> }) {
+/* ═══════════════════════════════════════════════════════════════════════════
+   Playlist Detail Page — /playlists/[playlistId]
+   ──────────────────────────────────────────────────────────────────────────
+   Navigates like YouTube: user clicks a playlist → arrives here → system
+   fetches all playlist items via official API → builds an order-preserving
+   manifest → allows local filtering, sorting, search-inside-playlist,
+   play-next navigation, and AI analysis.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export default async function PlaylistDetailPage({
+  params,
+}: {
+  params: Promise<{ playlistId: string }>;
+}) {
   const { playlistId } = await params;
 
   return (
     <AppShell>
-      <WorkspacePage
-        icon={ListVideo}
-        eyebrow="Playlist detail"
-        title={`Playlist ${playlistId}`}
-        description="Playlist detail pages are reserved for playlist manifests, search-inside-playlist, export/save, and scoped AI playlist analysis."
-      />
+      <PlaylistExplorerWorkspace playlistId={playlistId} />
     </AppShell>
   );
 }

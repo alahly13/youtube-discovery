@@ -1,0 +1,693 @@
+"use client";
+
+import {
+  ChevronDown,
+  Download,
+  ExternalLink,
+  Filter,
+  Loader2,
+  RefreshCw,
+  Save,
+  Search,
+  Tv,
+  X,
+} from "lucide-react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
+import type { YouTubeManifest } from "@/types/manifest";
+import type {
+  NormalizedYouTubeDiscoveryItem,
+  YouTubeResultFilters,
+} from "@/types/youtube";
+import { DEFAULT_YOUTUBE_RESULT_FILTERS } from "@/types/youtube";
+import { AiAssistantPanel } from "@/components/ai/ai-assistant-panel";
+import { ManifestSummary } from "@/components/manifests/manifest-summary";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader } from "@/components/ui/card";
+import { YouTubeItemCard } from "@/components/youtube/youtube-item-card";
+import { applyYouTubeResultPipeline } from "@/lib/filters/youtube-result-filters";
+import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
+import {
+  formatCount,
+  formatDate,
+} from "@/lib/utils/format";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Channel Explorer Workspace
+   ──────────────────────────────────────────────────────────────────────────
+   Fetches a channel's uploads manifest via the server-side YouTube adapter,
+   then stores it in Zustand for local-only filtering, sorting, search-inside-
+   channel, and AI analysis. No additional YouTube API calls are made from
+   filter/sort/search interactions.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+interface ChannelExplorerWorkspaceProps {
+  /** Channel ID, handle, or URL passed from the route segment */
+  channelId: string;
+}
+
+/** Items-per-page for local pagination of the channel manifest */
+const PAGE_SIZE = 24;
+
+export function ChannelExplorerWorkspace({
+  channelId,
+}: ChannelExplorerWorkspaceProps) {
+  /* ──── State ──────────────────────────────────────────────────────────── */
+  const [manifest, setManifest] = useState<YouTubeManifest | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<YouTubeResultFilters>({
+    ...DEFAULT_YOUTUBE_RESULT_FILTERS,
+    sort: "latest",
+  });
+  const [selectedItem, setSelectedItem] =
+    useState<NormalizedYouTubeDiscoveryItem | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const setCurrentManifest = useYouTubeWorkspaceStore(
+    (s) => s.setCurrentManifest,
+  );
+
+  /* ──── Channel metadata (first item in the manifest is the channel) ─── */
+  const channelItem = useMemo(
+    () =>
+      manifest?.normalizedItems.find((item) => item.itemType === "channel") ??
+      null,
+    [manifest],
+  );
+
+  /* ──── Video items only (exclude channel item from grid) ────────────── */
+  const videoItems = useMemo(
+    () =>
+      manifest?.normalizedItems.filter(
+        (item) => item.itemType !== "channel",
+      ) ?? [],
+    [manifest],
+  );
+
+  /* ──── Filtered + sorted items (LOCAL ONLY — never calls YouTube) ───── */
+  const filteredItems = useMemo(
+    () => applyYouTubeResultPipeline(videoItems, filters),
+    [videoItems, filters],
+  );
+
+  /* ──── Paginated view ─────────────────────────────────────────────────  */
+  const visibleItems = useMemo(
+    () => filteredItems.slice(0, visibleCount),
+    [filteredItems, visibleCount],
+  );
+
+  /* ──── Active filter chips for visual feedback ─────────────────────── */
+  const activeChips = useMemo(
+    () =>
+      [
+        filters.keyword ? `Keyword: ${filters.keyword}` : null,
+        filters.channelName ? `Channel: ${filters.channelName}` : null,
+        filters.language ? `Language: ${filters.language}` : null,
+        filters.minViews !== null ? `Min views: ${filters.minViews}` : null,
+        filters.maxViews !== null ? `Max views: ${filters.maxViews}` : null,
+        filters.durationMinSec !== null
+          ? `Min duration: ${filters.durationMinSec}s`
+          : null,
+        filters.durationMaxSec !== null
+          ? `Max duration: ${filters.durationMaxSec}s`
+          : null,
+        filters.shortsLikeOnly ? "Shorts-like only" : null,
+        filters.hasDescription !== "any"
+          ? `Description: ${filters.hasDescription}`
+          : null,
+        filters.year !== null ? `Year: ${filters.year}` : null,
+      ].filter(Boolean) as string[],
+    [filters],
+  );
+
+  /* ──── Fetch channel uploads manifest ─────────────────────────────── */
+  const fetchChannel = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/youtube/channel/uploads/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          input: channelId,
+          maxPages: 10,
+          maxItems: 500,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          (body as { message?: string }).message ??
+            `Channel fetch failed (${response.status})`,
+        );
+      }
+
+      const payload = (await response.json()) as YouTubeManifest;
+      startTransition(() => {
+        setManifest(payload);
+        setCurrentManifest(payload);
+      });
+    } catch (err) {
+      startTransition(() => setError(err instanceof Error ? err.message : "Unknown error"));
+    } finally {
+      startTransition(() => setLoading(false));
+    }
+  }, [channelId, setCurrentManifest]);
+
+  /* ──── Auto-fetch on mount ───────────────────────────────────────────  */
+  useEffect(() => {
+    void fetchChannel();
+  }, [fetchChannel]);
+
+  /* ──── Export manifest helpers ────────────────────────────────────────  */
+  function exportManifest(format: "json" | "ndjson") {
+    if (!manifest) return;
+    const content =
+      format === "json"
+        ? JSON.stringify(manifest, null, 2)
+        : manifest.normalizedItems
+            .map((item) => JSON.stringify(item))
+            .join("\n");
+    const blob = new Blob([content], {
+      type:
+        format === "json" ? "application/json" : "application/x-ndjson",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${manifest.manifestId}.${format}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /* ──── Loading state ─────────────────────────────────────────────────  */
+  if (loading && !manifest) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 py-24">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted">
+          Fetching channel uploads via official YouTube API…
+        </p>
+        <p className="text-xs text-muted">
+          Building structured manifest for local analysis
+        </p>
+      </div>
+    );
+  }
+
+  /* ──── Error state ───────────────────────────────────────────────────  */
+  if (error && !manifest) {
+    return (
+      <div className="space-y-4">
+        <Card className="border-danger/30">
+          <CardHeader title="Channel fetch failed" eyebrow="Error" />
+          <p className="text-sm text-danger">{error}</p>
+          <Button className="mt-4" onClick={fetchChannel}>
+            <RefreshCw className="h-4 w-4" />
+            Retry
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!manifest) return null;
+
+  /* ──── Main workspace ────────────────────────────────────────────────  */
+  return (
+    <div className="space-y-6">
+      {/* ── Channel header (YouTube-like) ─────────────────────────────── */}
+      <Card className="overflow-hidden p-0">
+        {/* Banner gradient */}
+        <div className="h-32 bg-gradient-to-r from-primary/20 via-primary/10 to-ai/10 sm:h-40" />
+        <div className="relative px-5 pb-5">
+          {/* Avatar */}
+          <div className="-mt-12 flex flex-col gap-4 sm:-mt-14 sm:flex-row sm:items-end">
+            <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-full border-4 border-surface bg-surface-muted sm:h-28 sm:w-28">
+              {channelItem?.thumbnailUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={channelItem.thumbnailUrl}
+                  alt=""
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <Tv className="h-10 w-10 text-muted" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 pb-1">
+              <h1 className="truncate text-2xl font-bold text-foreground sm:text-3xl">
+                {channelItem?.title ?? channelId}
+              </h1>
+              <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-muted">
+                {channelItem?.channelId && (
+                  <span className="font-mono text-xs">
+                    {channelItem.channelId}
+                  </span>
+                )}
+                {channelItem?.viewsCount !== null &&
+                  channelItem?.viewsCount !== undefined && (
+                    <Badge>
+                      {formatCount(channelItem.viewsCount, "total views")}
+                    </Badge>
+                  )}
+                {channelItem?.publishedAt && (
+                  <Badge>Joined {formatDate(channelItem.publishedAt)}</Badge>
+                )}
+              </div>
+              {channelItem?.description && (
+                <p className="mt-2 line-clamp-2 text-sm text-muted">
+                  {channelItem.description}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <a
+                href={channelItem?.url ?? `https://www.youtube.com/channel/${channelId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-border bg-surface px-4 text-sm text-muted transition hover:bg-surface-muted hover:text-foreground"
+              >
+                <ExternalLink className="h-4 w-4" />
+                YouTube
+              </a>
+              <Button
+                variant="secondary"
+                onClick={fetchChannel}
+                disabled={loading}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* ── Manifest summary ──────────────────────────────────────────── */}
+      <div className="workspace-grid-12">
+        <div className="col-span-12 xl:col-span-8">
+          <ManifestSummary manifest={manifest} />
+        </div>
+        <div className="col-span-12 xl:col-span-4">
+          <Card>
+            <CardHeader
+              title="Channel manifest"
+              eyebrow="Manifest-first architecture"
+            />
+            <p className="text-sm text-muted">
+              All {videoItems.length} videos are stored locally. Filters,
+              sorting, and search operate on this manifest without calling
+              YouTube again.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge tone="success">{videoItems.length} videos loaded</Badge>
+              {manifest.nextPageToken && (
+                <Badge tone="warning">More pages available</Badge>
+              )}
+            </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* ── Filter + Results + AI Grid ────────────────────────────────── */}
+      <section className="workspace-grid-12 items-start">
+        {/* ── Filters sidebar ─────────────────────────────────────────── */}
+        <Card className="col-span-12 xl:col-span-3">
+          <CardHeader
+            title="Local filters"
+            eyebrow="Search inside channel (no API calls)"
+            action={
+              <button
+                className="text-muted hover:text-foreground"
+                onClick={() => setFiltersOpen((o) => !o)}
+              >
+                <ChevronDown
+                  className={`h-4 w-4 transition ${filtersOpen ? "" : "-rotate-90"}`}
+                />
+              </button>
+            }
+          />
+          {filtersOpen && (
+            <div className="space-y-3">
+              {/* Keyword search inside results */}
+              <div>
+                <label className="mb-1 block text-xs text-muted">
+                  Keyword in results
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+                  <input
+                    className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm"
+                    placeholder="Search inside channel…"
+                    value={filters.keyword}
+                    onChange={(e) =>
+                      setFilters((c) => ({ ...c, keyword: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Views range */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted">
+                    Min views
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                    placeholder="0"
+                    value={filters.minViews ?? ""}
+                    onChange={(e) =>
+                      setFilters((c) => ({
+                        ...c,
+                        minViews: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted">
+                    Max views
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                    placeholder="∞"
+                    value={filters.maxViews ?? ""}
+                    onChange={(e) =>
+                      setFilters((c) => ({
+                        ...c,
+                        maxViews: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Likes range */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted">
+                    Min likes
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                    placeholder="0"
+                    value={filters.minLikes ?? ""}
+                    onChange={(e) =>
+                      setFilters((c) => ({
+                        ...c,
+                        minLikes: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted">
+                    Max likes
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                    placeholder="∞"
+                    value={filters.maxLikes ?? ""}
+                    onChange={(e) =>
+                      setFilters((c) => ({
+                        ...c,
+                        maxLikes: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Duration range */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-muted">
+                    Min duration (sec)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                    placeholder="0"
+                    value={filters.durationMinSec ?? ""}
+                    onChange={(e) =>
+                      setFilters((c) => ({
+                        ...c,
+                        durationMinSec: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted">
+                    Max duration (sec)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                    placeholder="∞"
+                    value={filters.durationMaxSec ?? ""}
+                    onChange={(e) =>
+                      setFilters((c) => ({
+                        ...c,
+                        durationMaxSec: e.target.value
+                          ? Number(e.target.value)
+                          : null,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Year filter */}
+              <div>
+                <label className="mb-1 block text-xs text-muted">
+                  Publish year
+                </label>
+                <input
+                  type="number"
+                  min={2005}
+                  max={2030}
+                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                  placeholder="Any year"
+                  value={filters.year ?? ""}
+                  onChange={(e) =>
+                    setFilters((c) => ({
+                      ...c,
+                      year: e.target.value ? Number(e.target.value) : null,
+                    }))
+                  }
+                />
+              </div>
+
+              {/* Language */}
+              <div>
+                <label className="mb-1 block text-xs text-muted">
+                  Language
+                </label>
+                <input
+                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                  placeholder="e.g. en, ar, es"
+                  value={filters.language ?? ""}
+                  onChange={(e) =>
+                    setFilters((c) => ({
+                      ...c,
+                      language: e.target.value || null,
+                    }))
+                  }
+                />
+              </div>
+
+              {/* Has description */}
+              <div>
+                <label className="mb-1 block text-xs text-muted">
+                  Has description
+                </label>
+                <select
+                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                  value={filters.hasDescription}
+                  onChange={(e) =>
+                    setFilters((c) => ({
+                      ...c,
+                      hasDescription: e.target.value as "any" | "yes" | "no",
+                    }))
+                  }
+                >
+                  <option value="any">Any</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+
+              {/* Shorts-like only */}
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={filters.shortsLikeOnly}
+                  onChange={(e) =>
+                    setFilters((c) => ({
+                      ...c,
+                      shortsLikeOnly: e.target.checked,
+                    }))
+                  }
+                />
+                Shorts-like only
+              </label>
+
+              {/* Sort */}
+              <div>
+                <label className="mb-1 block text-xs text-muted">Sort</label>
+                <select
+                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                  value={filters.sort}
+                  onChange={(e) =>
+                    setFilters((c) => ({
+                      ...c,
+                      sort: e.target.value as YouTubeResultFilters["sort"],
+                    }))
+                  }
+                >
+                  <option value="latest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="most_views">Most views</option>
+                  <option value="least_views">Least views</option>
+                  <option value="most_likes">Most likes</option>
+                  <option value="least_likes">Least likes</option>
+                  <option value="shortest">Shortest</option>
+                  <option value="longest">Longest</option>
+                  <option value="title_az">Title A→Z</option>
+                  <option value="title_za">Title Z→A</option>
+                  <option value="api_order">Upload order</option>
+                </select>
+              </div>
+
+              {/* Reset filters */}
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() =>
+                  setFilters({
+                    ...DEFAULT_YOUTUBE_RESULT_FILTERS,
+                    sort: "latest",
+                  })
+                }
+              >
+                <X className="h-4 w-4" />
+                Reset all filters
+              </Button>
+            </div>
+          )}
+        </Card>
+
+        {/* ── Results area ────────────────────────────────────────────── */}
+        <div className="col-span-12 space-y-4 xl:col-span-6">
+          {/* Results toolbar */}
+          <div className="research-surface p-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+              <Filter className="h-3.5 w-3.5" />
+              local search → local filters → local sort → render
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {activeChips.map((chip) => (
+                <Badge key={chip}>
+                  {chip}
+                  <button className="ml-1" aria-label="clear">
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              ))}
+              <Badge tone="success">{filteredItems.length} results</Badge>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => exportManifest("json")}
+              >
+                <Download className="h-4 w-4" />
+                Export JSON
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => exportManifest("ndjson")}
+              >
+                <Download className="h-4 w-4" />
+                Export NDJSON
+              </Button>
+              <Button variant="secondary">
+                <Save className="h-4 w-4" />
+                Save manifest
+              </Button>
+            </div>
+          </div>
+
+          {/* Video grid */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
+            {visibleItems.map((item) => (
+              <YouTubeItemCard
+                key={`${item.itemType}-${item.platformItemId}`}
+                item={item}
+                onAiExplore={setSelectedItem}
+              />
+            ))}
+          </div>
+
+          {/* Load more */}
+          {visibleCount < filteredItems.length && (
+            <div className="flex justify-center">
+              <Button
+                variant="secondary"
+                onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+              >
+                Load more ({filteredItems.length - visibleCount} remaining)
+              </Button>
+            </div>
+          )}
+
+          {filteredItems.length === 0 && (
+            <Card>
+              <p className="py-8 text-center text-sm text-muted">
+                No videos match the current filters. Try adjusting or resetting
+                the filter criteria.
+              </p>
+            </Card>
+          )}
+        </div>
+
+        {/* ── AI sidebar ──────────────────────────────────────────────── */}
+        <div className="col-span-12 xl:col-span-3">
+          <AiAssistantPanel
+            manifest={manifest}
+            selectedItem={selectedItem}
+          />
+        </div>
+      </section>
+    </div>
+  );
+}

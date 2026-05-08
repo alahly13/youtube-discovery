@@ -1,18 +1,23 @@
-import { Archive } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
-import { WorkspacePage } from "@/components/pages/workspace-page";
+import { ManifestDetailWorkspace } from "@/components/manifests/manifest-detail-workspace";
 
-export default async function ManifestDetailPage({ params }: { params: Promise<{ manifestId: string }> }) {
+/* ═══════════════════════════════════════════════════════════════════════════
+   Manifest Detail Page — /manifests/[manifestId]
+   ──────────────────────────────────────────────────────────────────────────
+   Fetches a specific manifest from the runtime memory store and provides
+   full local search, filter, sort, export, and scoped AI analysis.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export default async function ManifestDetailPage({
+  params,
+}: {
+  params: Promise<{ manifestId: string }>;
+}) {
   const { manifestId } = await params;
 
   return (
     <AppShell>
-      <WorkspacePage
-        icon={Archive}
-        eyebrow="Manifest detail"
-        title={`Manifest ${manifestId}`}
-        description="Manifest detail pages expose normalized item provenance, local search/filter/sort, export actions, and scoped AI analysis."
-      />
+      <ManifestDetailWorkspace manifestId={manifestId} />
     </AppShell>
   );
 }

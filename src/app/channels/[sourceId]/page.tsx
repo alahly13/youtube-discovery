@@ -1,18 +1,24 @@
-import { Tv } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
-import { WorkspacePage } from "@/components/pages/workspace-page";
+import { ChannelExplorerWorkspace } from "@/components/channels/channel-explorer-workspace";
 
-export default async function ChannelDetailPage({ params }: { params: Promise<{ sourceId: string }> }) {
+/* ═══════════════════════════════════════════════════════════════════════════
+   Channel Detail Page — /channels/[sourceId]
+   ──────────────────────────────────────────────────────────────────────────
+   Navigates like YouTube: user clicks a channel → arrives here → system
+   fetches all uploads via official API → builds a structured manifest →
+   allows local filtering, sorting, search-inside-channel, and AI analysis.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export default async function ChannelDetailPage({
+  params,
+}: {
+  params: Promise<{ sourceId: string }>;
+}) {
   const { sourceId } = await params;
 
   return (
     <AppShell>
-      <WorkspacePage
-        icon={Tv}
-        eyebrow="Channel detail"
-        title={`Channel ${sourceId}`}
-        description="Channel detail pages are reserved for uploads manifests, attempts, coverage, saved videos, and scoped AI analysis."
-      />
+      <ChannelExplorerWorkspace channelId={sourceId} />
     </AppShell>
   );
 }

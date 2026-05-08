@@ -1,6 +1,14 @@
 import { FolderKanban } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { WorkspacePage } from "@/components/pages/workspace-page";
+import { CollectionsWorkspace } from "@/components/collections/collections-workspace";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Collections Page — /collections
+   ──────────────────────────────────────────────────────────────────────────
+   Manages research collections that group related manifests together.
+   Currently backed by localStorage; awaits durable persistence.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function CollectionsPage() {
   return (
@@ -9,8 +17,10 @@ export default function CollectionsPage() {
         icon={FolderKanban}
         eyebrow="Collections"
         title="Research Collections"
-        description="Collections organize saved videos and manifests under owner-scoped durable records once persistence is enabled."
-      />
+        description="Collections organize saved manifests under named research groups. Create, browse, and manage your research collections."
+      >
+        <CollectionsWorkspace />
+      </WorkspacePage>
     </AppShell>
   );
 }

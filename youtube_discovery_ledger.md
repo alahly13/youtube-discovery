@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-05-08
+Last updated: 2026-05-08 (Channel & Playlist Exploration System)
 
 ## Project Identity And Mission
 
@@ -58,15 +58,16 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/link-explorer`: parses YouTube URLs and reports official API strategy without scraping.
 - `/channels`: saved channel library scaffold.
 - `/channel-explorer`: channel uploads workflow scaffold.
-- `/channels/[sourceId]`: channel detail scaffold for uploads manifests, attempts, and AI analyst.
+- `/channels/[sourceId]`: **FULL** channel explorer with YouTube-like profile header, uploads manifest, local filters/sort/search-inside-channel, export, and scoped AI panel.
 - `/playlists`: saved playlist library scaffold.
 - `/playlist-explorer`: playlist workflow scaffold.
-- `/playlists/[playlistId]`: playlist detail scaffold.
-- `/manifests`: manifest library scaffold and runtime manifest API note.
-- `/manifests/[manifestId]`: manifest detail scaffold.
-- `/collections`: collection scaffold.
-- `/saved`: saved library scaffold.
-- `/history`: fetch/search history scaffold.
+- `/playlists/[playlistId]`: **FULL** playlist explorer with order-preserving list/grid view, play-next navigation, local filters/sort/search-inside-playlist, export, and scoped AI panel.
+- `/manifests`: manifest library with interactive manifest listing, clickable navigation to detail pages.
+- `/manifests/[manifestId]`: **FULL** manifest detail workspace with local search/filter/sort, export, and scoped AI analysis.
+- `/collections`: **FULL** collection management workspace with create/delete/search and runtime manifest reference (localStorage-backed).
+- `/saved`: **FULL** saved library workspace with search, stats, deduplication by platformItemId, and navigation to watch/channel/playlist pages (localStorage-backed).
+- `/history`: **FULL** chronological history workspace with date-grouped manifest entries, search, and navigation to manifest detail pages.
+- `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings.
 - `/settings`: environment, quota, and API-status scaffold.
 
 ## API Route Map And Backend Authority Boundaries
@@ -170,8 +171,15 @@ Forbidden public secrets:
 - `src/components/layout/*`: app shell, navigation, theme toggle; keep provider secrets out.
 - `src/components/search/search-workspace.tsx`: main client search experience; local filters do not call YouTube.
 - `src/components/youtube/youtube-item-card.tsx`: video/channel/playlist item card; preserves zero numeric values.
-- `src/components/ai/ai-assistant-panel.tsx`: scoped AI client panel; sends only manifest snapshots.
+- `src/components/channels/channel-explorer-workspace.tsx`: full Channel Explorer client component with YouTube-like navigation, manifest-first fetching, advanced local filters, search-inside-channel, AI panel integration, and export.
+- `src/components/playlists/playlist-explorer-workspace.tsx`: full Playlist Explorer client component with order-preserving list/grid view, play-next navigation, local filters, AI panel, and export.
+- `src/components/manifests/manifest-detail-workspace.tsx`: manifest detail workspace with local search/filter/sort, export, and AI analysis.
+- `src/components/manifests/manifest-list-workspace.tsx`: manifest library list with clickable cards linking to detail pages.
 - `src/components/manifests/manifest-summary.tsx`: temporary manifest status and quota summary.
+- `src/components/collections/collections-workspace.tsx`: collection management with localStorage persistence, create/delete/search.
+- `src/components/saved/saved-library-workspace.tsx`: saved items management with localStorage, search, stats, and deduplication.
+- `src/components/history/history-workspace.tsx`: chronological history with date grouping, search, and manifest navigation.
+- `src/components/watch/watch-sidebar.tsx`: manifest-first suggested videos sidebar with watch settings-based ranking.
 - `src/lib/platforms/youtube/*`: server-only official YouTube adapter, normalizer, quota, errors, URL analyzer, search/channel/playlist services.
 - `src/lib/filters/youtube-result-filters.ts`: zero-safe local filter and sort pipeline.
 - `src/lib/manifests/*`: manifest builder and current runtime store.
@@ -190,7 +198,9 @@ Forbidden public secrets:
 - Live Gemini verification requires `GEMINI_API_KEY`; missing key returns a scoped unavailable response.
 - Prisma migration exists but was not applied; runtime manifest persistence is currently non-durable memory.
 - No auth provider is implemented; owner scope is a schema foundation only.
-- Saved library, collections, history, channel detail, playlist detail, and manifest detail pages are production shell scaffolds awaiting durable repository integration.
+- Collections and Saved Library use localStorage until durable Prisma persistence is enabled.
+- History shows runtime manifests only; durable history requires database migration.
+- Channel and Playlist explorers are the primary entry points but `/channels` and `/playlists` list pages remain scaffolds.
 - The root `DESIGN.md` requested by the prompt is absent; `Guide-Files/DESIGN.md`, `DESIGN_DARK.md`, `DESIGN_LIGHT.md`, and HTML inspiration files were used.
 
 ## Verification Commands And Expected Checks

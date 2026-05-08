@@ -17,11 +17,12 @@ export function ThemeToggle() {
   const [dark, setDark] = useState(true);
   const [mounted, setMounted] = useState(false);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- One-time DOM sync on mount; cannot avoid setState for theme truth */
   useEffect(() => {
-    /* Read the current theme from the DOM after hydration */
     setDark(document.documentElement.classList.contains("dark"));
     setMounted(true);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   function toggleTheme() {
     const nextDark = !dark;

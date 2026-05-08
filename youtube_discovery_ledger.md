@@ -213,6 +213,6 @@ Latest verification results on 2026-05-08:
 - `npm run db:status`: blocked by Prisma schema engine error against the configured endpoint; migration status not verified.
 - `npm audit fix`: no non-breaking fix available; moderate transitive advisories remain pending upstream/non-breaking updates.
 
-- Added `/watch/[videoId]` with YouTube IFrame API client player component and local watch settings integration.
-- Refactored `/search` workspace into clearer 12-column responsive sections with separate provider search and local in-results filtering labels plus save/export actions.
+- Added `/watch/[videoId]` with YouTube IFrame API client player component and Zustand-backed watch settings integration.
+- Refactored `/search` workspace into a 12-column responsive layout with separate provider search bar (including ALL/videos/channels/playlists selector) and local in-results filtering surface.
 - Settings now includes persistent Watch Experience Settings used by `/watch`.

@@ -1,5 +1,34 @@
 # PROJECT_CHANGE_LOG_LEDGER
 
+## 2026-05-09 (Vercel Build SSR Fix)
+
+### Date/time
+
+2026-05-09 ~21:53 UTC
+
+### Task summary
+
+Fixed Vercel build prerender crash: `ReferenceError: document is not defined` on `/ai-search` and all pages using AppShell.
+
+### Reason/root cause
+
+`ThemeToggle` component accessed `document.documentElement.classList` inside a `useState()` initializer. This runs on the server during Next.js static page generation where `document` doesn't exist.
+
+### Files changed
+
+- `src/components/layout/theme-toggle.tsx` — made SSR-safe: defaults to dark on server, syncs real DOM on mount via useEffect
+
+### Verification
+
+- `npm run lint`: passed (0 errors)
+- `npx tsc --noEmit`: passed (0 errors)
+
+### Secrets printed: No
+### Migrations created/applied: No
+### db:apply run: No
+
+---
+
 ## 2026-05-08 (Deployment Fixes & Search Workspace Upgrade)
 
 ### Date/time

@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "YouTube Discovery Research Terminal",
   description: "Manifest-first YouTube public metadata discovery, filtering, saving, exporting, and scoped AI analysis.",
+  icons: {
+    icon: "/browser_tab_icon.png",
+  },
 };
 
 export default function RootLayout({

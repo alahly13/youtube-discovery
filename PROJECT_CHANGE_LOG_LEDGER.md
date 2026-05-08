@@ -1,5 +1,87 @@
 # PROJECT_CHANGE_LOG_LEDGER
 
+## 2026-05-08 (Deployment Fixes & Search Workspace Upgrade)
+
+### Date/time
+
+2026-05-08 ~20:52 UTC
+
+### Agent/model if known
+
+Antigravity (Gemini)
+
+### Task summary
+
+Fixed Vercel build failure, upgraded search workspace to use real data instead of sample data, fixed security leak in `.env.example`, fixed double-save in search route, and diagnosed YouTube API key `API_KEY_SERVICE_BLOCKED` error.
+
+### Reason/root cause
+
+1. Vercel build failed because `env:validate` script crashed when `NEXT_PUBLIC_APP_URL` was not set (Vercel doesn't inject it by default).
+2. Search workspace showed fake sample data on initial load instead of starting empty.
+3. `.env.example` contained a real Supabase database password committed to git.
+4. Search route called `saveManifestInMemory()` twice (service + route handler).
+5. YouTube API key returns 403 because YouTube Data API v3 is not enabled in the Google Cloud project.
+
+### Files changed
+
+- `scripts/app-validate-env.mjs` — auto-populate `NEXT_PUBLIC_APP_URL` from Vercel env vars, downgrade persistence warning
+- `.env.example` — scrub real database password, replace with placeholder template
+- `src/components/search/search-workspace.tsx` — complete rewrite: empty initial state, error handling, loading states, Zustand integration, load-more pagination
+- `src/app/api/youtube/search/route.ts` — remove double `saveManifestInMemory`, remove unused import
+
+### Technical details
+
+- Env validation now auto-detects Vercel environment via `VERCEL_URL` and `VERCEL_PROJECT_PRODUCTION_URL`
+- Missing persistence keys now warn instead of `process.exit(1)`
+- Search workspace stores manifest in Zustand for cross-page use (watch sidebar, manifests page)
+- Added `PAGE_SIZE = 24` load-more pagination for large result sets
+
+### Architecture impact
+
+Minimal — no route changes, no schema changes. Search workspace now properly integrates with Zustand manifest store.
+
+### Environment impact
+
+Vercel builds will no longer fail when `NEXT_PUBLIC_APP_URL` is not explicitly set.
+
+### Database/migration impact
+
+None. No migrations created or applied.
+
+### YouTube API/quota impact
+
+Identified that the YouTube Data API v3 is blocked at the Google Cloud project level (`API_KEY_SERVICE_BLOCKED`). User must enable the API in Google Cloud Console.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors, 0 warnings)
+- `npx tsc --noEmit`: passed (0 errors)
+- Dev server: running at http://localhost:3001
+- YouTube API test: 403 Forbidden (API not enabled — user action required)
+
+### Blocked checks
+
+- YouTube live search blocked by `API_KEY_SERVICE_BLOCKED`
+- Production build blocked by locked `.next` log file (dev server running)
+
+### Remaining risks/limitations
+
+- User must enable YouTube Data API v3 in Google Cloud Console
+- User should rotate Supabase database password since it was publicly committed
+- Persistence is still in-memory until database migrations are applied
+
+### Whether secrets were printed
+
+No secrets were printed. DATABASE_URL and API keys were always redacted in output.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether db:apply was run
+
+No.
+
 ## 2026-05-08
 
 ### Date/time

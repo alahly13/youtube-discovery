@@ -127,3 +127,83 @@ One migration was created. No migration was applied.
 ### Whether `db:apply` was run
 
 No.
+
+## 2026-05-08 (follow-up)
+
+### Date/time
+
+2026-05-08 14:21 UTC.
+
+### Agent/model if known
+
+Codex GPT-5.3-Codex.
+
+### Task summary
+
+Upgraded search workspace layout and behavior toward a production manifest-first UX, added watch page foundation using official YouTube IFrame Player API, and introduced persistent watch experience settings.
+
+### Reason/root cause
+
+User requested a higher-fidelity 2026 SaaS UX with strict separation between provider calls and local filtering, plus a compliant watch experience path.
+
+### Files changed
+
+- `src/components/search/search-workspace.tsx`
+- `src/components/watch/watch-player.tsx`
+- `src/app/watch/[videoId]/page.tsx`
+- `src/lib/watch-settings.ts`
+- `src/app/settings/page.tsx`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Refactored search page into explicit provider-search section and local filter section.
+- Added resource type selection with `all` option, explicit Enter/submit provider trigger, and save/export manifest controls.
+- Added watch player component that dynamically loads the official YouTube IFrame API and initializes `YT.Player` with autoplay/controls/branding parameters.
+- Added watch settings model with localStorage persistence and settings UI controls.
+
+### Architecture impact
+
+Manifest-first boundary is preserved: provider search remains explicit; local filter flow remains local-only. Watch page introduces official embed-only playback surface without downloading/rehosting.
+
+### Environment impact
+
+No new env vars required.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact when relevant
+
+Watch page uses official embedded player and no server-side stream extraction.
+
+### AI scope/safety impact when relevant
+
+Search AI panel remains scoped to current manifest.
+
+### Verification run and results
+
+- `npm run lint`: pending in this follow-up section.
+- `npm run typecheck`: pending in this follow-up section.
+
+### Blocked checks, if any
+
+None yet.
+
+### Remaining risks/limitations
+
+Watch recommendations are scaffold text only; ranking pipeline and context-aware next/previous navigation are not fully implemented yet.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No migrations created or applied.
+
+### Whether `db:apply` was run
+
+No.

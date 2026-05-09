@@ -70,6 +70,8 @@ export const YouTubeLocalFilterSchema = z.object({
     year: z.number().nullable().default(null),
     yearFrom: z.number().nullable().default(null),
     yearTo: z.number().nullable().default(null),
+    /** Month filter (1-12), can be combined with year or used independently */
+    month: z.number().int().min(1).max(12).nullable().default(null),
     publishedAfter: z.string().nullable().default(null),
     publishedBefore: z.string().nullable().default(null),
     itemTypes: z.array(z.enum(YOUTUBE_ITEM_TYPES)).default([]),
@@ -78,6 +80,8 @@ export const YouTubeLocalFilterSchema = z.object({
     language: z.string().nullable().default(null),
     hasThumbnail: z.enum(["any", "yes", "no"]).default("any"),
     hasDescription: z.enum(["any", "yes", "no"]).default("any"),
+    /** Presence filter for language metadata */
+    hasLanguage: z.enum(["any", "yes", "no"]).default("any"),
     shortsLikeOnly: z.boolean().default(false),
     sort: z
       .enum([
@@ -94,11 +98,14 @@ export const YouTubeLocalFilterSchema = z.object({
         "longest",
         "title_az",
         "title_za",
+        "engagement_desc",
+        "engagement_asc",
       ])
       .default("api_order"),
     strictMetadata: z.boolean().default(false),
   }),
 });
+
 
 export const YouTubeLinkAnalyzeSchema = z.object({
   input: z.string().trim().min(3).max(500),

@@ -1,5 +1,13 @@
 import type { NormalizedYouTubeDiscoveryItem, YouTubeResultFilters } from "@/types/youtube";
-import { getPublishedYear } from "@/lib/utils/format";
+import { getPublishedMonth, getPublishedYear } from "@/lib/utils/format";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   YouTube Result Pipeline — local-only filter + sort.
+   ──────────────────────────────────────────────────────────────────────────
+   Every numeric comparison uses nullish equality (=== null) so that 0 views,
+   0 likes, and 0 comments are always treated as valid filterable numbers.
+   Never use `!value` or `value || fallback` patterns on numeric metadata.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 export function applyYouTubeResultPipeline(
   items: NormalizedYouTubeDiscoveryItem[],
@@ -43,11 +51,13 @@ function matchesFilters(item: NormalizedYouTubeDiscoveryItem, filters: YouTubeRe
     inNumericRange(item.durationSeconds, filters.durationMinSec, filters.durationMaxSec, filters.strictMetadata) &&
     matchesTarget(item.viewsCount, filters.targetViews, filters.strictMetadata) &&
     matchesYear(item.publishedAt, filters) &&
+    matchesMonth(item.publishedAt, filters) &&
     matchesOptionalText(item.channelId, filters.channelId) &&
     matchesOptionalText(item.channelTitle, filters.channelName) &&
     matchesOptionalText(item.language, filters.language) &&
     matchesPresence(item.thumbnailUrl, filters.hasThumbnail) &&
     matchesPresence(item.description, filters.hasDescription) &&
+    matchesPresence(item.language, filters.hasLanguage) &&
     (!filters.shortsLikeOnly || item.isShortsLike || item.itemType === "shorts_like") &&
     (filters.itemTypes.length === 0 || filters.itemTypes.includes(item.itemType))
   );
@@ -122,6 +132,20 @@ function matchesYear(publishedAt: string | null, filters: YouTubeResultFilters) 
   return true;
 }
 
+/** Month filter (1-12). Can be combined with a year filter or used independently. */
+function matchesMonth(publishedAt: string | null, filters: YouTubeResultFilters) {
+  if (filters.month === null) {
+    return true;
+  }
+
+  if (!publishedAt) {
+    return !filters.strictMetadata;
+  }
+
+  const month = getPublishedMonth(publishedAt);
+  return month === filters.month;
+}
+
 function matchesOptionalText(value: string | null, query: string | null) {
   if (!query) {
     return true;
@@ -138,6 +162,10 @@ function matchesPresence(value: string | null, filter: "any" | "yes" | "no") {
   const present = value !== null && value.trim() !== "";
   return filter === "yes" ? present : !present;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Sorting — includes engagement (like-to-view ratio) for discovery.
+   ═══════════════════════════════════════════════════════════════════════════ */
 
 function sortItems(items: NormalizedYouTubeDiscoveryItem[], sort: YouTubeResultFilters["sort"]) {
   const nextItems = [...items];
@@ -167,10 +195,23 @@ function sortItems(items: NormalizedYouTubeDiscoveryItem[], sort: YouTubeResultF
       return nextItems.sort((a, b) => a.title.localeCompare(b.title));
     case "title_za":
       return nextItems.sort((a, b) => b.title.localeCompare(a.title));
+    case "engagement_desc":
+      return nextItems.sort((a, b) => compareNumbersDesc(getEngagement(a), getEngagement(b)));
+    case "engagement_asc":
+      return nextItems.sort((a, b) => compareNumbersAsc(getEngagement(a), getEngagement(b)));
     case "api_order":
     default:
       return nextItems;
   }
+}
+
+/** Like-to-view ratio as a measure of engagement. Returns null when data
+ *  is missing so nullish items sort to the bottom of the list. */
+function getEngagement(item: NormalizedYouTubeDiscoveryItem): number | null {
+  if (item.likesCount === null || item.viewsCount === null) return null;
+  // Avoid division by zero — treat 0 views with any likes as infinite engagement
+  if (item.viewsCount === 0) return item.likesCount > 0 ? 1 : 0;
+  return item.likesCount / item.viewsCount;
 }
 
 function compareDates(a: string | null, b: string | null) {

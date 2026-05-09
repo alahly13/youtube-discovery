@@ -6,8 +6,6 @@ import {
   Filter,
   Loader2,
   Save,
-  Search,
-  X,
 } from "lucide-react";
 import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import type { YouTubeManifest } from "@/types/manifest";
@@ -17,6 +15,7 @@ import type {
 } from "@/types/youtube";
 import { DEFAULT_YOUTUBE_RESULT_FILTERS } from "@/types/youtube";
 import { AiAssistantPanel } from "@/components/ai/ai-assistant-panel";
+import { AdvancedFiltersPanel } from "@/components/filters/advanced-filters-panel";
 import { ManifestSummary } from "@/components/manifests/manifest-summary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,13 +51,10 @@ export function ManifestDetailWorkspace({
     useState<NormalizedYouTubeDiscoveryItem | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
+  const totalItems = manifest?.normalizedItems ?? [];
   const filteredItems = useMemo(
-    () =>
-      applyYouTubeResultPipeline(
-        manifest?.normalizedItems ?? [],
-        filters,
-      ),
-    [manifest, filters],
+    () => applyYouTubeResultPipeline(totalItems, filters),
+    [totalItems, filters],
   );
 
   const visibleItems = useMemo(
@@ -155,61 +151,22 @@ export function ManifestDetailWorkspace({
 
       {/* Filters + Results + AI */}
       <section className="workspace-grid-12 items-start">
-        <Card className="col-span-12 xl:col-span-3">
-          <CardHeader
-            title="Local filters"
-            eyebrow="Search inside manifest"
-          />
-          <div className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-              <input
-                className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm"
-                placeholder="Search inside manifest…"
-                value={filters.keyword}
-                onChange={(e) =>
-                  setFilters((c) => ({ ...c, keyword: e.target.value }))
-                }
-              />
-            </div>
-            <select
-              className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-              value={filters.sort}
-              onChange={(e) =>
-                setFilters((c) => ({
-                  ...c,
-                  sort: e.target.value as YouTubeResultFilters["sort"],
-                }))
-              }
-            >
-              <option value="api_order">Original order</option>
-              <option value="latest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-              <option value="most_views">Most views</option>
-              <option value="least_views">Least views</option>
-              <option value="title_az">Title A→Z</option>
-            </select>
-            <Button
-              variant="ghost"
-              className="w-full"
-              onClick={() =>
-                setFilters({
-                  ...DEFAULT_YOUTUBE_RESULT_FILTERS,
-                  sort: "api_order",
-                })
-              }
-            >
-              <X className="h-4 w-4" />
-              Reset
-            </Button>
-          </div>
-        </Card>
+        {/* ── Advanced Filters Panel ─────────────────────────────────── */}
+        <AdvancedFiltersPanel
+          filters={filters}
+          onFiltersChange={(f) => { setFilters(f); setVisibleCount(PAGE_SIZE); }}
+          totalCount={totalItems.length}
+          filteredCount={filteredItems.length}
+          defaultSort="api_order"
+          searchPlaceholder="Search inside manifest…"
+          showTypeFilters={true}
+        />
 
         <div className="col-span-12 space-y-4 xl:col-span-6">
           <div className="research-surface p-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
               <Filter className="h-3.5 w-3.5" />
-              {filteredItems.length} results from manifest
+              Showing {filteredItems.length} of {totalItems.length} results from manifest
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button

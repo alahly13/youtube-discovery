@@ -1,16 +1,13 @@
 "use client";
 
 import {
-  ChevronDown,
   Download,
   ExternalLink,
   Filter,
   Loader2,
   RefreshCw,
   Save,
-  Search,
   Tv,
-  X,
 } from "lucide-react";
 import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import type { YouTubeManifest } from "@/types/manifest";
@@ -20,6 +17,7 @@ import type {
 } from "@/types/youtube";
 import { DEFAULT_YOUTUBE_RESULT_FILTERS } from "@/types/youtube";
 import { AiAssistantPanel } from "@/components/ai/ai-assistant-panel";
+import { AdvancedFiltersPanel } from "@/components/filters/advanced-filters-panel";
 import { ManifestSummary } from "@/components/manifests/manifest-summary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,7 +60,6 @@ export function ChannelExplorerWorkspace({
   });
   const [selectedItem, setSelectedItem] =
     useState<NormalizedYouTubeDiscoveryItem | null>(null);
-  const [filtersOpen, setFiltersOpen] = useState(true);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const setCurrentManifest = useYouTubeWorkspaceStore(
@@ -96,30 +93,6 @@ export function ChannelExplorerWorkspace({
   const visibleItems = useMemo(
     () => filteredItems.slice(0, visibleCount),
     [filteredItems, visibleCount],
-  );
-
-  /* ──── Active filter chips for visual feedback ─────────────────────── */
-  const activeChips = useMemo(
-    () =>
-      [
-        filters.keyword ? `Keyword: ${filters.keyword}` : null,
-        filters.channelName ? `Channel: ${filters.channelName}` : null,
-        filters.language ? `Language: ${filters.language}` : null,
-        filters.minViews !== null ? `Min views: ${filters.minViews}` : null,
-        filters.maxViews !== null ? `Max views: ${filters.maxViews}` : null,
-        filters.durationMinSec !== null
-          ? `Min duration: ${filters.durationMinSec}s`
-          : null,
-        filters.durationMaxSec !== null
-          ? `Max duration: ${filters.durationMaxSec}s`
-          : null,
-        filters.shortsLikeOnly ? "Shorts-like only" : null,
-        filters.hasDescription !== "any"
-          ? `Description: ${filters.hasDescription}`
-          : null,
-        filters.year !== null ? `Year: ${filters.year}` : null,
-      ].filter(Boolean) as string[],
-    [filters],
   );
 
   /* ──── Fetch channel uploads manifest ─────────────────────────────── */
@@ -318,293 +291,16 @@ export function ChannelExplorerWorkspace({
 
       {/* ── Filter + Results + AI Grid ────────────────────────────────── */}
       <section className="workspace-grid-12 items-start">
-        {/* ── Filters sidebar ─────────────────────────────────────────── */}
-        <Card className="col-span-12 xl:col-span-3">
-          <CardHeader
-            title="Local filters"
-            eyebrow="Search inside channel (no API calls)"
-            action={
-              <button
-                className="text-muted hover:text-foreground"
-                onClick={() => setFiltersOpen((o) => !o)}
-              >
-                <ChevronDown
-                  className={`h-4 w-4 transition ${filtersOpen ? "" : "-rotate-90"}`}
-                />
-              </button>
-            }
-          />
-          {filtersOpen && (
-            <div className="space-y-3">
-              {/* Keyword search inside results */}
-              <div>
-                <label className="mb-1 block text-xs text-muted">
-                  Keyword in results
-                </label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-                  <input
-                    className="h-10 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-sm"
-                    placeholder="Search inside channel…"
-                    value={filters.keyword}
-                    onChange={(e) =>
-                      setFilters((c) => ({ ...c, keyword: e.target.value }))
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Views range */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    Min views
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                    placeholder="0"
-                    value={filters.minViews ?? ""}
-                    onChange={(e) =>
-                      setFilters((c) => ({
-                        ...c,
-                        minViews: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    Max views
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                    placeholder="∞"
-                    value={filters.maxViews ?? ""}
-                    onChange={(e) =>
-                      setFilters((c) => ({
-                        ...c,
-                        maxViews: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Likes range */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    Min likes
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                    placeholder="0"
-                    value={filters.minLikes ?? ""}
-                    onChange={(e) =>
-                      setFilters((c) => ({
-                        ...c,
-                        minLikes: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    Max likes
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                    placeholder="∞"
-                    value={filters.maxLikes ?? ""}
-                    onChange={(e) =>
-                      setFilters((c) => ({
-                        ...c,
-                        maxLikes: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Duration range */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    Min duration (sec)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                    placeholder="0"
-                    value={filters.durationMinSec ?? ""}
-                    onChange={(e) =>
-                      setFilters((c) => ({
-                        ...c,
-                        durationMinSec: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    Max duration (sec)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                    placeholder="∞"
-                    value={filters.durationMaxSec ?? ""}
-                    onChange={(e) =>
-                      setFilters((c) => ({
-                        ...c,
-                        durationMaxSec: e.target.value
-                          ? Number(e.target.value)
-                          : null,
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-
-              {/* Year filter */}
-              <div>
-                <label className="mb-1 block text-xs text-muted">
-                  Publish year
-                </label>
-                <input
-                  type="number"
-                  min={2005}
-                  max={2030}
-                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                  placeholder="Any year"
-                  value={filters.year ?? ""}
-                  onChange={(e) =>
-                    setFilters((c) => ({
-                      ...c,
-                      year: e.target.value ? Number(e.target.value) : null,
-                    }))
-                  }
-                />
-              </div>
-
-              {/* Language */}
-              <div>
-                <label className="mb-1 block text-xs text-muted">
-                  Language
-                </label>
-                <input
-                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                  placeholder="e.g. en, ar, es"
-                  value={filters.language ?? ""}
-                  onChange={(e) =>
-                    setFilters((c) => ({
-                      ...c,
-                      language: e.target.value || null,
-                    }))
-                  }
-                />
-              </div>
-
-              {/* Has description */}
-              <div>
-                <label className="mb-1 block text-xs text-muted">
-                  Has description
-                </label>
-                <select
-                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                  value={filters.hasDescription}
-                  onChange={(e) =>
-                    setFilters((c) => ({
-                      ...c,
-                      hasDescription: e.target.value as "any" | "yes" | "no",
-                    }))
-                  }
-                >
-                  <option value="any">Any</option>
-                  <option value="yes">Yes</option>
-                  <option value="no">No</option>
-                </select>
-              </div>
-
-              {/* Shorts-like only */}
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={filters.shortsLikeOnly}
-                  onChange={(e) =>
-                    setFilters((c) => ({
-                      ...c,
-                      shortsLikeOnly: e.target.checked,
-                    }))
-                  }
-                />
-                Shorts-like only
-              </label>
-
-              {/* Sort */}
-              <div>
-                <label className="mb-1 block text-xs text-muted">Sort</label>
-                <select
-                  className="h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                  value={filters.sort}
-                  onChange={(e) =>
-                    setFilters((c) => ({
-                      ...c,
-                      sort: e.target.value as YouTubeResultFilters["sort"],
-                    }))
-                  }
-                >
-                  <option value="latest">Newest first</option>
-                  <option value="oldest">Oldest first</option>
-                  <option value="most_views">Most views</option>
-                  <option value="least_views">Least views</option>
-                  <option value="most_likes">Most likes</option>
-                  <option value="least_likes">Least likes</option>
-                  <option value="shortest">Shortest</option>
-                  <option value="longest">Longest</option>
-                  <option value="title_az">Title A→Z</option>
-                  <option value="title_za">Title Z→A</option>
-                  <option value="api_order">Upload order</option>
-                </select>
-              </div>
-
-              {/* Reset filters */}
-              <Button
-                variant="ghost"
-                className="w-full"
-                onClick={() =>
-                  setFilters({
-                    ...DEFAULT_YOUTUBE_RESULT_FILTERS,
-                    sort: "latest",
-                  })
-                }
-              >
-                <X className="h-4 w-4" />
-                Reset all filters
-              </Button>
-            </div>
-          )}
-        </Card>
+        {/* ── Advanced Filters Panel ─────────────────────────────────── */}
+        <AdvancedFiltersPanel
+          filters={filters}
+          onFiltersChange={(f) => { setFilters(f); setVisibleCount(PAGE_SIZE); }}
+          totalCount={videoItems.length}
+          filteredCount={filteredItems.length}
+          defaultSort="latest"
+          searchPlaceholder="Search inside channel…"
+          showTypeFilters={false}
+        />
 
         {/* ── Results area ────────────────────────────────────────────── */}
         <div className="col-span-12 space-y-4 xl:col-span-6">
@@ -615,15 +311,9 @@ export function ChannelExplorerWorkspace({
               local search → local filters → local sort → render
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-              {activeChips.map((chip) => (
-                <Badge key={chip}>
-                  {chip}
-                  <button className="ml-1" aria-label="clear">
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
-              ))}
-              <Badge tone="success">{filteredItems.length} results</Badge>
+              <Badge tone="success">
+                Showing {filteredItems.length} of {videoItems.length} results
+              </Badge>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button

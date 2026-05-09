@@ -11,6 +11,7 @@ import type {
 } from "@/types/youtube";
 import { DEFAULT_YOUTUBE_RESULT_FILTERS } from "@/types/youtube";
 import { AiAssistantPanel } from "@/components/ai/ai-assistant-panel";
+import { AdvancedFiltersPanel } from "@/components/filters/advanced-filters-panel";
 import { ManifestSummary } from "@/components/manifests/manifest-summary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,18 +51,12 @@ export function SearchWorkspace() {
 
   const setCurrentManifest = useYouTubeWorkspaceStore((s) => s.setCurrentManifest);
 
+  const totalItems = manifest?.normalizedItems ?? [];
   const filteredItems = useMemo(
-    () => applyYouTubeResultPipeline(manifest?.normalizedItems ?? [], filters),
-    [manifest?.normalizedItems, filters],
+    () => applyYouTubeResultPipeline(totalItems, filters),
+    [totalItems, filters],
   );
   const visibleItems = useMemo(() => filteredItems.slice(0, visibleCount), [filteredItems, visibleCount]);
-
-  const activeChips = [
-    filters.keyword ? `Keyword: ${filters.keyword}` : null,
-    filters.channelName ? `Channel: ${filters.channelName}` : null,
-    filters.language ? `Language: ${filters.language}` : null,
-    filters.shortsLikeOnly ? "Shorts-like only" : null,
-  ].filter(Boolean) as string[];
 
   async function runSearch() {
     if (!settings.query.trim()) return;
@@ -186,68 +181,29 @@ export function SearchWorkspace() {
       {/* ── Filters + Results + AI Grid ──────────────────────────────── */}
       {manifest && !loading && (
         <section className="workspace-grid-12 items-start">
-          <Card className="col-span-12 xl:col-span-3">
-            <CardHeader title="Local filters" eyebrow="Search inside results (no API calls)" />
-            <div className="space-y-2">
-              <input
-                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                placeholder="Search inside results (no API calls)"
-                value={filters.keyword}
-                onChange={(e) => setFilters((c) => ({ ...c, keyword: e.target.value }))}
-              />
-              <input
-                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                placeholder="Channel name"
-                value={filters.channelName ?? ""}
-                onChange={(e) => setFilters((c) => ({ ...c, channelName: e.target.value || null }))}
-              />
-              <input
-                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                placeholder="Language"
-                value={filters.language ?? ""}
-                onChange={(e) => setFilters((c) => ({ ...c, language: e.target.value || null }))}
-              />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={filters.shortsLikeOnly}
-                  onChange={(e) => setFilters((c) => ({ ...c, shortsLikeOnly: e.target.checked }))}
-                />
-                Shorts-like only
-              </label>
-              <select
-                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-                value={filters.sort}
-                onChange={(e) => setFilters((c) => ({ ...c, sort: e.target.value as YouTubeResultFilters["sort"] }))}
-              >
-                <option value="latest">newest</option>
-                <option value="oldest">oldest</option>
-                <option value="most_views">most views</option>
-                <option value="least_views">least views</option>
-                <option value="most_likes">most likes</option>
-                <option value="shortest">shortest</option>
-                <option value="longest">longest</option>
-                <option value="title_az">A-Z</option>
-              </select>
-            </div>
-          </Card>
+          {/* ── Advanced Filters Panel ──────────────────────────────────── */}
+          <AdvancedFiltersPanel
+            filters={filters}
+            onFiltersChange={(f) => { setFilters(f); setVisibleCount(PAGE_SIZE); }}
+            totalCount={totalItems.length}
+            filteredCount={filteredItems.length}
+            defaultSort="latest"
+            searchPlaceholder="Search inside results (no API calls)"
+            showTypeFilters={true}
+          />
 
+          {/* ── Results area ─────────────────────────────────────────────── */}
           <div className="col-span-12 space-y-4 xl:col-span-6">
+            {/* Results toolbar */}
             <div className="research-surface p-4">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
                 <Filter className="h-3.5 w-3.5" />
                 local search → local filters → local sort → render
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {activeChips.map((chip) => (
-                  <Badge key={chip}>
-                    {chip}
-                    <button className="ml-1" aria-label="clear">
-                      <X className="h-3 w-3" />
-                    </button>
-                  </Badge>
-                ))}
-                <Badge tone="success">{filteredItems.length} results</Badge>
+                <Badge tone="success">
+                  Showing {filteredItems.length} of {totalItems.length} results
+                </Badge>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => exportManifest(manifest, "json")}>

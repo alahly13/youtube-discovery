@@ -71,6 +71,13 @@ export interface YouTubeSearchSettings {
   pageToken?: string;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   YouTube Result Filters — local-only filter/sort contract.
+   ──────────────────────────────────────────────────────────────────────────
+   All numeric fields use `null` for "not set". Zero (0) is always a valid
+   boundary. Never use `!value` or `|| fallback` on these fields — that
+   would silently drop 0-view or 0-like items from the result set.
+   ═══════════════════════════════════════════════════════════════════════════ */
 export interface YouTubeResultFilters {
   keyword: string;
   minViews: number | null;
@@ -85,6 +92,8 @@ export interface YouTubeResultFilters {
   year: number | null;
   yearFrom: number | null;
   yearTo: number | null;
+  /** Month filter (1-12). Can be combined with year or used independently. */
+  month: number | null;
   publishedAfter: string | null;
   publishedBefore: string | null;
   itemTypes: YouTubeDiscoveryItemType[];
@@ -93,6 +102,8 @@ export interface YouTubeResultFilters {
   language: string | null;
   hasThumbnail: "any" | "yes" | "no";
   hasDescription: "any" | "yes" | "no";
+  /** Presence filter for language metadata */
+  hasLanguage: "any" | "yes" | "no";
   shortsLikeOnly: boolean;
   sort:
     | "api_order"
@@ -107,7 +118,11 @@ export interface YouTubeResultFilters {
     | "shortest"
     | "longest"
     | "title_az"
-    | "title_za";
+    | "title_za"
+    /** Engagement: like-to-view ratio descending */
+    | "engagement_desc"
+    /** Engagement: like-to-view ratio ascending */
+    | "engagement_asc";
   strictMetadata: boolean;
 }
 
@@ -125,6 +140,7 @@ export const DEFAULT_YOUTUBE_RESULT_FILTERS: YouTubeResultFilters = {
   year: null,
   yearFrom: null,
   yearTo: null,
+  month: null,
   publishedAfter: null,
   publishedBefore: null,
   itemTypes: [],
@@ -133,6 +149,7 @@ export const DEFAULT_YOUTUBE_RESULT_FILTERS: YouTubeResultFilters = {
   language: null,
   hasThumbnail: "any",
   hasDescription: "any",
+  hasLanguage: "any",
   shortsLikeOnly: false,
   sort: "api_order",
   strictMetadata: false,

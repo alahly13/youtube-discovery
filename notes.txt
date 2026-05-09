@@ -1,2 +1,4 @@
 password >> NV5fjzgJjy7pid6u
  $env:CONFIRM_DB_APPLY="true"; npm run db:apply
+
+ vercel api 1 >> vck_6okNNP5Smvv2PaQCogn2aY4Yv5gpq6GO0FL6glwNrxAU28puGP2Mf8kc

@@ -67,6 +67,7 @@ export function PlaylistExplorerWorkspace({
   const setCurrentManifest = useYouTubeWorkspaceStore(
     (s) => s.setCurrentManifest,
   );
+  const fetchSettings = useYouTubeWorkspaceStore((s) => s.fetchSettings);
 
   /* ──── Playlist metadata (first item in manifest is the playlist) ──── */
   const playlistItem = useMemo(
@@ -108,8 +109,8 @@ export function PlaylistExplorerWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input: playlistId,
-          maxPages: 10,
-          maxItems: 500,
+          maxPages: fetchSettings.maxPages,
+          maxItems: fetchSettings.maxItems,
         }),
       });
 
@@ -131,7 +132,7 @@ export function PlaylistExplorerWorkspace({
     } finally {
       startTransition(() => setLoading(false));
     }
-  }, [playlistId, setCurrentManifest]);
+  }, [playlistId, setCurrentManifest, fetchSettings]);
 
   /* ──── Auto-fetch on mount ───────────────────────────────────────── */
   useEffect(() => {

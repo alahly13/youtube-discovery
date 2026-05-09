@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-05-08 (Channel & Playlist Exploration System)
+Last updated: 2026-05-09 (Settings & Local Libraries Update)
 
 ## Project Identity And Mission
 
@@ -56,10 +56,10 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, and scoped AI panel.
 - `/ai-search`: AI Search / AI Discovery workspace and safety contract.
 - `/link-explorer`: parses YouTube URLs and reports official API strategy without scraping.
-- `/channels`: saved channel library scaffold.
+- `/channels`: **FULL** saved channel library (localStorage-backed).
 - `/channel-explorer`: channel uploads workflow scaffold.
 - `/channels/[sourceId]`: **FULL** channel explorer with YouTube-like profile header, uploads manifest, local filters/sort/search-inside-channel, export, and scoped AI panel.
-- `/playlists`: saved playlist library scaffold.
+- `/playlists`: **FULL** saved playlist library (localStorage-backed).
 - `/playlist-explorer`: playlist workflow scaffold.
 - `/playlists/[playlistId]`: **FULL** playlist explorer with order-preserving list/grid view, play-next navigation, local filters/sort/search-inside-playlist, export, and scoped AI panel.
 - `/manifests`: manifest library with interactive manifest listing, clickable navigation to detail pages.
@@ -67,8 +67,8 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/collections`: **FULL** collection management workspace with create/delete/search and runtime manifest reference (localStorage-backed).
 - `/saved`: **FULL** saved library workspace with search, stats, deduplication by platformItemId, and navigation to watch/channel/playlist pages (localStorage-backed).
 - `/history`: **FULL** chronological history workspace with date-grouped manifest entries, search, and navigation to manifest detail pages.
-- `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings.
-- `/settings`: environment, quota, and API-status scaffold.
+- `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings, and graceful error handling.
+- `/settings`: **FULL** Settings page with environment status and persistent YouTube Fetch Controls.
 
 ## API Route Map And Backend Authority Boundaries
 

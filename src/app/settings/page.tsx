@@ -1,22 +1,29 @@
-"use client";
-
 import { Settings } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { WorkspacePage } from "@/components/pages/workspace-page";
-import { Card, CardHeader } from "@/components/ui/card";
-import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
+import { SettingsClient } from "./settings-client";
 
 export default function SettingsPage() {
-  const watchSettings = useYouTubeWorkspaceStore((s) => s.watchSettings);
-  const updateWatchSettings = useYouTubeWorkspaceStore((s) => s.updateWatchSettings);
+  const envStatus = {
+    youtubeApiEnabled: !!process.env.YOUTUBE_API_KEY,
+    geminiApiEnabled: !!process.env.GEMINI_API_KEY,
+    databaseEnabled: !!process.env.DATABASE_URL,
+    youtubeQuotaBudget: parseInt(process.env.YOUTUBE_DAILY_QUOTA_BUDGET || "10000", 10),
+    defaultPageSize: parseInt(process.env.YOUTUBE_SEARCH_PAGE_SIZE || "25", 10),
+    defaultMaxPages: parseInt(process.env.YOUTUBE_SEARCH_MAX_PAGES || "3", 10),
+    defaultMaxItems: parseInt(process.env.YOUTUBE_SEARCH_MAX_ITEMS || "150", 10),
+  };
 
-  return <AppShell><WorkspacePage icon={Settings} eyebrow="Settings" title="API Status, Quota, and Environment" description="Controls YouTube watch and discovery behavior.">
-    <Card><CardHeader title="Watch Experience Settings" eyebrow="Controls /watch playback behavior" />
-      <div className="grid gap-3 p-4 md:grid-cols-2">
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={watchSettings.defaultAutoplay} onChange={(e)=>updateWatchSettings({defaultAutoplay:e.target.checked})} />Default autoplay</label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={watchSettings.autoplayNext} onChange={(e)=>updateWatchSettings({autoplayNext:e.target.checked})} />Autoplay next video</label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={watchSettings.showPlayerControls} onChange={(e)=>updateWatchSettings({showPlayerControls:e.target.checked})} />Show player controls</label>
-      </div>
-    </Card>
-  </WorkspacePage></AppShell>;
+  return (
+    <AppShell>
+      <WorkspacePage 
+        icon={Settings} 
+        eyebrow="Settings" 
+        title="API Status, Quota, and Environment" 
+        description="Controls YouTube watch and discovery behavior."
+      >
+        <SettingsClient envStatus={envStatus} />
+      </WorkspacePage>
+    </AppShell>
+  );
 }

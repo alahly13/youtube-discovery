@@ -44,9 +44,50 @@ export function LinkExplorerClient() {
           <Badge tone="success">No scraping</Badge>
           <Badge>Video, Shorts, channel, handle, playlist, search URL</Badge>
         </div>
-        <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted">
-          {result ? JSON.stringify(result, null, 2) : "Analyze a URL to see the official API strategy."}
-        </pre>
+
+        {result && typeof result === "object" && "analyzed" in result ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Strategy:</p>
+              <p className="text-sm text-muted">{(result as any).strategy}</p>
+            </div>
+            
+            <div className="flex gap-2">
+               {/* Render action based on kind */}
+               {(() => {
+                 const analyzed = (result as any).analyzed;
+                 switch(analyzed.kind) {
+                   case "video":
+                   case "shorts":
+                     return <Button asChild><a href={`/watch/${analyzed.videoId}`}>Watch Video</a></Button>;
+                   case "channel":
+                     return <Button asChild><a href={`/channels/${analyzed.channelId}`}>Explore Channel</a></Button>;
+                   case "handle":
+                     return <Button asChild><a href={`/channels/@${analyzed.handle}`}>Explore Channel</a></Button>;
+                   case "playlist":
+                     return <Button asChild><a href={`/playlists/${analyzed.playlistId}`}>Explore Playlist</a></Button>;
+                   case "search":
+                     // Since search is controlled by SearchWorkspace, we could just link to home with a query param if supported,
+                     // but currently search is internal state. We'll just show the query.
+                     return <Button asChild variant="secondary"><a href={`/?q=${encodeURIComponent(analyzed.query)}`}>Go to Search</a></Button>;
+                   default:
+                     return null;
+                 }
+               })()}
+            </div>
+
+            <details className="mt-4">
+              <summary className="text-xs text-muted cursor-pointer hover:text-foreground">View raw response</summary>
+              <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted bg-surface p-2 rounded border border-border/50">
+                {JSON.stringify(result, null, 2)}
+              </pre>
+            </details>
+          </div>
+        ) : (
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted">
+            {result ? JSON.stringify(result, null, 2) : "Analyze a URL to see the official API strategy."}
+          </pre>
+        )}
       </div>
     </Card>
   );

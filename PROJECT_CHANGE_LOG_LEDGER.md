@@ -1,5 +1,43 @@
 # PROJECT_CHANGE_LOG_LEDGER
 
+## 2026-05-09 (Settings & Fetch Controls Integration)
+
+### Date/time
+
+2026-05-09 ~19:40 UTC
+
+### Task summary
+
+Extended the Settings page to include user-controlled YouTube Fetch Controls (pageSize, maxPages, maxItems) persisted via Zustand. Integrated these settings into all API fetch flows (Search, Channel Uploads, Playlist Items). Completed `/channels` and `/playlists` saved library pages, improved `/link-explorer` with actionable strategy buttons, and implemented graceful error handling for the `/watch/[videoId]` embedded player.
+
+### Reason/root cause
+
+User requested replacement of multiple scaffolded pages and the implementation of fetch control settings to manage quota directly from the UI, as well as fixing broken flows in the link explorer and watch player.
+
+### Files changed
+
+- `src/lib/state/youtube-workspace-store.ts` — Added `fetchSettings` and `savedItems` to Zustand store.
+- `src/app/settings/page.tsx` & `settings-client.tsx` — Replaced scaffold with dynamic settings UI that reads server env vars securely.
+- `src/components/search/search-workspace.tsx` — Updated to use custom fetch parameters.
+- `src/components/channels/channel-explorer-workspace.tsx` — Updated to use custom fetch parameters.
+- `src/components/playlists/playlist-explorer-workspace.tsx` — Updated to use custom fetch parameters.
+- `src/app/channels/page.tsx` & `channels-client.tsx` — Implemented list view of saved channels.
+- `src/app/playlists/page.tsx` & `playlists-client.tsx` — Implemented list view of saved playlists.
+- `src/components/youtube/youtube-item-card.tsx` — Integrated save buttons to persist items into local Zustand store.
+- `src/components/link-explorer/link-explorer-client.tsx` — Added action buttons mapping to analyzed URL strategies.
+- `src/components/watch/watch-player.tsx` — Added graceful error handling (`onError`) for missing or restricted videos.
+
+### Verification
+
+- Re-ran `npm run typecheck` successfully.
+- Re-ran `npm run build` successfully.
+- Store logic and saves are confirmed locally in the DOM with proper TS definitions.
+
+### Secrets printed: No
+### Migrations created/applied: No
+### db:apply run: No
+
+---
 ## 2026-05-09 (Collapsible Sidebar Toggle)
 
 ### Date/time

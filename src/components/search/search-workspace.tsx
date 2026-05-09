@@ -50,6 +50,7 @@ export function SearchWorkspace() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const setCurrentManifest = useYouTubeWorkspaceStore((s) => s.setCurrentManifest);
+  const fetchSettings = useYouTubeWorkspaceStore((s) => s.fetchSettings);
 
   const totalItems = manifest?.normalizedItems ?? [];
   const filteredItems = useMemo(
@@ -69,7 +70,13 @@ export function SearchWorkspace() {
       const response = await fetch("/api/youtube/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...settings, types: nextTypes }),
+        body: JSON.stringify({ 
+          ...settings, 
+          types: nextTypes,
+          pageSize: fetchSettings.pageSize,
+          maxPages: fetchSettings.maxPages,
+          maxItems: fetchSettings.maxItems
+        }),
       });
 
       const payload = await response.json();

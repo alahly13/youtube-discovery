@@ -65,6 +65,7 @@ export function ChannelExplorerWorkspace({
   const setCurrentManifest = useYouTubeWorkspaceStore(
     (s) => s.setCurrentManifest,
   );
+  const fetchSettings = useYouTubeWorkspaceStore((s) => s.fetchSettings);
 
   /* ──── Channel metadata (first item in the manifest is the channel) ─── */
   const channelItem = useMemo(
@@ -106,8 +107,8 @@ export function ChannelExplorerWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input: channelId,
-          maxPages: 10,
-          maxItems: 500,
+          maxPages: fetchSettings.maxPages,
+          maxItems: fetchSettings.maxItems,
         }),
       });
 
@@ -129,7 +130,7 @@ export function ChannelExplorerWorkspace({
     } finally {
       startTransition(() => setLoading(false));
     }
-  }, [channelId, setCurrentManifest]);
+  }, [channelId, setCurrentManifest, fetchSettings]);
 
   /* ──── Auto-fetch on mount ───────────────────────────────────────────  */
   useEffect(() => {

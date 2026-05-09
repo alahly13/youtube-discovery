@@ -20,6 +20,8 @@ import {
    shown as "0 views", never hidden or replaced with a fallback.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
+
 export function YouTubeItemCard({
   item,
   onAiExplore,
@@ -27,14 +29,23 @@ export function YouTubeItemCard({
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
 }) {
+  const savedItems = useYouTubeWorkspaceStore((s) => s.savedItems);
+  const toggleItemSaved = useYouTubeWorkspaceStore((s) => s.toggleItemSaved);
+
+  const isSaved = savedItems.some(
+    (i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType
+  );
+
+  const handleToggleSave = () => toggleItemSaved(item);
+
   /* Route to the correct type-specific card */
   switch (item.itemType) {
     case "channel":
-      return <ChannelCard item={item} onAiExplore={onAiExplore} />;
+      return <ChannelCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} />;
     case "playlist":
-      return <PlaylistCard item={item} onAiExplore={onAiExplore} />;
+      return <PlaylistCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} />;
     default:
-      return <VideoCard item={item} onAiExplore={onAiExplore} />;
+      return <VideoCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} />;
   }
 }
 
@@ -48,9 +59,13 @@ export function YouTubeItemCard({
 function VideoCard({
   item,
   onAiExplore,
+  isSaved,
+  onToggleSave,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
+  isSaved: boolean;
+  onToggleSave: () => void;
 }) {
   const isShortsLike = item.isShortsLike || item.itemType === "shorts_like";
 
@@ -136,8 +151,13 @@ function VideoCard({
             <Bot className="h-3.5 w-3.5" />
             AI
           </Button>
-          <Button variant="secondary" className="h-8 px-2" title="Save result">
-            <Save className="h-3.5 w-3.5" />
+          <Button 
+            variant={isSaved ? "primary" : "secondary"} 
+            className="h-8 px-2" 
+            title={isSaved ? "Unsave result" : "Save result"}
+            onClick={onToggleSave}
+          >
+            <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
           </Button>
           {item.itemType === "video" || item.itemType === "shorts_like" ? (
             <Link
@@ -172,9 +192,13 @@ function VideoCard({
 function ChannelCard({
   item,
   onAiExplore,
+  isSaved,
+  onToggleSave,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
+  isSaved: boolean;
+  onToggleSave: () => void;
 }) {
   return (
     <article className="yt-card flex h-full flex-col">
@@ -254,6 +278,14 @@ function ChannelCard({
           >
             <Bot className="h-3.5 w-3.5" />
           </Button>
+          <Button 
+            variant={isSaved ? "primary" : "secondary"} 
+            className="h-8 px-2" 
+            title={isSaved ? "Unsave channel" : "Save channel"}
+            onClick={onToggleSave}
+          >
+            <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
+          </Button>
           <a
             href={item.url}
             target="_blank"
@@ -278,9 +310,13 @@ function ChannelCard({
 function PlaylistCard({
   item,
   onAiExplore,
+  isSaved,
+  onToggleSave,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
+  isSaved: boolean;
+  onToggleSave: () => void;
 }) {
   return (
     <article className="yt-card flex h-full flex-col">
@@ -359,6 +395,14 @@ function PlaylistCard({
             onClick={() => onAiExplore?.(item)}
           >
             <Bot className="h-3.5 w-3.5" />
+          </Button>
+          <Button 
+            variant={isSaved ? "primary" : "secondary"} 
+            className="h-8 px-2" 
+            title={isSaved ? "Unsave playlist" : "Save playlist"}
+            onClick={onToggleSave}
+          >
+            <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
           </Button>
           <a
             href={item.url}

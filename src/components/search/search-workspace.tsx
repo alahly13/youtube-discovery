@@ -187,7 +187,7 @@ export function SearchWorkspace() {
 
       {/* ── Filters + Results + AI Grid ──────────────────────────────── */}
       {manifest && !loading && (
-        <section className="workspace-grid-12 items-start">
+        <section className="workspace-grid-12">
           {/* ── Advanced Filters Panel ──────────────────────────────────── */}
           <AdvancedFiltersPanel
             filters={filters}
@@ -200,7 +200,7 @@ export function SearchWorkspace() {
           />
 
           {/* ── Results area ─────────────────────────────────────────────── */}
-          <div className="col-span-12 space-y-4 xl:col-span-6">
+          <div className="col-span-12 space-y-4 xl:col-span-9">
             {/* Results toolbar */}
             <div className="research-surface p-4">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -252,10 +252,18 @@ export function SearchWorkspace() {
               </Card>
             )}
           </div>
-          <div className="col-span-12 xl:col-span-3">
-            <AiAssistantPanel manifest={manifest} selectedItem={selectedItem} />
-          </div>
         </section>
+      )}
+
+      {manifest && !loading && (
+        <AiAssistantPanel 
+          manifest={manifest} 
+          selectedItem={selectedItem} 
+          onSuggestedQuery={(q) => {
+            setSettings((prev) => ({ ...prev, query: q }));
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
       )}
     </div>
   );

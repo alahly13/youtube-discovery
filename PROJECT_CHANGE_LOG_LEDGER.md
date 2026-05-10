@@ -1,5 +1,148 @@
 # PROJECT_CHANGE_LOG_LEDGER
 
+## 2026-05-10 (AI Structured Report)
+
+### Date/time
+
+2026-05-10 ~00:45 UTC
+
+### Task summary
+
+Upgraded the AI assistant pipeline to return structured JSON reports instead of flat text. Modified the prompt and context builder to ask for specific sections (manifestSummary, topEntities, contentPatterns, suggestedNextQueries). Revamped the frontend `AiAssistantPanel` to display collapsible clean UI sections and confirmation-only copyable suggested queries.
+
+### Reason/root cause
+
+User requested the AI assistant to produce deeper, strictly-formatted insights with actionable, non-auto-executing search query suggestions to help discover forgotten content, while retaining absolute bounds on hallucination.
+
+### Files changed
+
+- `src/lib/ai/youtube-ai-schemas.ts`
+- `src/lib/ai/youtube-manifest-context.ts`
+- `src/lib/ai/gemini-client.ts`
+- `src/components/ai/ai-assistant-panel.tsx`
+- `src/components/search/search-workspace.tsx`
+
+### Technical details
+
+- Switched `AiAssistantResponseSchema` to enforce structured fields instead of just an `answer`.
+- Modified `buildManifestContext` prompt to explicitly instruct Gemini to return this exact JSON structure.
+- Created `AiSuggestedQuerySchema` for `{ query, reasoning }` pairs.
+- Frontend `AiAssistantPanel` now parses and maps these objects into accordion-style collapsible segments.
+- Suggested queries display as actionable buttons that copy the query to the search component's state or prepare a `/search?q=` link.
+
+### Verification
+
+- `npm run typecheck`: passed.
+- `npm run build`: passed.
+- Mock tests in UI correctly render collapsible sections and badge tags.
+
+### Secrets printed: No
+### Migrations created/applied: No
+### db:apply run: No
+
+---
+
+## 2026-05-10 (Floating AI Drawer & Uncapped Context)
+
+### Date/time
+2026-05-10
+
+### Agent/model if known
+Codex GPT-5.5 Pro
+
+### Task summary
+Refactored the AI assistant UI into a global floating action button with a wide drawer, freeing up layout space in the grid. Additionally, removed the strict server-side item and character caps, allowing for much larger manifest context to be sent to Gemini.
+
+### Reason/root cause
+The sidebar layout constrained both the AI report readability and the primary search/filter grids. Also, the hardcoded limits (`AI_MANIFEST_MAX_ITEMS` and `AI_MANIFEST_MAX_CHARS`) were triggering unnecessary server validation rejections, preventing complete analysis of larger manifests.
+
+### Files changed
+- `src/components/ai/ai-assistant-panel.tsx`
+- `src/components/search/search-workspace.tsx`
+- `src/components/playlists/playlist-explorer-workspace.tsx`
+- `src/components/manifests/manifest-detail-workspace.tsx`
+- `src/components/channels/channel-explorer-workspace.tsx`
+- `src/lib/ai/youtube-manifest-context.ts`
+
+### Technical details
+- Refactored `AiAssistantPanel` into a FAB and wide drawer overlay.
+- Removed `col-span-12 xl:col-span-3` AI areas from grid workspaces, replacing them with expanded `xl:col-span-9` results grids.
+- Shifted the context limits in `youtube-manifest-context.ts` up to 200 items and 120,000 characters to prevent server validation errors.
+
+### Architecture impact
+The AI panel is now a decoupled floating overlay rather than consuming grid space in the various workspaces. The server route no longer acts as a strict bottleneck for metadata size, shifting the responsibility to Gemini's token limits.
+
+### Environment impact
+Caps increased in `process.env.AI_MANIFEST_MAX_ITEMS` fallback logic.
+
+### Database/migration impact
+None.
+
+### YouTube API/quota impact
+None. AI fetches continue to operate entirely on localized manifest state.
+
+### AI scope/safety impact
+AI context still limited by Gemini's own input size, but server-side caps are effectively removed. The `requiresUserConfirmation` safety prompt boundary remains entirely intact.
+
+### Verification run and results
+- `npm run typecheck` passed (0 errors).
+- `npm run build` ran but failed due to unrelated network issues downloading `next/font`.
+- Manual layout testing via code analysis confirms the grid spans expand to fill the freed AI sidebar areas.
+
+### Blocked checks, if any
+Build network connection issue.
+
+### Remaining risks/limitations
+AI context may occasionally still hit Gemini maximum limits, but will not be rejected by our API routes first.
+
+### Migrations created/applied: No
+### db:apply run: No
+
+---
+
+## 2026-05-09 (UI Refinements & Zero-Value Safety)
+
+### Date/time
+
+2026-05-09 ~21:00 UTC
+
+### Task summary
+
+Refined the UI to prevent AI assistant panel overlaps, enriched card metadata displays with zero-safe numerical values, and standardized responsive layouts for search and discovery workspaces.
+
+### Reason/root cause
+
+User requested surgical improvements to the responsive behavior of the AI panel, layout gap fixes, and comprehensive zero-value checks for numeric metadata in cards.
+
+### Files changed
+
+- `src/components/youtube/youtube-item-card.tsx`
+- `src/types/youtube.ts`
+- `src/components/search/search-workspace.tsx`
+- `src/components/manifests/manifest-detail-workspace.tsx`
+- `src/components/channels/channel-explorer-workspace.tsx`
+- `src/components/playlists/playlist-explorer-workspace.tsx`
+- `src/components/ai/ai-assistant-panel.tsx`
+- `src/components/link-explorer/link-explorer-client.tsx`
+
+### Technical details
+
+- Removed items-start from grid containers to allow sticky sidebar columns to stretch.
+- Configured AiAssistantPanel to stick to the top on large viewports.
+- Ensured zero-values are displayed explicitly instead of dropping out.
+- Replaced invalid Button usage in link-explorer with proper ButtonLink Next.js wrapper.
+
+### Verification
+
+- npm run typecheck: passed
+- npm run build: passed
+
+### Secrets printed: No
+### Migrations created/applied: No
+### db:apply run: No
+
+---
+
 ## 2026-05-09 (Settings & Fetch Controls Integration)
 
 ### Date/time

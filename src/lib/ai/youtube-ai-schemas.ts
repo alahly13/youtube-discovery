@@ -37,17 +37,37 @@ export const AiAssistantRequestSchema = z.object({
   selectedVideoId: z.string().optional(),
 });
 
+export const AiSuggestedQuerySchema = z.object({
+  query: z.string(),
+  reasoning: z.string().optional(),
+});
+
 export const AiAssistantResponseSchema = z.object({
   scope: AiScopeSchema,
-  answer: z.string(),
-  usedItemCount: z.number().int().min(0),
-  evidenceRefs: z.array(AiEvidenceRefSchema),
-  confidence: z.enum(["low", "medium", "high"]),
-  limitations: z.array(z.string()),
-  suggestedFilters: z.array(AiSuggestedFilterSchema).default([]),
-  suggestedSearchQueries: z.array(z.string()).default([]),
+  manifestSummary: z.object({
+    totalItems: z.number().optional(),
+    source: z.string().optional(),
+    dateRange: z.string().optional(),
+    languages: z.array(z.string()).optional(),
+    contentTypes: z.record(z.string(), z.number()).optional(),
+    engagementExtremes: z.record(z.string(), z.any()).optional(),
+    zeroMetadataItems: z.array(z.string()).optional(),
+  }).optional(),
+  topEntities: z.object({
+    channels: z.array(z.string()).optional(),
+    topics: z.array(z.string()).optional(),
+    playlists: z.array(z.string()).optional(),
+  }).optional(),
+  contentPatterns: z.array(z.string()).optional(),
+  suggestedNextQueries: z.array(AiSuggestedQuerySchema).default([]),
+  evidenceRefs: z.array(z.string()).default([]),
+  confidence: z.enum(["low", "medium", "high"]).default("medium"),
+  limitations: z.array(z.string()).default([]),
   requiresUserConfirmation: z.boolean().default(true),
+  error: z.string().optional(),
+  rawExcerpt: z.string().optional(),
 });
 
 export type AiAssistantRequest = z.infer<typeof AiAssistantRequestSchema>;
 export type AiAssistantResponse = z.infer<typeof AiAssistantResponseSchema>;
+export type AiSuggestedQuery = z.infer<typeof AiSuggestedQuerySchema>;

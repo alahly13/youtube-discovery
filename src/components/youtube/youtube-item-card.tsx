@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import {
   formatCompactCount,
   formatCount,
+  formatDate,
   formatDuration,
   formatItemType,
   formatRelativeDate,
@@ -107,19 +108,22 @@ function VideoCard({
       <div className="flex flex-1 flex-col gap-3 p-4">
         {/* Title and channel */}
         <div className="min-w-0">
-          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+          <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-foreground" title={item.title}>
             {item.title}
           </h3>
-          <p className="mt-1 truncate text-xs text-muted">
-            {item.channelTitle ?? item.channelId ?? "Unknown channel"}
+          <p className="mt-1 flex items-center gap-1 truncate text-xs text-muted" title={item.channelTitle ?? item.channelId ?? "Unknown channel"}>
+            <Tv className="h-3 w-3 opacity-70" />
+            <span>{item.channelTitle ?? item.channelId ?? "Unknown channel"}</span>
           </p>
         </div>
 
         {/* Stats row — views, likes, comments, date */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-          <span>{formatCompactCount(item.viewsCount)} views</span>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          <span>{item.viewsCount !== null && item.viewsCount !== undefined ? `${formatCompactCount(item.viewsCount)} views` : "Unknown views"}</span>
           <span className="opacity-40">·</span>
-          <span>{formatRelativeDate(item.publishedAt)}</span>
+          <span title={formatDate(item.publishedAt)}>
+            {formatRelativeDate(item.publishedAt)} ({formatDate(item.publishedAt)})
+          </span>
         </div>
 
         {/* Detailed stats grid */}
@@ -250,6 +254,16 @@ function ChannelCard({
 
         {/* Channel stats */}
         <div className="flex flex-wrap gap-1.5">
+          {item.subscriberCount !== null && item.subscriberCount !== undefined && (
+            <Badge tone="neutral">
+              {formatCount(item.subscriberCount, "subscribers")}
+            </Badge>
+          )}
+          {item.videoCount !== null && item.videoCount !== undefined && (
+            <Badge tone="neutral">
+              {formatCount(item.videoCount, "videos")}
+            </Badge>
+          )}
           {item.viewsCount !== null && item.viewsCount !== undefined && (
             <Badge tone="neutral">
               {formatCount(item.viewsCount, "total views")}
@@ -340,7 +354,9 @@ function PlaylistCard({
         {/* Playlist overlay on right side */}
         <div className="absolute inset-y-0 right-0 flex w-24 flex-col items-center justify-center gap-1 bg-black/60 text-white backdrop-blur-sm">
           <ListVideo className="h-5 w-5" />
-          <span className="text-xs font-semibold">Playlist</span>
+          <span className="text-xs font-semibold text-center px-1">
+            {item.itemCount !== null && item.itemCount !== undefined ? `${item.itemCount} videos` : "Playlist"}
+          </span>
         </div>
 
         {/* Type badge */}
@@ -372,11 +388,19 @@ function PlaylistCard({
 
         {/* Stats */}
         <div className="flex flex-wrap gap-1.5">
+          {item.itemCount !== null && item.itemCount !== undefined && (
+            <Badge tone="neutral">{item.itemCount} items</Badge>
+          )}
           {item.viewsCount !== null && item.viewsCount !== undefined && (
             <Badge tone="neutral">{formatCount(item.viewsCount, "views")}</Badge>
           )}
           {item.publishedAt && (
-            <Badge tone="neutral">{formatRelativeDate(item.publishedAt)}</Badge>
+            <Badge tone="neutral">Updated {formatRelativeDate(item.publishedAt)}</Badge>
+          )}
+          {(item as any).privacyStatus && (
+            <Badge tone="neutral" className="capitalize">
+              {(item as any).privacyStatus}
+            </Badge>
           )}
         </div>
 

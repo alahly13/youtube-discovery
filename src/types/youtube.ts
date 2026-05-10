@@ -32,6 +32,9 @@ export interface NormalizedYouTubeDiscoveryItem {
   viewsCount: number | null;
   likesCount: number | null;
   commentsCount: number | null;
+  subscriberCount?: number | null;
+  videoCount?: number | null;
+  itemCount?: number | null;
   language: string | null;
   region: string | null;
   tags: string[];

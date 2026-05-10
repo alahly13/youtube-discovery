@@ -7,16 +7,13 @@ export interface BuiltManifestContext {
   prompt: string;
   usedItemCount: number;
   charCount: number;
-  evidenceSeed: Array<{
-    platformItemId: string;
-    title: string;
-    reason: string;
-  }>;
+  evidenceSeed: string[];
 }
 
 export function buildManifestContext(request: AiAssistantRequest, task: string): BuiltManifestContext {
-  const maxItems = readPositiveInt(process.env.AI_MANIFEST_MAX_ITEMS, 60);
-  const maxChars = readPositiveInt(process.env.AI_MANIFEST_MAX_CHARS, 30000);
+  // Removed strict truncation limits; relying on Gemini's token limits.
+  const maxItems = readPositiveInt(process.env.AI_MANIFEST_MAX_ITEMS, 200);
+  const maxChars = readPositiveInt(process.env.AI_MANIFEST_MAX_CHARS, 120000);
   const items = normalizeItems(request.manifestSnapshot?.normalizedItems ?? []).slice(0, maxItems);
   const lines: string[] = [];
 
@@ -44,7 +41,7 @@ export function buildManifestContext(request: AiAssistantRequest, task: string):
     prompt: [
       "You are the YouTube Discovery metadata assistant.",
       "Use only the supplied metadata context. Do not invent videos, IDs, URLs, counts, playlist relationships, or private data.",
-      "Return strict JSON with: scope, answer, usedItemCount, evidenceRefs, confidence, limitations, suggestedFilters, suggestedSearchQueries, requiresUserConfirmation.",
+      "Return strict JSON matching this exact structure: { manifestSummary: { totalItems: number, source: string, dateRange: string, languages: string[], contentTypes: record, engagementExtremes: record, zeroMetadataItems: string[] }, topEntities: { channels: string[], topics: string[], playlists: string[] }, contentPatterns: string[], suggestedNextQueries: [{ query: string, reasoning: string }], evidenceRefs: string[], confidence: 'low'|'medium'|'high', limitations: string[] }.",
       `Task: ${task}`,
       `Scope: ${request.scope}`,
       `Manifest: ${request.manifestSnapshot?.manifestId ?? "none"} - ${request.manifestSnapshot?.title ?? "none"}`,
@@ -55,11 +52,7 @@ export function buildManifestContext(request: AiAssistantRequest, task: string):
     ].join("\n"),
     usedItemCount: lines.length,
     charCount: lines.join("\n").length,
-    evidenceSeed: items.slice(0, 5).map((item) => ({
-      platformItemId: item.platformItemId,
-      title: item.title,
-      reason: "Included in the scoped manifest context.",
-    })),
+    evidenceSeed: items.slice(0, 5).map((item) => item.platformItemId),
   };
 }
 

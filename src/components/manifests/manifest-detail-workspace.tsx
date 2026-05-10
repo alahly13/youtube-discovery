@@ -150,7 +150,7 @@ export function ManifestDetailWorkspace({
       <ManifestSummary manifest={manifest} />
 
       {/* Filters + Results + AI */}
-      <section className="workspace-grid-12 items-start">
+      <section className="workspace-grid-12">
         {/* ── Advanced Filters Panel ─────────────────────────────────── */}
         <AdvancedFiltersPanel
           filters={filters}
@@ -162,7 +162,7 @@ export function ManifestDetailWorkspace({
           showTypeFilters={true}
         />
 
-        <div className="col-span-12 space-y-4 xl:col-span-6">
+        <div className="col-span-12 space-y-4 xl:col-span-9">
           <div className="research-surface p-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
               <Filter className="h-3.5 w-3.5" />
@@ -210,13 +210,12 @@ export function ManifestDetailWorkspace({
           )}
         </div>
 
-        <div className="col-span-12 xl:col-span-3">
-          <AiAssistantPanel
-            manifest={manifest}
-            selectedItem={selectedItem}
-          />
-        </div>
       </section>
+
+      <AiAssistantPanel
+        manifest={manifest}
+        selectedItem={selectedItem}
+      />
     </div>
   );
 }

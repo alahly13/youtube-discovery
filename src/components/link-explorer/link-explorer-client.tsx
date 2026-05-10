@@ -3,7 +3,7 @@
 import { LinkIcon, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 
 export function LinkExplorerClient() {
@@ -59,17 +59,17 @@ export function LinkExplorerClient() {
                  switch(analyzed.kind) {
                    case "video":
                    case "shorts":
-                     return <Button asChild><a href={`/watch/${analyzed.videoId}`}>Watch Video</a></Button>;
+                     return <ButtonLink href={`/watch/${analyzed.videoId}`}>Watch Video</ButtonLink>;
                    case "channel":
-                     return <Button asChild><a href={`/channels/${analyzed.channelId}`}>Explore Channel</a></Button>;
+                     return <ButtonLink href={`/channels/${analyzed.channelId}`}>Explore Channel</ButtonLink>;
                    case "handle":
-                     return <Button asChild><a href={`/channels/@${analyzed.handle}`}>Explore Channel</a></Button>;
+                     return <ButtonLink href={`/channels/@${analyzed.handle}`}>Explore Channel</ButtonLink>;
                    case "playlist":
-                     return <Button asChild><a href={`/playlists/${analyzed.playlistId}`}>Explore Playlist</a></Button>;
+                     return <ButtonLink href={`/playlists/${analyzed.playlistId}`}>Explore Playlist</ButtonLink>;
                    case "search":
                      // Since search is controlled by SearchWorkspace, we could just link to home with a query param if supported,
                      // but currently search is internal state. We'll just show the query.
-                     return <Button asChild variant="secondary"><a href={`/?q=${encodeURIComponent(analyzed.query)}`}>Go to Search</a></Button>;
+                     return <ButtonLink variant="secondary" href={`/?q=${encodeURIComponent(analyzed.query)}`}>Go to Search</ButtonLink>;
                    default:
                      return null;
                  }

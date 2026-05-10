@@ -291,7 +291,7 @@ export function ChannelExplorerWorkspace({
       </div>
 
       {/* ── Filter + Results + AI Grid ────────────────────────────────── */}
-      <section className="workspace-grid-12 items-start">
+      <section className="workspace-grid-12">
         {/* ── Advanced Filters Panel ─────────────────────────────────── */}
         <AdvancedFiltersPanel
           filters={filters}
@@ -304,7 +304,7 @@ export function ChannelExplorerWorkspace({
         />
 
         {/* ── Results area ────────────────────────────────────────────── */}
-        <div className="col-span-12 space-y-4 xl:col-span-6">
+        <div className="col-span-12 space-y-4 xl:col-span-9">
           {/* Results toolbar */}
           <div className="research-surface p-4">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -371,14 +371,12 @@ export function ChannelExplorerWorkspace({
           )}
         </div>
 
-        {/* ── AI sidebar ──────────────────────────────────────────────── */}
-        <div className="col-span-12 xl:col-span-3">
-          <AiAssistantPanel
-            manifest={manifest}
-            selectedItem={selectedItem}
-          />
-        </div>
       </section>
+
+      <AiAssistantPanel
+        manifest={manifest}
+        selectedItem={selectedItem}
+      />
     </div>
   );
 }

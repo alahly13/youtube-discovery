@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { YouTubeManifest } from "@/types/manifest";
 
-import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
+import type { NormalizedYouTubeDiscoveryItem, SavedSearch } from "@/types/youtube";
 
 export type SuggestionSourcePriority = "manifest" | "same_channel" | "mixed";
 
@@ -38,24 +38,32 @@ export interface FetchSettings {
   pageSize: number;
   maxPages: number;
   maxItems: number;
+  /** Default safeSearch policy: none (unrestricted/sensitive allowed), moderate, or strict */
+  defaultSafeSearch: "none" | "moderate" | "strict";
 }
 
 export const DEFAULT_FETCH_SETTINGS: FetchSettings = {
   pageSize: 25,
   maxPages: 3,
   maxItems: 150,
+  defaultSafeSearch: "none",
 };
 
 interface YouTubeWorkspaceStore {
   currentManifest: YouTubeManifest | null;
   savedManifestIds: string[];
   savedItems: NormalizedYouTubeDiscoveryItem[];
+  savedSearches: SavedSearch[];
   watchSettings: WatchExperienceSettings;
   fetchSettings: FetchSettings;
   isSidebarOpen: boolean;
   setCurrentManifest: (manifest: YouTubeManifest | null) => void;
   markManifestSaved: (manifestId: string) => void;
   toggleItemSaved: (item: NormalizedYouTubeDiscoveryItem) => void;
+  saveSearch: (search: Omit<SavedSearch, "id" | "createdAt">) => SavedSearch;
+  updateSavedSearch: (id: string, patch: Partial<SavedSearch>) => void;
+  deleteSavedSearch: (id: string) => void;
+  togglePinSavedSearch: (id: string) => void;
   updateWatchSettings: (settings: Partial<WatchExperienceSettings>) => void;
   updateFetchSettings: (settings: Partial<FetchSettings>) => void;
   toggleSidebar: () => void;
@@ -71,6 +79,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       currentManifest: null,
       savedManifestIds: [],
       savedItems: [],
+      savedSearches: [],
       watchSettings: DEFAULT_WATCH_SETTINGS,
       fetchSettings: DEFAULT_FETCH_SETTINGS,
       isSidebarOpen: true,
@@ -95,6 +104,34 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           const itemToSave = { ...item, rawJson: undefined };
           return { savedItems: [...state.savedItems, itemToSave] };
         }),
+      saveSearch: (searchData) => {
+        const id = `search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const newSearch: SavedSearch = {
+          ...searchData,
+          id,
+          createdAt: new Date().toISOString(),
+        };
+        set((state) => ({
+          savedSearches: [newSearch, ...state.savedSearches],
+        }));
+        return newSearch;
+      },
+      updateSavedSearch: (id, patch) =>
+        set((state) => ({
+          savedSearches: state.savedSearches.map((s) =>
+            s.id === id ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s
+          ),
+        })),
+      deleteSavedSearch: (id) =>
+        set((state) => ({
+          savedSearches: state.savedSearches.filter((s) => s.id !== id),
+        })),
+      togglePinSavedSearch: (id) =>
+        set((state) => ({
+          savedSearches: state.savedSearches.map((s) =>
+            s.id === id ? { ...s, isPinned: !s.isPinned } : s
+          ),
+        })),
       updateWatchSettings: (settings) =>
         set((state) => ({
           watchSettings: {
@@ -117,6 +154,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         currentManifest: state.currentManifest,
         savedManifestIds: state.savedManifestIds,
         savedItems: state.savedItems,
+        savedSearches: state.savedSearches,
         watchSettings: state.watchSettings,
         fetchSettings: state.fetchSettings,
         isSidebarOpen: state.isSidebarOpen,

@@ -59,8 +59,25 @@ function matchesFilters(item: NormalizedYouTubeDiscoveryItem, filters: YouTubeRe
     matchesPresence(item.description, filters.hasDescription) &&
     matchesPresence(item.language, filters.hasLanguage) &&
     (!filters.shortsLikeOnly || item.isShortsLike || item.itemType === "shorts_like") &&
-    (filters.itemTypes.length === 0 || filters.itemTypes.includes(item.itemType))
+    (filters.itemTypes.length === 0 || filters.itemTypes.includes(item.itemType)) &&
+    matchesAgeRating(item, filters.ageRatingFilter)
   );
+}
+
+function matchesAgeRating(
+  item: NormalizedYouTubeDiscoveryItem,
+  ageRatingFilter?: "all" | "age_restricted" | "general",
+) {
+  if (!ageRatingFilter || ageRatingFilter === "all") {
+    return true;
+  }
+  if (ageRatingFilter === "age_restricted") {
+    return item.isAgeRestricted === true;
+  }
+  if (ageRatingFilter === "general") {
+    return item.isAgeRestricted !== true;
+  }
+  return true;
 }
 
 // Numeric filters explicitly use nullish checks so 0 views/likes/comments remain

@@ -636,3 +636,356 @@ No migrations created or applied.
 ### Whether `db:apply` was run
 
 No.
+
+---
+
+## 2026-09-09 (Search Enhancement, Save Search Titles, Unrestricted Sensitive Mode, Age Restriction, Mobile Drawer & Frontend Polish)
+
+### Date/time
+
+2026-09-09 17:55 UTC
+
+### Agent/model if known
+
+Antigravity Agent (Gemini 3.8 Flash)
+
+### Task summary
+
+Implemented full Save Search Titles functionality with custom names, pins, and quick-execution; added Unrestricted Search Mode (`safeSearch: "none"`) with visual status glow allowing discovery of all sensitive and mature (18+ / 35+) YouTube content; extracted `contentRating.ytRating` for age-restriction detection and added a dedicated Age & Content Rating local filter and 🔞 18+ card badge; created a responsive mobile navigation drawer; redesigned the Saved Library with a dedicated Saved Search Titles tab and store synchronization; resolved all 13 pending ESLint errors and warnings across the project (achieving 0 errors, 0 warnings); and enhanced frontend appearance with custom sleek scrollbars, drawer animations, and button ergonomics.
+
+### Reason/root cause
+
+User requested:
+1. Enhancing search and frontend appearance.
+2. Adding a "save search title" feature.
+3. Permitting search across all YouTube content including sensitive and mature material (18+ / 35+).
+4. Fixing all issues and errors in the project.
+
+### Files changed
+
+- `src/types/youtube.ts`: Added `isAgeRestricted` and `contentRating` to `NormalizedYouTubeDiscoveryItem`; added `SavedSearch` interface; added `ageRatingFilter` to `YouTubeResultFilters`.
+- `src/lib/validation/youtube-schemas.ts`: Added `ageRatingFilter` to filter schema.
+- `src/lib/state/youtube-workspace-store.ts`: Added `savedSearches` state and actions (`saveSearch`, `updateSavedSearch`, `deleteSavedSearch`, `togglePinSavedSearch`), plus `defaultSafeSearch` in `FetchSettings`, persisted in `partialize`.
+- `src/lib/platforms/youtube/youtube-normalize.ts`: Extracted `contentRating.ytRating === "ytAgeRestricted"` to populate `isAgeRestricted` boolean on normalized items.
+- `src/lib/filters/youtube-result-filters.ts`: Added `matchesAgeRating` filter handling "all", "age_restricted", and "general" audience content.
+- `src/components/search/search-workspace.tsx`: Added Save Search Title modal, quick-access Saved Searches shelf (run, copy title, pin, delete), Unrestricted Mode toggle with pulsing indicator and `unrestricted-glow`, fixed unused imports and button props.
+- `src/components/filters/advanced-filters-panel.tsx`: Added Age & Content Rating section with 3-button selector (All, 18+ Mature, General), age filter chip, and useCallback memoization.
+- `src/components/youtube/youtube-item-card.tsx`: Added 🔞 18+ Mature badge overlay for age-restricted items, typed privacyStatus safely.
+- `src/components/saved/saved-library-workspace.tsx`: Rebuilt with Zustand workspace store synchronization, added Saved Search Titles tab, copy title, and age badges.
+- `src/components/layout/app-shell.tsx`: Replaced state-in-effect with `useSyncExternalStore`, added functional mobile navigation drawer with backdrop and slide-in animation.
+- `src/components/watch/watch-player.tsx`: Fixed React setState in effect error and replaced `any` with typed error event.
+- `src/components/ai/ai-assistant-panel.tsx`: Removed unused `Card`/`CardHeader` imports, escaped HTML quotes (`&quot;`), wrapped `askAssistant` in `useCallback`.
+- `src/components/link-explorer/link-explorer-client.tsx`: Replaced `any` types with typed `YouTubeAnalyzedLink` and `LinkAnalyzeResponse`.
+- `src/components/manifests/manifest-detail-workspace.tsx`: Wrapped `totalItems` in `useMemo`.
+- `src/components/playlists/playlist-explorer-workspace.tsx`: Removed unused `Search` and `X` imports.
+- `src/app/settings/settings-client.tsx`: Added Default SafeSearch & Sensitivity Policy setting with explicit `none` unrestricted mode.
+- `src/app/globals.css`: Added `@keyframes slideInLeft`, `.animate-slide-in`, design-token thin scrollbars, and `.unrestricted-glow`.
+- `youtube_discovery_ledger.md`: Documented updated routes, features, and verification results.
+- `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this change log entry.
+
+### Technical details
+
+- `safeSearch: "none"` is the official YouTube Data API v3 setting that removes all filtering of restricted, mature, and sensitive content.
+- The UI exposes this clearly via the Unrestricted Mode toggle button with an emerald pulse dot and glow styling.
+- `contentRating.ytRating === "ytAgeRestricted"` is YouTube's official indicator for age-restricted videos, now extracted into `item.isAgeRestricted`.
+- Saved searches are stored with unique IDs, user-defined titles, queries, resource selections, settings, creation timestamps, and pin flags in the persisted Zustand store.
+- ESLint checks now pass completely with 0 errors and 0 warnings.
+- Turbopack production build compiles all 16 static routes and dynamic routes cleanly.
+
+### Architecture impact
+
+Preserved manifest-first architecture and provider-versus-local boundaries. Search parameters flow to provider API calls on submit; age rating filtering operates cleanly on normalized item metadata in local pipelines.
+
+### Environment impact
+
+None. No new env vars required.
+
+### Database/migration impact
+
+None. No database migrations created or applied; persisted user state continues through Zustand `localStorage` synchronization.
+
+### YouTube API/quota impact
+
+No additional quota consumption. SafeSearch is a native query parameter in YouTube `search.list`. Video detail normalization utilizes the existing `contentDetails` part.
+
+### AI scope/safety impact
+
+None. Scoped AI boundaries remain intact.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors, 0 warnings).
+- `npm run typecheck`: passed (0 errors).
+- `npm run build`: passed cleanly with Next.js 16.2.6 Turbopack (all 16 static routes + dynamic routes generated).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+- Live YouTube API requests require a valid `YOUTUBE_API_KEY` configured in `.env.local`.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-09-09 (Comprehensive Arabic NPM Commands Guide)
+
+### Date/time
+
+2026-09-09 18:05 UTC
+
+### Agent/model if known
+
+Antigravity Agent (Gemini 3.8 Flash)
+
+### Task summary
+
+Created a comprehensive Arabic guide for all NPM and NPX commands in `Guide-Files/npm_commands_arabic_guide.md`. The document covers basic concepts (`package.json`, `node_modules`), all project-specific scripts (`npm run dev`, `build`, `lint`, `typecheck`, `verify`, `env:validate`), Prisma/database management, package lifecycle (`install`, `-D`, `uninstall`, `update`, `outdated`), NPX execution tooling, troubleshooting/cache clearing, and a 1-line quick cheatsheet.
+
+### Reason/root cause
+
+User requested a full Arabic reference file inside `Guide-Files/` explaining all NPM commands used in this and similar Next.js/Full-Stack projects.
+
+### Files changed
+
+- `Guide-Files/npm_commands_arabic_guide.md` (new file created)
+- `youtube_discovery_ledger.md` (updated File and Folder Map)
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended this entry)
+
+### Technical details
+
+The guide details both daily development workflows and emergency troubleshooting (e.g. `npm cache clean --force`, `npm ci`, `--legacy-peer-deps`, and complete cache clearing in Windows PowerShell and Bash).
+
+### Architecture impact
+
+None. Documentation only.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact
+
+None.
+
+### AI scope/safety impact
+
+None.
+
+### Verification run and results
+
+- File verified in `Guide-Files/npm_commands_arabic_guide.md`.
+- No code or runtime alterations.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-09-09 (Restructured & Logical Arabic Git/GitHub Guide)
+
+### Date/time
+
+2026-09-09 18:07 UTC
+
+### Agent/model if known
+
+Antigravity Agent (Gemini 3.8 Flash)
+
+### Task summary
+
+Completely restructured and enriched `Guide-Files/git_github_arabic_commands_guide.md` to follow a strict logical progression:
+1. Account discovery and management (`gh auth status`, `gh auth switch`, `gh auth login`, `git config user.name`, Windows Credential Manager).
+2. Remote and repository inspection and switching (`git remote -v`, `git remote set-url origin`, `gh repo list`, `git clone`).
+3. Status, diff, branch switching, and commit history (`git status`, `git diff`, `git switch -c`, `git log --oneline`).
+4. Routine add, commit, pull, and push workflows (`git add .`, `git commit -m`, `git pull origin main`, `git push origin main`).
+5. Step-by-step resolution of push rejection errors (`fetch first / pull first` with `git pull origin main --rebase`, conflict resolution, and `--force-with-lease` safety guardrails).
+6. Emergency operations (`git stash`, `git stash pop`, `git restore`, `git restore --staged`, `git reset --soft HEAD~1`).
+7. 4-step daily workflow scenario and 1-line quick reference cheatsheet.
+
+### Reason/root cause
+
+User requested reorganizing the Git guide into a natural, logical order starting from authentication and multi-account switching (`alahly13` / `MahdyHQ`), then remote inspection, and handling the common "pull first before push" rejection issue.
+
+### Files changed
+
+- `Guide-Files/git_github_arabic_commands_guide.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended this entry)
+
+### Technical details
+
+Documentation overhaul strictly aligned with Git best practices, GitHub CLI capabilities, and PowerShell/Windows workflow ergonomics.
+
+### Architecture impact
+
+None. Documentation only.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact
+
+None.
+
+### AI scope/safety impact
+
+None.
+
+### Verification run and results
+
+- File verified in `Guide-Files/git_github_arabic_commands_guide.md`.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-09-09 (Region Dropdown List, Search Bar Polish, Interactive Explorer Launchers & Live Dashboard)
+
+### Date/time
+
+2026-09-09 19:10 UTC
+
+### Agent/model if known
+
+Antigravity Agent (Gemini 3.8 Flash)
+
+### Task summary
+
+1. Converted the Region Code input in `search-workspace.tsx` from a text box into a comprehensive `ApiSelect` dropdown list (`YOUTUBE_REGION_OPTIONS`) containing major global and Middle Eastern markets (US, EG, SA, AE, KW, QA, GB, CA, DE, FR, JP, etc.).
+2. Converted the Relevance Language input into an `ApiSelect` dropdown list (`YOUTUBE_LANGUAGE_OPTIONS`).
+3. Enhanced the Search Bar with an inline search icon, a clear `X` button when text is present, a `/` keyboard shortcut badge, and global `/` and `Ctrl+K` shortcut listeners to focus the search bar from anywhere.
+4. Upgraded `/channel-explorer` and `/playlist-explorer` from static informational placeholders into interactive client exploration launchers with input normalization, channel/playlist resolution, and quick-pick discovery chips.
+5. Upgraded `Dashboard` (`src/components/pages/dashboard.tsx`) with live Zustand store statistics, active manifest telemetry, and quick-launch discovery cards.
+6. Enhanced the empty states on `/channels` and `/playlists` with direct links to exploration workflows.
+7. Fixed `dashboard.tsx` to read `currentManifest` and `currentManifest.quotaCostEstimate` correctly.
+8. Verified clean `npm run typecheck` (0 errors) and `npm run lint` (0 errors, 0 warnings).
+
+### Reason/root cause
+
+User requested:
+1. "make region as list choose not input"
+2. "enhance search bar and compatibility with youtube v3 api"
+3. "ensure that all search and pages and functions are working correctly"
+
+### Files changed
+
+- `src/components/search/search-workspace.tsx`
+- `src/components/pages/dashboard.tsx`
+- `src/app/channel-explorer/page.tsx`
+- `src/app/channel-explorer/channel-explorer-client.tsx`
+- `src/app/playlist-explorer/page.tsx`
+- `src/app/playlist-explorer/playlist-explorer-client.tsx`
+- `src/app/channels/channels-client.tsx`
+- `src/app/playlists/playlists-client.tsx`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Region Code is now selected from an ISO 3166-1 alpha-2 list, preventing invalid code entries that trigger YouTube API 400 bad request errors.
+- Language is selectable from standard BCP-47 options.
+- The search bar auto-focuses on `/` or `Ctrl+K` unless the user is already interacting with another input or textarea.
+
+### Architecture impact
+
+Preserved manifest-first boundaries and client/server separation.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact
+
+Eliminates bad request errors from mistyped region or language codes.
+
+### AI scope/safety impact
+
+None.
+
+### Verification run and results
+
+- `npm run lint`: passed with 0 errors, 0 warnings.
+- `npm run typecheck`: passed with 0 errors (Prisma client regenerated).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+
+

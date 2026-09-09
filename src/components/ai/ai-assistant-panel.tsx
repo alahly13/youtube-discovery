@@ -7,7 +7,6 @@ import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import type { AiAssistantRequest, AiAssistantResponse } from "@/lib/ai/youtube-ai-schemas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader } from "@/components/ui/card";
 import Link from "next/link";
 
 export function AiAssistantPanel({
@@ -37,14 +36,7 @@ export function AiAssistantPanel({
   const [isOpen, setIsOpen] = useState(false);
   const hasRunRef = useRef(false);
 
-  useEffect(() => {
-    if (isOpen && !response && !loading && !hasRunRef.current) {
-      hasRunRef.current = true;
-      void askAssistant();
-    }
-  }, [isOpen, response, loading]);
-
-  async function askAssistant() {
+  const askAssistant = React.useCallback(async () => {
     setLoading(true);
     setResponse(null);
 
@@ -71,7 +63,14 @@ export function AiAssistantPanel({
     } finally {
       setLoading(false);
     }
-  }
+  }, [manifest, selectedItem, prompt]);
+
+  useEffect(() => {
+    if (isOpen && !response && !loading && !hasRunRef.current) {
+      hasRunRef.current = true;
+      void askAssistant();
+    }
+  }, [isOpen, response, loading, askAssistant]);
 
   return (
     <>
@@ -251,7 +250,7 @@ export function AiAssistantPanel({
                           {response.suggestedNextQueries.map((queryObj, i) => (
                             <div key={i} className="flex flex-col space-y-2 rounded-lg bg-surface p-3 border border-border/50 shadow-sm">
                               <div className="flex items-start justify-between gap-2">
-                                <span className="font-semibold text-primary">"{queryObj.query}"</span>
+                                <span className="font-semibold text-primary">&quot;{queryObj.query}&quot;</span>
                                 {onSuggestedQuery ? (
                                   <Button 
                                     variant="secondary" 

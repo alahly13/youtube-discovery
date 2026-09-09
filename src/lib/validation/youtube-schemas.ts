@@ -20,7 +20,7 @@ export const YouTubeSearchSettingsSchema = z
     publishedBefore: optionalIsoDate,
     regionCode: z.string().trim().length(2).optional(),
     relevanceLanguage: z.string().trim().min(2).max(12).optional(),
-    safeSearch: z.enum(["none", "moderate", "strict"]).default("moderate"),
+    safeSearch: z.enum(["none", "moderate", "strict"]).default("none"),
     videoDuration: z.enum(["any", "short", "medium", "long"]).default("any"),
     videoDefinition: z.enum(["any", "high", "standard"]).default("any"),
     videoCaption: z.enum(["any", "closedCaption", "none"]).default("any"),
@@ -83,6 +83,7 @@ export const YouTubeLocalFilterSchema = z.object({
     /** Presence filter for language metadata */
     hasLanguage: z.enum(["any", "yes", "no"]).default("any"),
     shortsLikeOnly: z.boolean().default(false),
+    ageRatingFilter: z.enum(["all", "age_restricted", "general"]).default("all"),
     sort: z
       .enum([
         "api_order",

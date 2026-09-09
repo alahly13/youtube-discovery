@@ -1,5 +1,6 @@
-import { Bot, ExternalLink, ListVideo, Play, Save, Tv, User } from "lucide-react";
+import { Bot, Check, Copy, ExternalLink, ListVideo, Play, Save, Tv, User } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,18 @@ function VideoCard({
 }) {
   const isShortsLike = item.isShortsLike || item.itemType === "shorts_like";
 
+  /* Copy-title button state — shows a brief ✓ check after copying */
+  const [titleCopied, setTitleCopied] = useState(false);
+  const handleCopyTitle = async () => {
+    try {
+      await navigator.clipboard.writeText(item.title);
+      setTitleCopied(true);
+      setTimeout(() => setTitleCopied(false), 1500);
+    } catch {
+      /* Clipboard API may fail in insecure contexts; silent fallback */
+    }
+  };
+
   return (
     <article className="yt-card flex h-full flex-col">
       {/* ── Thumbnail with overlays ──────────────────────────────────── */}
@@ -94,8 +107,11 @@ function VideoCard({
           <span className="duration-badge">{formatDuration(item.durationSeconds)}</span>
         )}
 
-        {/* Type badge — bottom left */}
-        <div className="type-badge-overlay">
+        {/* Type & Age badges — bottom left */}
+        <div className="type-badge-overlay flex items-center gap-1">
+          {item.isAgeRestricted && (
+            <Badge tone="danger" className="shadow-sm">🔞 18+ Mature</Badge>
+          )}
           {isShortsLike ? (
             <Badge tone="primary" className="shadow-sm">⚡ Shorts-like</Badge>
           ) : item.itemType !== "video" ? (
@@ -162,6 +178,19 @@ function VideoCard({
             onClick={onToggleSave}
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
+          </Button>
+          {/* Copy title — clipboard copy with brief ✓ feedback */}
+          <Button
+            variant="secondary"
+            className="h-8 px-2"
+            title={titleCopied ? "Copied!" : "Copy title"}
+            onClick={handleCopyTitle}
+          >
+            {titleCopied ? (
+              <Check className="h-3.5 w-3.5 text-green-500" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
           </Button>
           {item.itemType === "video" || item.itemType === "shorts_like" ? (
             <Link
@@ -397,11 +426,14 @@ function PlaylistCard({
           {item.publishedAt && (
             <Badge tone="neutral">Updated {formatRelativeDate(item.publishedAt)}</Badge>
           )}
-          {(item as any).privacyStatus && (
-            <Badge tone="neutral" className="capitalize">
-              {(item as any).privacyStatus}
-            </Badge>
-          )}
+          {typeof item.rawJson === "object" &&
+            item.rawJson !== null &&
+            "status" in item.rawJson &&
+            Boolean((item.rawJson as { status?: { privacyStatus?: string } }).status?.privacyStatus) && (
+              <Badge tone="neutral" className="capitalize">
+                {String((item.rawJson as { status?: { privacyStatus?: string } }).status?.privacyStatus)}
+              </Badge>
+            )}
         </div>
 
         {/* Actions */}

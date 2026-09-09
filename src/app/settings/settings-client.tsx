@@ -99,6 +99,21 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
               onChange={(e) => updateFetchSettings({ maxItems: Number(e.target.value) || 50 })}
             />
           </div>
+          <div className="md:col-span-3 border-t border-border/50 pt-3">
+            <label className="mb-1 block text-sm font-medium">Default SafeSearch & Sensitivity Policy</label>
+            <p className="mb-2 text-xs text-muted">
+              Select default content filtering behavior for provider searches. <strong>None</strong> disables censorship, permitting all sensitive, mature (18+ / 35+), and unrestricted YouTube content.
+            </p>
+            <select 
+              className="filter-input max-w-md" 
+              value={fetchSettings.defaultSafeSearch ?? "none"} 
+              onChange={(e) => updateFetchSettings({ defaultSafeSearch: e.target.value as "none" | "moderate" | "strict" })}
+            >
+              <option value="none">None (Unrestricted — Sensitive, Mature & 18+/35+ Content Allowed)</option>
+              <option value="moderate">Moderate (Standard YouTube Filtering)</option>
+              <option value="strict">Strict (Highest Censorship)</option>
+            </select>
+          </div>
         </div>
         <div className="border-t border-border bg-surface-muted p-4">
             <p className="text-sm">

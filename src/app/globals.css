@@ -203,3 +203,44 @@ textarea {
   left: 0.375rem;
 }
 
+/* Mobile drawer slide-in keyframe animation */
+@keyframes slideInLeft {
+  from {
+    transform: translateX(-100%);
+    opacity: 0.8;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slideInLeft 240ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Professional thin scrollbars aligned with design tokens */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Unrestricted sensitive/mature mode glow pulse for high visibility */
+.unrestricted-glow {
+  box-shadow: 0 0 12px -2px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+

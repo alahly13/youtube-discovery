@@ -8,9 +8,7 @@ import {
   Loader2,
   RefreshCw,
   Save,
-  Search,
   SkipForward,
-  X,
 } from "lucide-react";
 import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import type { YouTubeManifest } from "@/types/manifest";

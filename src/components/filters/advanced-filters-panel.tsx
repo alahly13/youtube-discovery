@@ -9,13 +9,14 @@ import {
   Hash,
   MessageCircle,
   Search,
+  ShieldAlert,
   ThumbsUp,
   Timer,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { YouTubeDiscoveryItemType, YouTubeResultFilters } from "@/types/youtube";
-import { DEFAULT_YOUTUBE_RESULT_FILTERS, YOUTUBE_ITEM_TYPES } from "@/types/youtube";
+import { DEFAULT_YOUTUBE_RESULT_FILTERS } from "@/types/youtube";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -83,6 +84,7 @@ export function AdvancedFiltersPanel({
     search: true,
     sort: true,
     types: !compact,
+    ageRating: !compact,
     numeric: !compact,
     dates: !compact,
     presence: !compact,
@@ -92,8 +94,12 @@ export function AdvancedFiltersPanel({
   const toggleSection = (key: string) =>
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
-  const update = (patch: Partial<YouTubeResultFilters>) =>
-    onFiltersChange({ ...filters, ...patch });
+  const update = useCallback(
+    (patch: Partial<YouTubeResultFilters>) => {
+      onFiltersChange({ ...filters, ...patch });
+    },
+    [filters, onFiltersChange],
+  );
 
   /* ── Validation warnings for invalid ranges ───────────────────────── */
   const rangeWarnings = useMemo(() => {
@@ -174,6 +180,12 @@ export function AdvancedFiltersPanel({
     if (filters.shortsLikeOnly) {
       chips.push({ label: "Shorts-like only", clear: () => update({ shortsLikeOnly: false }) });
     }
+    if (filters.ageRatingFilter && filters.ageRatingFilter !== "all") {
+      chips.push({
+        label: filters.ageRatingFilter === "age_restricted" ? "🔞 18+ Mature only" : "General audience only",
+        clear: () => update({ ageRatingFilter: "all" }),
+      });
+    }
     if (filters.hasThumbnail !== "any") {
       chips.push({ label: `Thumbnail: ${filters.hasThumbnail}`, clear: () => update({ hasThumbnail: "any" }) });
     }
@@ -194,7 +206,7 @@ export function AdvancedFiltersPanel({
     }
 
     return chips;
-  }, [filters, defaultSort]);
+  }, [filters, defaultSort, update]);
 
   const hasActiveFilters = activeChips.length > 0;
 
@@ -349,6 +361,43 @@ export function AdvancedFiltersPanel({
             </label>
           </FilterSection>
         )}
+
+        {/* ═══ Age & Content Rating Section ════════════════════════════ */}
+        <FilterSection
+          title="Content rating & age"
+          icon={<ShieldAlert className="h-3.5 w-3.5" />}
+          isOpen={openSections.ageRating ?? false}
+          onToggle={() => toggleSection("ageRating")}
+        >
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted">
+              Filter by age restriction metadata (YouTube 18+ / ytAgeRestricted tag).
+            </p>
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+              {[
+                { value: "all", label: "All Content" },
+                { value: "age_restricted", label: "🔞 18+ Mature" },
+                { value: "general", label: "General Only" },
+              ].map((opt) => {
+                const isActive = (filters.ageRatingFilter ?? "all") === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    className={`rounded-md border px-2 py-1.5 text-xs font-medium transition text-center ${
+                      isActive
+                        ? "border-primary/50 bg-primary-soft text-primary font-semibold shadow-xs"
+                        : "border-border bg-surface text-muted hover:bg-surface-muted hover:text-foreground"
+                    }`}
+                    onClick={() => update({ ageRatingFilter: opt.value as YouTubeResultFilters["ageRatingFilter"] })}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </FilterSection>
 
         {/* ═══ Numeric Ranges Section ══════════════════════════════════ */}
         <FilterSection

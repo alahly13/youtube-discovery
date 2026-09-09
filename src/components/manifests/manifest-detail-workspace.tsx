@@ -51,7 +51,10 @@ export function ManifestDetailWorkspace({
     useState<NormalizedYouTubeDiscoveryItem | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  const totalItems = manifest?.normalizedItems ?? [];
+  const totalItems = useMemo(
+    () => manifest?.normalizedItems ?? [],
+    [manifest?.normalizedItems],
+  );
   const filteredItems = useMemo(
     () => applyYouTubeResultPipeline(totalItems, filters),
     [totalItems, filters],

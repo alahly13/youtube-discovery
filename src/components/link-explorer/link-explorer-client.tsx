@@ -5,10 +5,17 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
+import type { YouTubeAnalyzedLink } from "@/lib/platforms/youtube/youtube-url-analyzer";
+
+interface LinkAnalyzeResponse {
+  analyzed: YouTubeAnalyzedLink;
+  officialOnly: boolean;
+  strategy: string;
+}
 
 export function LinkExplorerClient() {
   const [input, setInput] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-  const [result, setResult] = useState<unknown>(null);
+  const [result, setResult] = useState<LinkAnalyzeResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
   async function analyze() {
@@ -19,7 +26,8 @@ export function LinkExplorerClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ input }),
       });
-      setResult(await response.json());
+      const data = (await response.json()) as LinkAnalyzeResponse;
+      setResult(data);
     } finally {
       setLoading(false);
     }
@@ -45,17 +53,17 @@ export function LinkExplorerClient() {
           <Badge>Video, Shorts, channel, handle, playlist, search URL</Badge>
         </div>
 
-        {result && typeof result === "object" && "analyzed" in result ? (
+        {result?.analyzed ? (
           <div className="space-y-4">
             <div className="space-y-2">
               <p className="text-sm font-medium">Strategy:</p>
-              <p className="text-sm text-muted">{(result as any).strategy}</p>
+              <p className="text-sm text-muted">{result.strategy}</p>
             </div>
             
             <div className="flex gap-2">
                {/* Render action based on kind */}
                {(() => {
-                 const analyzed = (result as any).analyzed;
+                 const analyzed = result.analyzed;
                  switch(analyzed.kind) {
                    case "video":
                    case "shorts":

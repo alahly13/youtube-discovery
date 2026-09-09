@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-05-09 (Settings & Local Libraries Update)
+Last updated: 2026-09-09 (Saved Searches, Unrestricted Mode, Content Rating & Mobile Drawer Upgrade)
 
 ## Project Identity And Mission
 
@@ -53,7 +53,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 ## Route Map And Page Responsibilities
 
 - `/`: dashboard with product posture, system boundaries, quick actions, and manifest overview.
-- `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, and scoped AI panel.
+- `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle (safeSearch: "none" for sensitive/mature/18+/35+ content discovery), and custom Saved Search Titles shelf (save, pin, copy, run).
 - `/ai-search`: AI Search / AI Discovery workspace and safety contract.
 - `/link-explorer`: parses YouTube URLs and reports official API strategy without scraping.
 - `/channels`: **FULL** saved channel library (localStorage-backed).
@@ -65,10 +65,10 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/manifests`: manifest library with interactive manifest listing, clickable navigation to detail pages.
 - `/manifests/[manifestId]`: **FULL** manifest detail workspace with local search/filter/sort, export, and scoped AI analysis.
 - `/collections`: **FULL** collection management workspace with create/delete/search and runtime manifest reference (localStorage-backed).
-- `/saved`: **FULL** saved library workspace with search, stats, deduplication by platformItemId, and navigation to watch/channel/playlist pages (localStorage-backed).
+- `/saved`: **FULL** saved library workspace with search, stats, deduplication by platformItemId, navigation to watch/channel/playlist pages, and dedicated Saved Search Titles tab (Zustand & localStorage-backed).
 - `/history`: **FULL** chronological history workspace with date-grouped manifest entries, search, and navigation to manifest detail pages.
 - `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings, and graceful error handling.
-- `/settings`: **FULL** Settings page with environment status and persistent YouTube Fetch Controls.
+- `/settings`: **FULL** Settings page with environment status, Default SafeSearch & Sensitivity Policy, and persistent YouTube Fetch Controls.
 
 ## API Route Map And Backend Authority Boundaries
 
@@ -165,6 +165,8 @@ Forbidden public secrets:
 - `AGENTS.md`: repo operating rules; future agents must read it before edits.
 - `Guide-Files/youtube-discovery_full_guide_2026_updated.md`: primary product and architecture guide.
 - `Guide-Files/ai_youtube_discovery_ai_agent_prompt_rules_2026.md`: AI and implementation prompt/safety guide.
+- `Guide-Files/git_github_arabic_commands_guide.md`: Arabic Git/GitHub command workflow guide.
+- `Guide-Files/npm_commands_arabic_guide.md`: Comprehensive Arabic NPM and NPX commands reference guide.
 - `DESIGN_DARK.md`, `DESIGN_LIGHT.md`, `design-inspiration/*`: visual inspiration, not product truth.
 - `src/app/globals.css`: design tokens and global layout safeguards; avoid one-off color systems.
 - `src/app/layout.tsx`: root metadata, fonts, and theme boot script.
@@ -212,13 +214,10 @@ Forbidden public secrets:
 - `npm run db:status`: checks migration status only when `DATABASE_URL` is present.
 - `npm run db:apply`: guarded migration deploy; requires `CONFIRM_DB_APPLY=true`.
 
-Latest verification results on 2026-05-08:
+Latest verification results on 2026-09-09:
 
 - `npm run db:validate`: passed.
-- `npm run lint`: passed.
-- `npm run typecheck`: passed.
-- `npm run build`: passed.
-- Dev server: running at `http://localhost:3000` for local review.
-- HTTP smoke checks: core pages and Link Explorer API returned successful responses.
-- `npm run db:status`: blocked by Prisma schema engine error against the configured endpoint; migration status not verified.
+- `npm run lint`: passed (0 errors, 0 warnings).
+- `npm run typecheck`: passed (0 errors).
+- `npm run build`: passed cleanly with Next.js 16.2.6 Turbopack (all 16 static routes + dynamic routes generated).
 - Zod for server route validation.

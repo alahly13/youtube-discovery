@@ -1,24 +1,25 @@
 "use client";
 
-import { Activity, Bell, Database, Menu, PanelLeftClose, PanelLeftOpen, Search } from "lucide-react";
+import { Activity, Bell, Database, Menu, PanelLeftClose, PanelLeftOpen, Search, X } from "lucide-react";
+import { useSyncExternalStore, useState } from "react";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Navigation } from "@/components/layout/navigation";
 import { Badge } from "@/components/ui/badge";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { Button } from "@/components/ui/button";
-import { useEffect, useState } from "react";
+
+const noopSubscribe = () => () => {};
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { isSidebarOpen, toggleSidebar } = useYouTubeWorkspaceStore();
-  const [mounted, setMounted] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  // SSR-safe mount detection without cascading render lint errors
+  const isMounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
 
-  // Avoid hydration mismatch by assuming open on server, 
+  // Avoid hydration mismatch by assuming open on server,
   // then using the actual persisted state once mounted.
-  const isOpen = mounted ? isSidebarOpen : true;
+  const isOpen = isMounted ? isSidebarOpen : true;
 
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
@@ -40,6 +41,42 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Navigation />
       </aside>
 
+      {/* Mobile Drawer Navigation */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          {/* Drawer Content */}
+          <div className="relative flex w-4/5 max-w-xs flex-col border-r border-border bg-surface p-4 shadow-xl z-10 animate-slide-in">
+            <div className="mb-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft text-primary">
+                  <Search className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">YouTube Discovery</p>
+                  <p className="font-mono text-[10px] text-muted">Research Terminal</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="rounded-lg p-1 text-muted hover:bg-surface-muted hover:text-foreground"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="Close menu"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto" onClick={() => setMobileMenuOpen(false)}>
+              <Navigation />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Content Area */}
       <div 
         className={`transition-[padding] duration-300 ease-in-out ${
@@ -51,9 +88,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-3">
               {/* Mobile menu button */}
               <button
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-muted lg:hidden"
+                type="button"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-muted lg:hidden hover:text-foreground hover:bg-surface-muted"
                 aria-label="Open navigation"
                 title="Open navigation"
+                onClick={() => setMobileMenuOpen(true)}
               >
                 <Menu className="h-4 w-4" />
               </button>

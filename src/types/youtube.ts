@@ -42,6 +42,10 @@ export interface NormalizedYouTubeDiscoveryItem {
   isEmbeddable: boolean | null;
   liveBroadcastContent: YouTubeLiveBroadcastContent | null;
   isShortsLike: boolean;
+  /** Whether content is flagged as age-restricted / mature (e.g. ytAgeRestricted) */
+  isAgeRestricted?: boolean;
+  /** Rating string if available from contentDetails.contentRating */
+  contentRating?: string | null;
   rawJson: unknown;
   manifestId?: string;
   collectedAt?: string;
@@ -51,6 +55,18 @@ export interface NormalizedYouTubeDiscoveryItem {
     playlistTitle: string;
     position: number | null;
   }>;
+}
+
+export interface SavedSearch {
+  id: string;
+  title: string;
+  query: string;
+  resourceSelection: YouTubeSearchResourceSelection;
+  settings: Partial<YouTubeSearchSettings>;
+  createdAt: string;
+  updatedAt?: string;
+  isPinned?: boolean;
+  notes?: string;
 }
 
 export interface YouTubeSearchSettings {
@@ -108,6 +124,8 @@ export interface YouTubeResultFilters {
   /** Presence filter for language metadata */
   hasLanguage: "any" | "yes" | "no";
   shortsLikeOnly: boolean;
+  /** Filter by age rating / maturity: all content, age restricted (18+ / mature), or general audience */
+  ageRatingFilter: "all" | "age_restricted" | "general";
   sort:
     | "api_order"
     | "latest"
@@ -154,6 +172,7 @@ export const DEFAULT_YOUTUBE_RESULT_FILTERS: YouTubeResultFilters = {
   hasDescription: "any",
   hasLanguage: "any",
   shortsLikeOnly: false,
+  ageRatingFilter: "all",
   sort: "api_order",
   strictMetadata: false,
 };

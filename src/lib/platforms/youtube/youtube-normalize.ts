@@ -33,6 +33,10 @@ interface YouTubeVideoDetail {
     duration?: string;
     caption?: string;
     regionRestriction?: { allowed?: string[]; blocked?: string[] };
+    contentRating?: {
+      ytRating?: string;
+      [key: string]: unknown;
+    };
   };
   statistics?: {
     viewCount?: string;
@@ -102,6 +106,8 @@ export function normalizeVideoDetail(raw: YouTubeVideoDetail): NormalizedYouTube
   const liveBroadcastContent = raw.snippet?.liveBroadcastContent ?? "none";
   const isShortsLike = durationSeconds !== null && durationSeconds <= 60;
   const itemType = getVideoItemType(liveBroadcastContent, isShortsLike);
+  const isAgeRestricted = raw.contentDetails?.contentRating?.ytRating === "ytAgeRestricted";
+  const contentRating = raw.contentDetails?.contentRating?.ytRating ?? null;
 
   return {
     id: `youtube:${raw.id}`,
@@ -126,6 +132,8 @@ export function normalizeVideoDetail(raw: YouTubeVideoDetail): NormalizedYouTube
     isEmbeddable: raw.status?.embeddable ?? null,
     liveBroadcastContent,
     isShortsLike,
+    isAgeRestricted,
+    contentRating,
     rawJson: raw,
   };
 }

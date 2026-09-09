@@ -6,6 +6,8 @@ import { Card } from "@/components/ui/card";
 import { ListVideo } from "lucide-react";
 import { useState } from "react";
 
+import { ButtonLink } from "@/components/ui/button";
+
 export function PlaylistsClient() {
   const savedItems = useYouTubeWorkspaceStore((s) => s.savedItems);
   const playlists = savedItems.filter((i) => i.itemType === "playlist");
@@ -43,9 +45,17 @@ export function PlaylistsClient() {
         <Card className="flex flex-col items-center justify-center p-12 text-center text-muted">
           <ListVideo className="mb-4 h-12 w-12 opacity-20" />
           <p className="text-lg font-medium text-foreground">No playlists found</p>
-          <p className="mt-1 text-sm">
-            {search ? "No saved playlists match your search." : "You haven't saved any playlists yet. Search for playlists and click the save button."}
+          <p className="mt-1 text-sm max-w-md">
+            {search ? "No saved playlists match your search." : "You haven't saved any playlists yet. Use Playlist Explorer to inspect public playlists or search for playlists in the Search workspace."}
           </p>
+          <div className="mt-5 flex flex-wrap justify-center gap-3">
+            <ButtonLink href="/playlist-explorer" variant="primary" className="h-9 px-4 text-xs">
+              Playlist Explorer
+            </ButtonLink>
+            <ButtonLink href="/search" variant="secondary" className="h-9 px-4 text-xs">
+              Search Playlists
+            </ButtonLink>
+          </div>
         </Card>
       )}
     </div>

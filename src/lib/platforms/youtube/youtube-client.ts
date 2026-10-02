@@ -1,17 +1,15 @@
 import "server-only";
 
 import { MissingYouTubeApiKeyError, YouTubeProviderError } from "./youtube-errors";
+import { resolveActiveYouTubeApiKey } from "./youtube-api-keys";
 
 type QueryValue = string | number | boolean | null | undefined;
 
 export class YouTubeApiClient {
   private readonly apiBaseUrl = process.env.YOUTUBE_API_BASE_URL ?? "https://www.googleapis.com/youtube/v3";
-  private readonly apiKey = process.env.YOUTUBE_API_KEY?.trim();
 
   async request<T>(path: string, params: Record<string, QueryValue>): Promise<T> {
-    if (!this.apiKey) {
-      throw new MissingYouTubeApiKeyError();
-    }
+    const { key: activeApiKey } = await resolveActiveYouTubeApiKey();
 
     const url = new URL(`${this.apiBaseUrl.replace(/\/$/, "")}/${path}`);
 
@@ -21,7 +19,7 @@ export class YouTubeApiClient {
       }
     }
 
-    url.searchParams.set("key", this.apiKey);
+    url.searchParams.set("key", activeApiKey);
 
     const response = await fetch(url, {
       headers: {

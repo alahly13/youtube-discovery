@@ -7,6 +7,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Clock,
   Copy,
   Download,
   Filter,
@@ -39,8 +40,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { YouTubeItemCard } from "@/components/youtube/youtube-item-card";
+import { BackToTop } from "@/components/ui/back-to-top";
 import { applyYouTubeResultPipeline } from "@/lib/filters/youtube-result-filters";
-import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
+import {
+  formatSearchCacheAge,
+  isLastSearchValid,
+  useYouTubeWorkspaceStore,
+} from "@/lib/state/youtube-workspace-store";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Search Workspace — Primary YouTube Discovery Interface
@@ -196,6 +202,15 @@ export function SearchWorkspace() {
   const setCurrentManifest = useYouTubeWorkspaceStore((s) => s.setCurrentManifest);
   const fetchSettings = useYouTubeWorkspaceStore((s) => s.fetchSettings);
 
+  /* ── 24h Persisted Last Search State ─────────────────────────────────── */
+  const lastSearch = useYouTubeWorkspaceStore((s) => s.lastSearch);
+  const setLastSearch = useYouTubeWorkspaceStore((s) => s.setLastSearch);
+  const updateLastSearchFilters = useYouTubeWorkspaceStore((s) => s.updateLastSearchFilters);
+  const clearLastSearch = useYouTubeWorkspaceStore((s) => s.clearLastSearch);
+
+  const hasRestoredRef = useRef(false);
+  const [isRestoredFromCache, setIsRestoredFromCache] = useState(false);
+
   const totalItems = useMemo(() => manifest?.normalizedItems ?? [], [manifest]);
   const filteredItems = useMemo(
     () => applyYouTubeResultPipeline(totalItems, filters),
@@ -305,6 +320,38 @@ export function SearchWorkspace() {
         const newManifest = payload as YouTubeManifest;
         setManifest(newManifest);
         setCurrentManifest(newManifest);
+        setIsRestoredFromCache(false);
+        hasRestoredRef.current = true;
+
+        const searchRecordId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const searchedAt = Date.now();
+
+        // Persist search results for configurable TTL or until a new search is performed
+        setLastSearch({
+          id: searchRecordId,
+          query: activeQuery,
+          resourceSelection: activeResource,
+          settings: { ...activeSettings },
+          filters,
+          manifest: newManifest,
+          searchedAt,
+        });
+
+        // Also persist complete record with full rawJson to server archive
+        fetch("/api/search-storage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: searchRecordId,
+            query: activeQuery,
+            resourceSelection: activeResource,
+            settings: { ...activeSettings },
+            filters,
+            manifest: newManifest,
+          }),
+        }).catch((archiveErr) => {
+          console.error("Failed to archive search on server:", archiveErr);
+        });
 
         // Record successful search in persistent history with clean query title
         const items = newManifest.normalizedItems ?? [];
@@ -317,6 +364,7 @@ export function SearchWorkspace() {
           .slice(0, 4);
 
         recordSearchHistory({
+          id: searchRecordId,
           title: activeQuery,
           query: activeQuery,
           resourceSelection: activeResource,
@@ -349,8 +397,167 @@ export function SearchWorkspace() {
         setLoading(false);
       }
     },
-    [fetchSettings, recordSearchHistory, resourceSelection, setCurrentManifest, settings],
+    [fetchSettings, filters, recordSearchHistory, resourceSelection, setCurrentManifest, setLastSearch, settings],
   );
+
+  /* ── Clear All Search Results and Persisted Cache ──────────────────── */
+  const handleClearSearch = useCallback(() => {
+    startTransition(() => {
+      setManifest(null);
+      setIsRestoredFromCache(false);
+      setSettings(initialSettings);
+      setError(null);
+    });
+    setCurrentManifest(null);
+    clearLastSearch();
+    hasRestoredRef.current = true;
+    fetch("/api/search-storage", { method: "DELETE" }).catch(() => {});
+  }, [clearLastSearch, setCurrentManifest]);
+
+  /* ── Direct Load from Archived Search Record (?load=...) ───────────── */
+  useEffect(() => {
+    const loadId = searchParams.get("load");
+    if (!loadId) return;
+    const validLoadId = loadId;
+
+    let cancelled = false;
+    async function loadArchivedSearch() {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await fetch(`/api/search-storage/${encodeURIComponent(validLoadId)}`);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Archived search not found or expired");
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        const record = data.record;
+        if (record && record.manifest) {
+          startTransition(() => {
+            setManifest(record.manifest);
+            setSettings(record.settings);
+            setResourceSelection(record.resourceSelection);
+            if (record.filters) {
+              setFilters(record.filters);
+            }
+            setIsRestoredFromCache(true);
+          });
+          setCurrentManifest(record.manifest);
+          setLastSearch({
+            id: record.id,
+            query: record.query,
+            resourceSelection: record.resourceSelection,
+            settings: record.settings,
+            filters: record.filters,
+            manifest: record.manifest,
+            searchedAt: record.searchedAt,
+            expiresAt: record.expiresAt,
+          });
+          hasRestoredRef.current = true;
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to load archived search");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadArchivedSearch();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, setCurrentManifest, setLastSearch]);
+
+  /* ── Restore Persisted Last Search (Valid for configurable TTL) ────── */
+  useEffect(() => {
+    // If URL has a specific query parameter (?q=... or ?load=...), let those take precedence
+    if (searchParams.get("q") || searchParams.get("load")) return;
+    if (hasRestoredRef.current) return;
+
+    if (lastSearch) {
+      if (!isLastSearchValid(lastSearch)) {
+        clearLastSearch();
+        return;
+      }
+
+      hasRestoredRef.current = true;
+      startTransition(() => {
+        setManifest(lastSearch.manifest);
+        setSettings(lastSearch.settings);
+        setResourceSelection(lastSearch.resourceSelection);
+        if (lastSearch.filters) {
+          setFilters(lastSearch.filters);
+        }
+        setIsRestoredFromCache(true);
+      });
+      setCurrentManifest(lastSearch.manifest);
+      return;
+    }
+
+    // Fallback: restore latest complete search from server archive if store was empty
+    let cancelled = false;
+    fetch("/api/search-storage/latest")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data || !data.record) return;
+        const rec = data.record;
+        if (rec.manifest) {
+          hasRestoredRef.current = true;
+          startTransition(() => {
+            setManifest(rec.manifest);
+            setSettings(rec.settings);
+            setResourceSelection(rec.resourceSelection);
+            if (rec.filters) {
+              setFilters(rec.filters);
+            }
+            setIsRestoredFromCache(true);
+          });
+          setCurrentManifest(rec.manifest);
+          setLastSearch({
+            id: rec.id,
+            query: rec.query,
+            resourceSelection: rec.resourceSelection,
+            settings: rec.settings,
+            filters: rec.filters,
+            manifest: rec.manifest,
+            searchedAt: rec.searchedAt,
+            expiresAt: rec.expiresAt,
+          });
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lastSearch, searchParams, clearLastSearch, setCurrentManifest, setLastSearch]);
+
+  /* ── Periodic & Focus-based Expiration Guard (24h TTL) ──────────────── */
+  useEffect(() => {
+    const checkExpiration = () => {
+      if (lastSearch && !isLastSearchValid(lastSearch)) {
+        clearLastSearch();
+        if (isRestoredFromCache) {
+          startTransition(() => {
+            setManifest(null);
+            setIsRestoredFromCache(false);
+          });
+        }
+      }
+    };
+
+    window.addEventListener("focus", checkExpiration);
+    const interval = setInterval(checkExpiration, 60 * 1000);
+    return () => {
+      window.removeEventListener("focus", checkExpiration);
+      clearInterval(interval);
+    };
+  }, [lastSearch, isRestoredFromCache, clearLastSearch]);
 
   /* ── Detect Query from URL (Forwarded from History with auto-paste) ─── */
   useEffect(() => {
@@ -992,7 +1199,11 @@ export function SearchWorkspace() {
           {/* ── Advanced Filters Panel ──────────────────────────────────── */}
           <AdvancedFiltersPanel
             filters={filters}
-            onFiltersChange={(f) => { setFilters(f); setVisibleCount(PAGE_SIZE); }}
+            onFiltersChange={(f) => {
+              setFilters(f);
+              setVisibleCount(PAGE_SIZE);
+              updateLastSearchFilters(f);
+            }}
             totalCount={totalItems.length}
             filteredCount={filteredItems.length}
             defaultSort="latest"
@@ -1002,6 +1213,30 @@ export function SearchWorkspace() {
 
           {/* ── Results area ─────────────────────────────────────────────── */}
           <div className="col-span-12 space-y-4 xl:col-span-9">
+            {/* ── 24-Hour Persisted Search Banner ──────────────────────── */}
+            {lastSearch && isLastSearchValid(lastSearch) && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary-soft/30 px-3.5 py-2.5 text-xs text-foreground shadow-xs animate-slide-in">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Clock className="h-4 w-4 shrink-0 text-primary animate-pulse" />
+                  <span className="truncate">
+                    <strong>Last Search Persisted (24h Cache):</strong> Results for &ldquo;{lastSearch.query}&rdquo; remain stored for one day ({formatSearchCacheAge(lastSearch.searchedAt).elapsedText} • {formatSearchCacheAge(lastSearch.searchedAt).remainingText} remaining)
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-7 text-xs text-muted hover:text-danger hover:bg-danger/10"
+                    onClick={handleClearSearch}
+                    title="Clear persisted search results and reset workspace"
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />
+                    Clear Results
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {/* Results toolbar */}
             <div className="research-surface p-4">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -1025,6 +1260,10 @@ export function SearchWorkspace() {
                 <Button variant="secondary">
                   <Save className="h-4 w-4" />
                   Save manifest
+                </Button>
+                <Button variant="ghost" onClick={handleClearSearch} title="Clear search results and cached manifest">
+                  <Trash2 className="h-4 w-4 text-danger/80" />
+                  Clear results
                 </Button>
               </div>
             </div>
@@ -1156,6 +1395,9 @@ export function SearchWorkspace() {
           </div>
         </div>
       )}
+
+      {/* ── Floating Back to Top Button ─────────────────────────────────── */}
+      <BackToTop threshold={350} />
     </div>
   );
 }

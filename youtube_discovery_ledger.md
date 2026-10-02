@@ -53,7 +53,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 ## Route Map And Page Responsibilities
 
 - `/`: dashboard with product posture, system boundaries, quick actions, and manifest overview.
-- `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle (safeSearch: "none" for sensitive/mature/18+/35+ content discovery), and custom Saved Search Titles shelf (save, pin, copy, run).
+- `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control.
 - `/ai-search`: AI Search / AI Discovery workspace and safety contract.
 - `/link-explorer`: parses YouTube URLs and reports official API strategy without scraping.
 - `/channels`: **FULL** saved channel library (localStorage-backed).
@@ -66,9 +66,9 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/manifests/[manifestId]`: **FULL** manifest detail workspace with local search/filter/sort, export, and scoped AI analysis.
 - `/collections`: **FULL** collection management workspace with create/delete/search and runtime manifest reference (localStorage-backed).
 - `/saved`: **FULL** saved library workspace with search, stats, deduplication by platformItemId, navigation to watch/channel/playlist pages, and dedicated Saved Search Titles tab (Zustand & localStorage-backed).
-- `/history`: **FULL** chronological history workspace with date-grouped manifest entries, search, and navigation to manifest detail pages.
+- `/history`: **FULL** chronological history workspace with `Search history...` filter across title/query/metadata without calling YouTube API, unified client + server archive listing, "View Results" action loading full search data from the archive with zero quota consumption, and Back-to-Top control.
 - `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings, and graceful error handling.
-- `/settings`: **FULL** Settings page with environment status, Default SafeSearch & Sensitivity Policy, and persistent YouTube Fetch Controls.
+- `/settings`: **FULL** Settings page with environment status, Default SafeSearch & Sensitivity Policy, persistent YouTube Fetch Controls, and YouTube API Key Management (multi-key rotation, safe masked strings, active key switching, and custom key deletion).
 
 ## API Route Map And Backend Authority Boundaries
 
@@ -89,6 +89,16 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `POST /api/youtube/manifests/[manifestId]/search`: local manifest search/filter; no provider call.
 - `POST /api/youtube/manifests/[manifestId]/filter`: local manifest filter; no provider call.
 - `POST /api/youtube/manifests/[manifestId]/save`: saves to runtime store only until DB repositories are enabled.
+- `GET /api/youtube/keys`: lists available YouTube API keys with safe masked representations and active indicator.
+- `POST /api/youtube/keys`: registers a new custom YouTube API key server-side.
+- `POST /api/youtube/keys/select`: selects the active YouTube API key for provider requests.
+- `DELETE /api/youtube/keys/[keyId]`: deletes a custom key with safe fallback to environment key.
+- `GET /api/search-storage`: returns lightweight search archive index and TTL metadata for fast History filtering.
+- `POST /api/search-storage`: archives complete search record with full rawJson to dedicated disk file.
+- `DELETE /api/search-storage`: clears search archive.
+- `GET /api/search-storage/[id]`: retrieves complete search record from disk without calling YouTube API.
+- `DELETE /api/search-storage/[id]`: deletes individual search record from archive.
+- `GET /api/search-storage/latest`: retrieves latest archived search record.
 - `POST /api/ai/youtube-search-assistant`: scoped AI search helper.
 - `POST /api/ai/youtube-manifest-assistant`: scoped manifest analyst.
 - `POST /api/ai/youtube-video-explorer`: selected-video AI explorer.
@@ -149,6 +159,7 @@ Server-only:
 - `YOUTUBE_SEARCH_DELAY_MS`
 - `YOUTUBE_SEARCH_CONCURRENCY`
 - `YOUTUBE_DAILY_QUOTA_BUDGET`
+- `SEARCH_STORAGE_TTL_HOURS`: search storage retention in hours (default: 168 hours = 7 days = 1 week; safe numeric parser fallback on invalid values)
 - `ENABLE_YOUTUBE_MANIFEST_PERSISTENCE`
 - `GEMINI_API_KEY`
 - `GEMINI_MODEL`
@@ -171,16 +182,16 @@ Forbidden public secrets:
 - `src/app/globals.css`: design tokens and global layout safeguards; avoid one-off color systems.
 - `src/app/layout.tsx`: root metadata, fonts, and theme boot script.
 - `src/components/layout/*`: app shell, navigation, theme toggle; keep provider secrets out.
-- `src/components/search/search-workspace.tsx`: main client search experience; local filters do not call YouTube.
-- `src/components/youtube/youtube-item-card.tsx`: video/channel/playlist item card; preserves zero numeric values.
-- `src/components/channels/channel-explorer-workspace.tsx`: full Channel Explorer client component with YouTube-like navigation, manifest-first fetching, advanced local filters, search-inside-channel, AI panel integration, and export.
-- `src/components/playlists/playlist-explorer-workspace.tsx`: full Playlist Explorer client component with order-preserving list/grid view, play-next navigation, local filters, AI panel, and export.
-- `src/components/manifests/manifest-detail-workspace.tsx`: manifest detail workspace with local search/filter/sort, export, and AI analysis.
-- `src/components/manifests/manifest-list-workspace.tsx`: manifest library list with clickable cards linking to detail pages.
+- `src/components/ui/back-to-top.tsx`: reusable smooth-scrolling floating Back-to-Top button.
+- `src/components/search/search-workspace.tsx`: main client search experience; local filters do not call YouTube; includes configurable TTL search persistence (default 168h / 7 days), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control.
+- `src/lib/config/search-storage-config.ts`: centralized safe TTL parser and expiration calculation module.
+- `src/lib/search-storage/search-storage-archive.ts`: server-side file archive preserving complete search records with rawJson and lightweight index for fast listing.
+- `src/lib/platforms/youtube/youtube-api-keys.ts`: multi-key rotation and credential management with safe masking and ENV fallback.
+- `src/lib/state/youtube-workspace-store.ts`: centralized Zustand store managing persisted workspace state including configurable TTL last search cache with full data preservation, watch preferences, and saved items.
 - `src/components/manifests/manifest-summary.tsx`: temporary manifest status and quota summary.
 - `src/components/collections/collections-workspace.tsx`: collection management with localStorage persistence, create/delete/search.
 - `src/components/saved/saved-library-workspace.tsx`: saved items management with localStorage, search, stats, and deduplication.
-- `src/components/history/history-workspace.tsx`: chronological history with date grouping, search, and manifest navigation.
+- `src/components/history/history-workspace.tsx`: chronological history with `Search history...` keyword filter, unified client + server archive listing, "View Results" action loading full search data from the archive with zero quota consumption, and Back-to-Top control.
 - `src/components/watch/watch-sidebar.tsx`: manifest-first suggested videos sidebar with watch settings-based ranking.
 - `src/lib/platforms/youtube/*`: server-only official YouTube adapter, normalizer, quota, errors, URL analyzer, search/channel/playlist services.
 - `src/lib/filters/youtube-result-filters.ts`: zero-safe local filter and sort pipeline.
@@ -188,6 +199,8 @@ Forbidden public secrets:
 - `src/lib/ai/*`: server-only Gemini client, context builder, and response schemas.
 - `src/lib/validation/youtube-schemas.ts`: Zod route contracts.
 - `src/types/*`: normalized YouTube and manifest contracts.
+- `src/app/api/search-storage/*`: dedicated archive API routes (index, full record by ID, latest).
+- `src/app/api/youtube/keys/*`: dedicated API key management routes (list/mask, register, select, delete).
 - `prisma/schema.prisma`: canonical DB schema.
 - `prisma/migrations/*`: append-only migration history.
 - `scripts/*`: env and DB guardrails using root `.env.local`.
@@ -214,10 +227,10 @@ Forbidden public secrets:
 - `npm run db:status`: checks migration status only when `DATABASE_URL` is present.
 - `npm run db:apply`: guarded migration deploy; requires `CONFIRM_DB_APPLY=true`.
 
-Latest verification results on 2026-09-09:
+Latest verification results on 2026-10-02:
 
-- `npm run db:validate`: passed.
 - `npm run lint`: passed (0 errors, 0 warnings).
 - `npm run typecheck`: passed (0 errors).
 - `npm run build`: passed cleanly with Next.js 16.2.6 Turbopack (all 16 static routes + dynamic routes generated).
 - Zod for server route validation.
+

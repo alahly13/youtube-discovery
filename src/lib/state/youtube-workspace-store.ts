@@ -2,9 +2,9 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { YouTubeManifest } from "@/types/manifest";
-
-import type { NormalizedYouTubeDiscoveryItem, SavedSearch, SearchHistoryItem } from "@/types/youtube";
+import type { YouTubeManifest, PersistedLastSearch } from "@/types/manifest";
+import { LAST_SEARCH_TTL_MS } from "@/types/manifest";
+import type { NormalizedYouTubeDiscoveryItem, SavedSearch, SearchHistoryItem, YouTubeResultFilters } from "@/types/youtube";
 
 export type SuggestionSourcePriority = "manifest" | "same_channel" | "mixed";
 
@@ -58,6 +58,7 @@ interface YouTubeWorkspaceStore {
   watchSettings: WatchExperienceSettings;
   fetchSettings: FetchSettings;
   isSidebarOpen: boolean;
+  lastSearch: PersistedLastSearch | null;
   setCurrentManifest: (manifest: YouTubeManifest | null) => void;
   markManifestSaved: (manifestId: string) => void;
   toggleItemSaved: (item: NormalizedYouTubeDiscoveryItem) => void;
@@ -65,13 +66,45 @@ interface YouTubeWorkspaceStore {
   updateSavedSearch: (id: string, patch: Partial<SavedSearch>) => void;
   deleteSavedSearch: (id: string) => void;
   togglePinSavedSearch: (id: string) => void;
-  recordSearchHistory: (item: Omit<SearchHistoryItem, "id" | "timestamp">) => SearchHistoryItem;
+  recordSearchHistory: (item: Omit<SearchHistoryItem, "id" | "timestamp"> & { id?: string }) => SearchHistoryItem;
   deleteSearchHistoryItem: (id: string) => void;
   clearSearchHistory: () => void;
+  setLastSearch: (search: PersistedLastSearch) => void;
+  updateLastSearchFilters: (filters: YouTubeResultFilters) => void;
+  clearLastSearch: () => void;
   updateWatchSettings: (settings: Partial<WatchExperienceSettings>) => void;
   updateFetchSettings: (settings: Partial<FetchSettings>) => void;
   toggleSidebar: () => void;
 }
+
+import {
+  formatSearchTtlRemaining,
+  getSearchStorageTtlMs,
+  isSearchExpired,
+} from "@/lib/config/search-storage-config";
+
+/**
+ * Validates whether a persisted search session is still fresh against the configurable TTL
+ * and contains valid manifest items.
+ */
+export function isLastSearchValid(lastSearch: PersistedLastSearch | null | undefined): boolean {
+  if (!lastSearch || typeof lastSearch.searchedAt !== "number" || !lastSearch.manifest) {
+    return false;
+  }
+  return !isSearchExpired(lastSearch.searchedAt, lastSearch.expiresAt);
+}
+
+/**
+ * Formats the elapsed time and remaining TTL for a persisted search.
+ */
+export function formatSearchCacheAge(
+  searchedAt: number,
+  expiresAt?: number,
+): { elapsedText: string; remainingText: string } {
+  return formatSearchTtlRemaining(searchedAt, expiresAt);
+}
+
+
 
 // This client store preserves non-secret workspace context across Search,
 // Watch, Channel, and Playlist navigation. It intentionally stores only
@@ -138,7 +171,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           ),
         })),
       recordSearchHistory: (itemData) => {
-        const id = `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const id = itemData.id || `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newItem: SearchHistoryItem = {
           ...itemData,
           id,
@@ -158,6 +191,19 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         set(() => ({
           searchHistory: [],
         })),
+      lastSearch: null,
+      setLastSearch: (search) =>
+        set({
+          lastSearch: search,
+        }),
+      updateLastSearchFilters: (filters) =>
+        set((state) => ({
+          lastSearch: state.lastSearch ? { ...state.lastSearch, filters } : null,
+        })),
+      clearLastSearch: () =>
+        set({
+          lastSearch: null,
+        }),
       updateWatchSettings: (settings) =>
         set((state) => ({
           watchSettings: {
@@ -185,6 +231,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         watchSettings: state.watchSettings,
         fetchSettings: state.fetchSettings,
         isSidebarOpen: state.isSidebarOpen,
+        lastSearch: state.lastSearch,
       }),
     },
   ),

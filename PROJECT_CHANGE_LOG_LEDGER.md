@@ -986,6 +986,206 @@ No.
 
 No.
 
+---
+
+## 2026-10-02 (24-Hour Search Results Persistence Across Navigations and Site Closures)
+
+### Date/time
+
+2026-10-02 13:53 UTC (16:53 local)
+
+### Agent/model if known
+
+Antigravity Agent (Gemini 3.8 Flash)
+
+### Task summary
+
+Implemented 24-hour search results persistence on the search workspace (`/search`). When a user navigates away to another page (such as watch, channel explorer, playlists, or saved library) or completely closes the browser/site, their last search query, API search settings, resource type selection, local filters, and normalized manifest results persist and remain stored on `/search` for 24 hours (1 day) from the time of the search, or until a new search is performed or explicitly cleared.
+
+### Reason/root cause
+
+Previously, `SearchWorkspace` held its manifest results, search query, resource type selection, and local filters exclusively in transient React component state (`useState(null)`). Consequently, whenever the user navigated away from the search page or refreshed/closed the site, the component unmounted and the results of the last search disappeared, requiring repetitive searches and redundant quota consumption.
+
+### Files changed
+
+- `src/types/manifest.ts`: Added `LAST_SEARCH_TTL_MS` (24 * 60 * 60 * 1000 ms) and `PersistedLastSearch` interface defining the stored search shape (query, resourceSelection, settings, filters, manifest, searchedAt).
+- `src/lib/state/youtube-workspace-store.ts`: Added `lastSearch` state, `setLastSearch`, `updateLastSearchFilters`, and `clearLastSearch` actions to the persisted Zustand workspace store; implemented `sanitizeManifestForStorage` (stripping bulky rawJson payloads to preserve browser storage quotas), `isLastSearchValid` TTL expiration guard (< 24 hours), and `formatSearchCacheAge` for user-friendly elapsed and remaining time indicators. Added `lastSearch` to store `partialize`.
+- `src/components/search/search-workspace.tsx`: Wired `lastSearch` from the workspace store; implemented automatic restoration on mount (`startTransition` SSR-safe); integrated auto-replacement upon executing any new search; added periodic (60s) and focus-based expiration checks; synced local filter updates to `lastSearch.filters`; added a sleek 24-hour persistence status banner displaying the query, elapsed time, time remaining, and an explicit "Clear Results" button.
+- `youtube_discovery_ledger.md`: Updated architecture notes, file map, and verification records.
+- `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this entry.
+
+### Technical details
+
+- The 24-hour expiration threshold is strictly calculated using `Date.now() - lastSearch.searchedAt < 24 * 60 * 60 * 1000`.
+- To avoid browser `localStorage` quota issues, `sanitizeManifestForStorage` strips voluminous `rawJson` responses while retaining normalized items and minimal metadata.
+- When a user enters `/search` with a specific URL query parameter (`?q=...`), URL parameters take priority over restored results.
+- When navigating back to `/search` without parameters, the last search results and settings restore immediately without calling YouTube API (0 additional quota).
+- Performing any new search instantly replaces `lastSearch` and restarts the 24-hour TTL.
+- An explicit "Clear Results" button allows users to reset the search page to an empty state at will.
+
+### Architecture impact
+
+Preserves manifest-first architecture and provider-versus-local boundaries. Search results persist in the client workspace store with zero additional YouTube Data API calls.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact
+
+Significantly reduces quota waste: returning to the search page reuses cached manifest results instead of forcing users to re-query the YouTube API.
+
+### AI scope/safety impact
+
+None. AI panel and manifest analysis operate directly on the restored manifest.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors, 0 warnings).
+- `npm run typecheck`: passed (0 errors).
+- `npm run build`: passed cleanly with Next.js 16.2.6 Turbopack (all 16 static routes + dynamic routes compiled cleanly).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-10-02 (Configurable Search Storage Retention, Dedicated Archive, Multi-Key API Management, and Back-to-Top Control)
+
+### Date/time
+
+2026-10-02 ~20:00 UTC
+
+### Agent/model if known
+
+Antigravity (Google DeepMind)
+
+### Task summary
+
+Expanded the Search Storage and API Management architecture with:
+1. Configurable search retention period (default 168 hours = 7 days = 1 week), controlled via `SEARCH_STORAGE_TTL_HOURS` with safe numeric fallback.
+2. Complete search data preservation: full manifest and `rawJson` strictly preserved without sanitization, truncation, or field stripping.
+3. Dedicated server file archive in `data/searches/[id].json`, with a lightweight index in `data/searches/index.json` and latest snapshot in `data/searches/latest.json`, featuring automatic expiration cleanup.
+4. History Search & Instant Load: real-time `Search history...` keyword search matching title, query, and metadata on `/history`, and "View Results" direct action loading full manifest results via `/search?load=[id]` with zero YouTube API calls and zero quota consumption.
+5. Multi-Key YouTube API Management: server-side secure key storage (`data/keys/api-keys.json`), dynamic resolution via `resolveActiveYouTubeApiKey()`, safe masked strings (`AIza...X92K`), manual active key switching, and Settings UI (`/settings`) to add custom keys with labels and delete them with automatic ENV fallback.
+6. Reusable Back-to-Top floating control with smooth scrolling on `/search` and `/history`.
+
+### Reason/root cause
+
+Users needed:
+- Search results retained for 7 days by default instead of shorter windows, with the ability to tune the retention hours via environment configuration without modifying source code.
+- Unsanitized, complete preservation of all YouTube metadata (`rawJson`) so that historical searches retain full research depth.
+- Instant viewing of past search results from History without consuming YouTube API quota.
+- Seamless rotation and switching between multiple YouTube API v3 keys directly from Settings while keeping raw credentials strictly server-side.
+- Back-to-Top ergonomic navigation on long result and history lists.
+
+### Files changed
+
+- `src/lib/config/search-storage-config.ts` (created): Centralized TTL parser, ms converter, and expiration timestamp calculation.
+- `.env.example`: Documented `SEARCH_STORAGE_TTL_HOURS="168"`.
+- `src/types/manifest.ts`: Updated `LAST_SEARCH_TTL_MS` to use `getSearchStorageTtlMs()`, extended `PersistedLastSearch` with `id?` and `expiresAt?`.
+- `src/types/youtube.ts`: Updated `SearchHistoryItem` compatibility.
+- `src/lib/search-storage/search-storage-archive.ts` (created): Dedicated server-side JSON file archive and lightweight metadata index manager.
+- `src/app/api/search-storage/route.ts` (created): GET (index/TTL), POST (save full record), DELETE (clear archive).
+- `src/app/api/search-storage/[id]/route.ts` (created): GET (load record by ID), DELETE (remove record).
+- `src/app/api/search-storage/latest/route.ts` (created): GET (load latest record).
+- `src/lib/platforms/youtube/youtube-api-keys.ts` (created): Multi-key storage, masking, dynamic resolution, selection, and deletion.
+- `src/lib/platforms/youtube/youtube-client.ts`: Integrated dynamic key resolution on every request via `resolveActiveYouTubeApiKey()`.
+- `src/app/api/youtube/keys/route.ts` (created): GET (safe masked list with active indicator), POST (register custom key).
+- `src/app/api/youtube/keys/select/route.ts` (created): POST (switch active key).
+- `src/app/api/youtube/keys/[keyId]/route.ts` (created): DELETE (delete custom key with fallback).
+- `src/components/ui/back-to-top.tsx` (created): Reusable floating Back-to-Top component with smooth window scrolling.
+- `src/components/search/search-workspace.tsx`: Integrated server archive persistence, direct load from archive via `?load=[id]`, latest cache restoration, and Back-to-Top control.
+- `src/components/history/history-workspace.tsx`: Integrated server archive listing, `Search history...` keyword search matching title/query/metadata, "View Results" direct action, and Back-to-Top control.
+- `src/lib/state/youtube-workspace-store.ts`: Removed `sanitizeManifestForStorage` to preserve full rawJson, updated `recordSearchHistory` to accept optional explicit ID, and integrated configurable TTL validation.
+- `src/app/settings/settings-client.tsx`: Added YouTube API Key Management Card with active key banner, masked strings, key switcher, and custom key registration form.
+- `eslint.config.mjs`: Added `data/**` to `globalIgnores`.
+- `youtube_discovery_ledger.md`: Updated route maps, API routes, environment variables, and file architecture map.
+- `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this dated change log entry.
+
+### Technical details
+
+- `SEARCH_STORAGE_TTL_HOURS` is parsed safely via `Number(...)`; values `<= 0`, non-numeric, or missing automatically fall back to 168 hours.
+- Expiration formula: `expiresAt = searchedAt + (SEARCH_STORAGE_TTL_HOURS * 60 * 60 * 1000)`.
+- Full search records including unstripped `rawJson` are stored at `data/searches/[id].json`.
+- A lightweight index at `data/searches/index.json` stores only metadata (`id`, `title`, `query`, counts, thumbnails, `expiresAt`) enabling fast history listings.
+- Expired archive records are automatically deleted from disk when the index is accessed.
+- Raw custom API keys are saved in `data/keys/api-keys.json` with strict server-only boundaries (`import "server-only"`).
+- `maskApiKey` exposes only the first 4 and last 4 characters separated by ellipses (`AIza...X92K`).
+- Provider requests resolve the active key dynamically: custom active key if selected, falling back to `process.env.YOUTUBE_API_KEY`.
+- `/search?load=[id]` bypasses provider network calls and loads the complete cached manifest directly into the search workspace.
+
+### Architecture impact
+
+- Decouples large manifest persistence from browser `localStorage` limits by moving full records with `rawJson` to server disk storage.
+- Introduces multi-key credential rotation without changing the external contract of `YouTubeApiClient`.
+- Establishes a zero-quota result viewer pathway for historical searches.
+
+### Environment impact
+
+- Added `SEARCH_STORAGE_TTL_HOURS="168"` to `.env.example`.
+- All credentials remain server-only; no public client variables exposed.
+
+### Database/migration impact
+
+None. Archive is disk-backed JSON with lightweight indexing.
+
+### YouTube API/quota impact
+
+- Significant quota savings: viewing results from History consumes 0 YouTube API quota units.
+- Multi-key rotation allows users to distribute quota across multiple Google Cloud projects.
+
+### AI scope/safety impact
+
+None. AI assistant panel continues to analyze manifests locally with zero hallucination constraints.
+
+### Verification run and results
+
+- `npm run typecheck`: passed cleanly (0 errors).
+- `npm run build`: passed cleanly with Next.js 16.2.6 Turbopack (all 16 static routes + dynamic routes compiled).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No. All keys are masked with `maskApiKey` before being returned to clients or logs.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
 
 
 

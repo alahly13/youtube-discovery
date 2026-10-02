@@ -1,5 +1,6 @@
 import type {
   NormalizedYouTubeDiscoveryItem,
+  YouTubeResultFilters,
   YouTubeSearchResourceSelection,
   YouTubeSearchSettings,
 } from "@/types/youtube";
@@ -81,3 +82,26 @@ export interface YouTubeManifestSummary {
   collectedAt: string;
   saved: boolean;
 }
+
+import { getSearchStorageTtlMs } from "@/lib/config/search-storage-config";
+
+/** Configurable search storage persistence TTL in milliseconds */
+export const LAST_SEARCH_TTL_MS = getSearchStorageTtlMs();
+
+/**
+ * Persisted search session for the search workspace.
+ * Preserves the complete search results, query, settings, filters, rawJson,
+ * and expiration timestamp across navigations and browser sessions.
+ */
+export interface PersistedLastSearch {
+  id?: string;
+  query: string;
+  resourceSelection: YouTubeSearchResourceSelection;
+  settings: YouTubeSearchSettings;
+  filters?: YouTubeResultFilters;
+  manifest: YouTubeManifest;
+  searchedAt: number; // Unix epoch timestamp in ms (Date.now())
+  expiresAt?: number;
+}
+
+

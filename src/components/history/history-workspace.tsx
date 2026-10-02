@@ -11,6 +11,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Eye,
   Filter,
   Layers,
   Loader2,
@@ -34,6 +35,7 @@ import type {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { BackToTop } from "@/components/ui/back-to-top";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { formatDate, formatFullDateTime, formatRelativeDate } from "@/lib/utils/format";
 
@@ -109,25 +111,96 @@ export function HistoryWorkspace() {
     }
   }
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Mount-only fetch for raw manifests */
+  /* ── Server Search Storage Archive Index ────────────────────────────── */
+  const [archiveItems, setArchiveItems] = useState<any[]>([]);
+  const [, setLoadingArchive] = useState(false);
+
+  async function fetchSearchArchive() {
+    setLoadingArchive(true);
+    try {
+      const res = await fetch("/api/search-storage");
+      if (res.ok) {
+        const data = await res.json();
+        startTransition(() => {
+          setArchiveItems(data.items ?? []);
+        });
+      }
+    } catch {
+      // Ignore network errors
+    } finally {
+      startTransition(() => setLoadingArchive(false));
+    }
+  }
+
+  /* eslint-disable react-hooks/set-state-in-effect -- Mount-only fetch for raw manifests and archive */
   useEffect(() => {
     fetchServerManifests();
+    fetchSearchArchive();
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
 
+  /* ── Unified Search Items (Zustand + Server Archive) ───────────────── */
+  const unifiedSearches = useMemo(() => {
+    const map = new Map<string, SearchHistoryItem>();
+    for (const item of searchHistory) {
+      map.set(item.id, item);
+    }
+    for (const arch of archiveItems) {
+      if (!map.has(arch.id)) {
+        map.set(arch.id, {
+          id: arch.id,
+          title: arch.title,
+          query: arch.query,
+          resourceSelection: arch.resourceSelection,
+          settings: arch.settings,
+          timestamp: arch.createdAt,
+          resultsCount: arch.itemCount,
+          videoCount: arch.videoCount,
+          channelCount: arch.channelCount,
+          playlistCount: arch.playlistCount,
+          quotaCostEstimate: arch.quotaCostEstimate,
+          status: arch.status,
+          manifestId: arch.id,
+          topThumbnails: arch.topThumbnails,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [searchHistory, archiveItems]);
+
   /* ── Filtered & Sorted Search History ────────────────────────────────── */
   const filteredSearches = useMemo(() => {
-    return searchHistory
+    return unifiedSearches
       .filter((item) => {
-        // Keyword match
+        // Keyword match across title, query, and metadata
         if (keywordFilter.trim()) {
           const q = keywordFilter.toLowerCase();
-          const matchTitle = item.title.toLowerCase().includes(q);
-          const matchQuery = item.query.toLowerCase().includes(q);
+          const matchTitle = (item.title ?? "").toLowerCase().includes(q);
+          const matchQuery = (item.query ?? "").toLowerCase().includes(q);
           const matchRegion = (item.settings?.regionCode ?? "")
             .toLowerCase()
             .includes(q);
-          if (!matchTitle && !matchQuery && !matchRegion) return false;
+          const matchResource = (item.resourceSelection ?? "")
+            .toLowerCase()
+            .includes(q);
+          const matchSafe = (item.settings?.safeSearch ?? "")
+            .toLowerCase()
+            .includes(q);
+          const matchLang = (item.settings?.relevanceLanguage ?? "")
+            .toLowerCase()
+            .includes(q);
+          const matchStatus = (item.status ?? "").toLowerCase().includes(q);
+          if (
+            !matchTitle &&
+            !matchQuery &&
+            !matchRegion &&
+            !matchResource &&
+            !matchSafe &&
+            !matchLang &&
+            !matchStatus
+          ) {
+            return false;
+          }
         }
 
         // Resource type match
@@ -156,20 +229,20 @@ export function HistoryWorkspace() {
         }
         return 0;
       });
-  }, [searchHistory, keywordFilter, resourceFilter, modeFilter, sortOrder]);
+  }, [unifiedSearches, keywordFilter, resourceFilter, modeFilter, sortOrder]);
 
   /* ── Statistics Summary ──────────────────────────────────────────────── */
   const stats = useMemo(() => {
-    const totalSearches = searchHistory.length;
-    const totalResultsFound = searchHistory.reduce(
+    const totalSearches = unifiedSearches.length;
+    const totalResultsFound = unifiedSearches.reduce(
       (sum, item) => sum + (item.resultsCount || 0),
       0,
     );
-    const unrestrictedCount = searchHistory.filter(
+    const unrestrictedCount = unifiedSearches.filter(
       (item) => item.settings?.safeSearch === "none",
     ).length;
     const latestSearchTime =
-      searchHistory.length > 0 ? searchHistory[0].timestamp : null;
+      unifiedSearches.length > 0 ? unifiedSearches[0].timestamp : null;
 
     return {
       totalSearches,
@@ -177,11 +250,46 @@ export function HistoryWorkspace() {
       unrestrictedCount,
       latestSearchTime,
     };
-  }, [searchHistory]);
+  }, [unifiedSearches]);
 
   /* ── Action Handlers ─────────────────────────────────────────────────── */
 
   const cleanDisplayTitle = (raw: string | undefined | null) => (raw ?? "").replace(/^Search:\s*/i, "").trim();
+
+  /**
+   * Directly view search results from archive without triggering YouTube API call
+   */
+  const handleViewResults = (item: SearchHistoryItem) => {
+    router.push(`/search?load=${encodeURIComponent(item.id)}`);
+  };
+
+  /**
+   * Delete entry from local store and server archive
+   */
+  const handleDeleteItem = async (id: string) => {
+    deleteSearchHistoryItem(id);
+    setArchiveItems((prev) => prev.filter((x) => x.id !== id));
+    try {
+      await fetch(`/api/search-storage/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {
+      // Ignore network errors
+    }
+  };
+
+  /**
+   * Clear all search history from local store and server archive
+   */
+  const handleClearAll = async () => {
+    clearSearchHistory();
+    setArchiveItems([]);
+    setIsClearModalOpen(false);
+    showToast("Cleared all search history.");
+    try {
+      await fetch("/api/search-storage", { method: "DELETE" });
+    } catch {
+      // Ignore network errors
+    }
+  };
 
   /**
    * One-click copy of the search title with visual feedback
@@ -348,7 +456,7 @@ export function HistoryWorkspace() {
             }`}
           >
             <Search className="h-3.5 w-3.5" />
-            <span>Search History ({searchHistory.length})</span>
+            <span>Search History ({unifiedSearches.length})</span>
           </button>
 
           <button
@@ -365,7 +473,7 @@ export function HistoryWorkspace() {
           </button>
         </div>
 
-        {activeTab === "searches" && searchHistory.length > 0 && (
+        {activeTab === "searches" && unifiedSearches.length > 0 && (
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
@@ -399,7 +507,7 @@ export function HistoryWorkspace() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <input
                 className="h-9 w-full rounded-lg border border-border bg-surface pl-9 pr-3 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                placeholder="Filter history by title, query keyword, region…"
+                placeholder="Search history..."
                 value={keywordFilter}
                 onChange={(e) => setKeywordFilter(e.target.value)}
               />
@@ -558,6 +666,18 @@ export function HistoryWorkspace() {
 
                       {/* Right: Important Action Buttons */}
                       <div className="flex flex-wrap items-center gap-2 pt-1 lg:pt-0">
+                        {/* 0. Direct View Results Button (Loads cached manifest with zero YouTube API calls) */}
+                        <Button
+                          type="button"
+                          variant="primary"
+                          className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-xs"
+                          onClick={() => handleViewResults(item)}
+                          title="Load full search results directly from cache into Search workspace without using YouTube API quota"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span>View Results</span>
+                        </Button>
+
                         {/* 1. Copy Title Button */}
                         <Button
                           type="button"
@@ -582,13 +702,13 @@ export function HistoryWorkspace() {
                         {/* 2. Forward to Search Page Button */}
                         <Button
                           type="button"
-                          variant="primary"
-                          className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-xs"
+                          variant="secondary"
+                          className="h-8 gap-1.5 px-3 text-xs font-medium"
                           onClick={() => handleForwardToSearch(item, false)}
                           title="Copy title, forward to Search page, and auto-paste into the search input"
                         >
                           <ArrowUpRight className="h-3.5 w-3.5" />
-                          <span>Forward to Search</span>
+                          <span>Forward</span>
                         </Button>
 
                         {/* 3. Rerun Search Immediately Button */}
@@ -619,7 +739,7 @@ export function HistoryWorkspace() {
                           type="button"
                           variant="ghost"
                           className="h-8 w-8 p-0 text-muted hover:text-danger hover:bg-danger/10"
-                          onClick={() => deleteSearchHistoryItem(item.id)}
+                          onClick={() => handleDeleteItem(item.id)}
                           title="Delete this entry from search history"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -933,8 +1053,8 @@ export function HistoryWorkspace() {
               </h3>
             </div>
             <p className="mt-2 text-xs text-muted leading-relaxed">
-              This will permanently delete all {searchHistory.length} recorded
-              searches from your local browser history. This action cannot be
+              This will permanently delete all {unifiedSearches.length} recorded
+              searches from your local history and server archive. This action cannot be
               undone.
             </p>
             <div className="mt-5 flex justify-end gap-2">
@@ -948,11 +1068,7 @@ export function HistoryWorkspace() {
               <Button
                 type="button"
                 variant="danger"
-                onClick={() => {
-                  clearSearchHistory();
-                  setIsClearModalOpen(false);
-                  showToast("Cleared all search history.");
-                }}
+                onClick={handleClearAll}
               >
                 Yes, Clear All
               </Button>
@@ -960,6 +1076,9 @@ export function HistoryWorkspace() {
           </div>
         </div>
       )}
+
+      {/* ── Floating Back to Top Button ─────────────────────────────────── */}
+      <BackToTop threshold={350} />
     </div>
   );
 }

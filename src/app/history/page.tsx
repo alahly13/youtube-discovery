@@ -16,9 +16,9 @@ export default function HistoryPage() {
     <AppShell>
       <WorkspacePage
         icon={History}
-        eyebrow="Fetch history"
-        title="Search and Fetch History"
-        description="Browse the chronological history of your YouTube research activities. Every search, channel exploration, and playlist fetch creates a manifest entry."
+        eyebrow="Search & Fetch History"
+        title="Search History Workspace"
+        description="Browse the chronological history of every YouTube search made in this app with complete query options, results information, 1-click title copy, and forward-to-search auto-pasting."
       >
         <HistoryWorkspace />
       </WorkspacePage>

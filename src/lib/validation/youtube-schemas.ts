@@ -10,7 +10,8 @@ const optionalIsoDate = z
 
 export const YouTubeSearchSettingsSchema = z
   .object({
-    query: z.string().trim().min(1).max(200),
+    /* Extended query length from 200 to 1000 to safely accommodate full video titles, quotes, and descriptions */
+    query: z.string().trim().min(1).max(1000),
     types: z.array(z.enum(["video", "channel", "playlist"])).min(1).max(3).default(["video"]),
     pageSize: z.coerce.number().int().min(1).max(50).default(25),
     maxPages: z.coerce.number().int().min(1).max(10).default(3),
@@ -18,16 +19,17 @@ export const YouTubeSearchSettingsSchema = z
     order: z.enum(["relevance", "date", "rating", "viewCount", "title", "videoCount"]).default("relevance"),
     publishedAfter: optionalIsoDate,
     publishedBefore: optionalIsoDate,
-    regionCode: z.string().trim().length(2).optional(),
-    relevanceLanguage: z.string().trim().min(2).max(12).optional(),
+    /* Preprocess empty strings to undefined so 'Worldwide / Any Region' or 'Any Language' never trigger schema errors */
+    regionCode: z.preprocess((val) => (typeof val === "string" && val.trim() === "" ? undefined : val), z.string().trim().length(2).optional()),
+    relevanceLanguage: z.preprocess((val) => (typeof val === "string" && val.trim() === "" ? undefined : val), z.string().trim().min(2).max(12).optional()),
     safeSearch: z.enum(["none", "moderate", "strict"]).default("none"),
     videoDuration: z.enum(["any", "short", "medium", "long"]).default("any"),
     videoDefinition: z.enum(["any", "high", "standard"]).default("any"),
     videoCaption: z.enum(["any", "closedCaption", "none"]).default("any"),
     videoEmbeddable: z.enum(["any", "true"]).default("any"),
-    eventType: z.enum(["live", "completed", "upcoming"]).optional(),
-    topicId: z.string().trim().max(100).optional(),
-    pageToken: z.string().trim().max(300).optional(),
+    eventType: z.preprocess((val) => (typeof val === "string" && val.trim() === "" ? undefined : val), z.enum(["live", "completed", "upcoming"]).optional()),
+    topicId: z.preprocess((val) => (typeof val === "string" && val.trim() === "" ? undefined : val), z.string().trim().max(100).optional()),
+    pageToken: z.preprocess((val) => (typeof val === "string" && val.trim() === "" ? undefined : val), z.string().trim().max(300).optional()),
   })
   .superRefine((settings, context) => {
     const videoOnlyKeys = [

@@ -109,6 +109,38 @@ export function getPublishedYear(publishedAt: string | null | undefined) {
   return Number.isFinite(year) ? year : null;
 }
 
+/**
+ * Format an ISO date string as full date + time for display on history cards.
+ * e.g. "Oct 2, 2026 at 12:23:53 AM" — shows complete date + time with seconds
+ * in the user's local timezone so timestamps feel natural.
+ */
+export function formatFullDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "Unknown date";
+  }
+
+  const timestamp = Date.parse(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return "Unknown date";
+  }
+
+  const date = new Date(timestamp);
+
+  const datePart = Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+  }).format(date);
+
+  const timePart = Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(date);
+
+  return `${datePart} at ${timePart}`;
+}
+
 /** Extract month (1-12) from a publishedAt ISO string, UTC-based. */
 export function getPublishedMonth(publishedAt: string | null | undefined) {
   if (!publishedAt) {

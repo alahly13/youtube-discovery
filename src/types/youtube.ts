@@ -69,6 +69,24 @@ export interface SavedSearch {
   notes?: string;
 }
 
+export interface SearchHistoryItem {
+  id: string;
+  title: string;
+  query: string;
+  resourceSelection: YouTubeSearchResourceSelection;
+  settings: Partial<YouTubeSearchSettings>;
+  timestamp: string;
+  resultsCount: number;
+  videoCount?: number;
+  channelCount?: number;
+  playlistCount?: number;
+  quotaCostEstimate?: number;
+  status: "complete" | "failed" | "partial" | "empty";
+  manifestId?: string;
+  topThumbnails?: string[];
+}
+
+
 export interface YouTubeSearchSettings {
   query: string;
   types: YouTubeSearchResourceType[];

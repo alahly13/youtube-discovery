@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { YouTubeManifest } from "@/types/manifest";
 
-import type { NormalizedYouTubeDiscoveryItem, SavedSearch } from "@/types/youtube";
+import type { NormalizedYouTubeDiscoveryItem, SavedSearch, SearchHistoryItem } from "@/types/youtube";
 
 export type SuggestionSourcePriority = "manifest" | "same_channel" | "mixed";
 
@@ -54,6 +54,7 @@ interface YouTubeWorkspaceStore {
   savedManifestIds: string[];
   savedItems: NormalizedYouTubeDiscoveryItem[];
   savedSearches: SavedSearch[];
+  searchHistory: SearchHistoryItem[];
   watchSettings: WatchExperienceSettings;
   fetchSettings: FetchSettings;
   isSidebarOpen: boolean;
@@ -64,6 +65,9 @@ interface YouTubeWorkspaceStore {
   updateSavedSearch: (id: string, patch: Partial<SavedSearch>) => void;
   deleteSavedSearch: (id: string) => void;
   togglePinSavedSearch: (id: string) => void;
+  recordSearchHistory: (item: Omit<SearchHistoryItem, "id" | "timestamp">) => SearchHistoryItem;
+  deleteSearchHistoryItem: (id: string) => void;
+  clearSearchHistory: () => void;
   updateWatchSettings: (settings: Partial<WatchExperienceSettings>) => void;
   updateFetchSettings: (settings: Partial<FetchSettings>) => void;
   toggleSidebar: () => void;
@@ -80,6 +84,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       savedManifestIds: [],
       savedItems: [],
       savedSearches: [],
+      searchHistory: [],
       watchSettings: DEFAULT_WATCH_SETTINGS,
       fetchSettings: DEFAULT_FETCH_SETTINGS,
       isSidebarOpen: true,
@@ -132,6 +137,27 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
             s.id === id ? { ...s, isPinned: !s.isPinned } : s
           ),
         })),
+      recordSearchHistory: (itemData) => {
+        const id = `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const newItem: SearchHistoryItem = {
+          ...itemData,
+          id,
+          timestamp: new Date().toISOString(),
+        };
+        set((state) => ({
+          // Store up to 100 most recent searches in history
+          searchHistory: [newItem, ...state.searchHistory.filter((h) => h.id !== id)].slice(0, 100),
+        }));
+        return newItem;
+      },
+      deleteSearchHistoryItem: (id) =>
+        set((state) => ({
+          searchHistory: state.searchHistory.filter((item) => item.id !== id),
+        })),
+      clearSearchHistory: () =>
+        set(() => ({
+          searchHistory: [],
+        })),
       updateWatchSettings: (settings) =>
         set((state) => ({
           watchSettings: {
@@ -155,6 +181,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         savedManifestIds: state.savedManifestIds,
         savedItems: state.savedItems,
         savedSearches: state.savedSearches,
+        searchHistory: state.searchHistory,
         watchSettings: state.watchSettings,
         fetchSettings: state.fetchSettings,
         isSidebarOpen: state.isSidebarOpen,

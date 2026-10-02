@@ -21,7 +21,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { YouTubeManifest } from "@/types/manifest";
 import type {
   NormalizedYouTubeDiscoveryItem,
@@ -59,8 +60,8 @@ import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
    ──────────────────────────────────────────────────────────────────────── */
 
 export const YOUTUBE_REGION_OPTIONS: { value: string; label: string }[] = [
-  { value: "US", label: "United States (US) — Default" },
-  { value: "", label: "Worldwide / Any Region" },
+  { value: "", label: "Worldwide / Any Region (Unrestricted Default)" },
+  { value: "US", label: "United States (US)" },
   { value: "GB", label: "United Kingdom (GB)" },
   { value: "EG", label: "Egypt (EG) — مصر" },
   { value: "SA", label: "Saudi Arabia (SA) — السعودية" },
@@ -122,7 +123,7 @@ const initialSettings: YouTubeSearchSettings = {
   maxItems: 150,
   order: "relevance",
   safeSearch: "none",
-  regionCode: "US",
+  regionCode: "",
   relevanceLanguage: undefined,
   videoDuration: "any",
   videoDefinition: "any",
@@ -145,7 +146,7 @@ function countActiveApiSettings(settings: YouTubeSearchSettings): number {
   let count = 0;
   if (settings.order !== "relevance") count++;
   if (settings.safeSearch !== "none") count++;
-  if (settings.regionCode && settings.regionCode !== "US") count++;
+  if (settings.regionCode && settings.regionCode !== "") count++;
   if (settings.relevanceLanguage) count++;
   if (settings.videoDuration !== "any") count++;
   if (settings.videoDefinition !== "any") count++;
@@ -168,12 +169,17 @@ export function SearchWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
+  /* ── Search Params & History Forwarding State ────────────────────────── */
+  const searchParams = useSearchParams();
+  const [pastedFromHistory, setPastedFromHistory] = useState(false);
+
   /* ── Saved searches state ─────────────────────────────────────────────── */
   const savedSearches = useYouTubeWorkspaceStore((s) => s.savedSearches);
   const saveSearch = useYouTubeWorkspaceStore((s) => s.saveSearch);
   const updateSavedSearch = useYouTubeWorkspaceStore((s) => s.updateSavedSearch);
   const deleteSavedSearch = useYouTubeWorkspaceStore((s) => s.deleteSavedSearch);
   const togglePinSavedSearch = useYouTubeWorkspaceStore((s) => s.togglePinSavedSearch);
+  const recordSearchHistory = useYouTubeWorkspaceStore((s) => s.recordSearchHistory);
 
   const [savedSearchesOpen, setSavedSearchesOpen] = useState(false);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
@@ -259,6 +265,8 @@ export function SearchWorkspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...activeSettings,
+            regionCode: activeSettings.regionCode ? activeSettings.regionCode.trim() : undefined,
+            relevanceLanguage: activeSettings.relevanceLanguage ? activeSettings.relevanceLanguage.trim() : undefined,
             types: nextTypes,
             pageSize: fetchSettings.pageSize,
             maxPages: fetchSettings.maxPages,
@@ -282,20 +290,104 @@ export function SearchWorkspace() {
         if (!response.ok) {
           const msg = (payload as { message?: string }).message ?? `Search failed (${response.status})`;
           setError(msg);
+          // Record failed search in history so the user can review and retry
+          recordSearchHistory({
+            title: activeQuery,
+            query: activeQuery,
+            resourceSelection: activeResource,
+            settings: { ...activeSettings },
+            resultsCount: 0,
+            status: "failed",
+          });
           return;
         }
 
         const newManifest = payload as YouTubeManifest;
         setManifest(newManifest);
         setCurrentManifest(newManifest);
+
+        // Record successful search in persistent history with clean query title
+        const items = newManifest.normalizedItems ?? [];
+        const videoCount = items.filter((i) => i.itemType === "video" || i.itemType === "shorts_like").length;
+        const channelCount = items.filter((i) => i.itemType === "channel").length;
+        const playlistCount = items.filter((i) => i.itemType === "playlist").length;
+        const topThumbs = items
+          .map((i) => i.thumbnailUrl)
+          .filter((t): t is string => Boolean(t))
+          .slice(0, 4);
+
+        recordSearchHistory({
+          title: activeQuery,
+          query: activeQuery,
+          resourceSelection: activeResource,
+          settings: { ...activeSettings },
+          resultsCount: newManifest.itemCount ?? items.length,
+          videoCount,
+          channelCount,
+          playlistCount,
+          quotaCostEstimate: newManifest.quotaCostEstimate,
+          status: (newManifest.itemCount ?? items.length) === 0
+            ? "empty"
+            : (["complete", "failed", "partial", "empty"] as const).includes(newManifest.status as "complete" | "failed" | "partial" | "empty")
+              ? (newManifest.status as "complete" | "failed" | "partial" | "empty")
+              : "complete",
+          manifestId: newManifest.manifestId,
+          topThumbnails: topThumbs,
+        });
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Network error");
+        const errorMsg = err instanceof Error ? err.message : "Network error";
+        setError(errorMsg);
+        recordSearchHistory({
+          title: activeQuery,
+          query: activeQuery,
+          resourceSelection: activeResource,
+          settings: { ...activeSettings },
+          resultsCount: 0,
+          status: "failed",
+        });
       } finally {
         setLoading(false);
       }
     },
-    [fetchSettings, resourceSelection, setCurrentManifest, settings],
+    [fetchSettings, recordSearchHistory, resourceSelection, setCurrentManifest, settings],
   );
+
+  /* ── Detect Query from URL (Forwarded from History with auto-paste) ─── */
+  useEffect(() => {
+    const qParam = searchParams.get("q");
+    if (qParam && qParam.trim()) {
+      const decodedQuery = qParam.trim();
+
+      /* startTransition batches these state updates at low priority,
+         avoiding synchronous cascading renders inside the effect body
+         (required by react-hooks/set-state-in-effect rule). */
+      startTransition(() => {
+        setSettings((prev) => ({ ...prev, query: decodedQuery }));
+        setPastedFromHistory(true);
+      });
+
+      // Auto-focus and highlight search input with auto-paste feeling
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }, 100);
+
+      const timer = setTimeout(() => setPastedFromHistory(false), 4500);
+
+      /* Defer autorun so executeSearch (which calls setState internally)
+         does not run synchronously inside the effect body. The search
+         fires on the next macrotask — effectively immediate but lint-safe. */
+      let autorunTimer: ReturnType<typeof setTimeout> | undefined;
+      if (searchParams.get("autorun") === "true") {
+        autorunTimer = setTimeout(() => void executeSearch(decodedQuery), 0);
+      }
+
+      return () => {
+        clearTimeout(timer);
+        if (autorunTimer) clearTimeout(autorunTimer);
+      };
+    }
+  }, [searchParams, executeSearch]);
 
   async function runSearch() {
     await executeSearch();
@@ -364,7 +456,7 @@ export function SearchWorkspace() {
       ...prev,
       order: "relevance",
       safeSearch: "none",
-      regionCode: "US",
+      regionCode: "",
       relevanceLanguage: undefined,
       videoDuration: "any",
       videoDefinition: "any",
@@ -386,6 +478,14 @@ export function SearchWorkspace() {
             title="YouTube provider search"
             eyebrow="Provider call happens only on Search/Enter"
           />
+
+          {pastedFromHistory && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400 animate-slide-in">
+              <Check className="h-4 w-4 shrink-0 text-emerald-500" />
+              <span>Search title auto-pasted from history. Ready to run or modify.</span>
+            </div>
+          )}
+
           <form
             className="grid gap-3 md:grid-cols-[minmax(0,1fr)_10rem_10rem_auto]"
             onSubmit={(e) => {
@@ -397,7 +497,11 @@ export function SearchWorkspace() {
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <input
                 ref={searchInputRef}
-                className="h-11 w-full rounded-lg border border-border bg-surface pl-10 pr-16 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                className={`h-11 w-full rounded-lg border bg-surface pl-10 pr-16 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] transition-all ${
+                  pastedFromHistory
+                    ? "border-emerald-500 ring-2 ring-emerald-500/50 shadow-sm shadow-emerald-500/20"
+                    : "border-border"
+                }`}
                 value={settings.query}
                 onChange={(e) => setSettings((c) => ({ ...c, query: e.target.value }))}
                 placeholder="Search YouTube videos, channels, playlists… (Press '/' to focus)"

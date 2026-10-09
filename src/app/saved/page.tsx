@@ -4,10 +4,11 @@ import { WorkspacePage } from "@/components/pages/workspace-page";
 import { SavedLibraryWorkspace } from "@/components/saved/saved-library-workspace";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Saved Library Page — /saved
+   Saved Library Hub — /saved
    ──────────────────────────────────────────────────────────────────────────
-   Manages individually saved videos, channels, and playlists. Deduplication
-   by platformItemId (never by title alone). Currently backed by localStorage.
+   Personal library hub: user-created playlists (each with its own permanent
+   manifest + dedicated page at /saved/[playlistId]), globally saved items
+   with standalone detection, and the saved-search titles shelf.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function SavedPage() {
@@ -16,8 +17,8 @@ export default function SavedPage() {
       <WorkspacePage
         icon={Library}
         eyebrow="Saved Library"
-        title="Saved Videos and Research Assets"
-        description="Saved videos dedupe by platform item ID and canonical URL, never by title alone. Search, browse, and manage your saved items."
+        title="Saved Library and Playlists"
+        description="Create personal playlists, organize videos, Shorts, YouTube playlists, channels, and custom notes into sections, then search, sort, and export each playlist. Playlists persist until you delete them."
       >
         <SavedLibraryWorkspace />
       </WorkspacePage>

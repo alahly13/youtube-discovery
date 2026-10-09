@@ -37,6 +37,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local file archives (search records, user playlist manifests, api keys)
+# These are durable server-side JSON stores, never committed.
+/data
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

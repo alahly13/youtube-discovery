@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { selectActiveApiKey } from "@/lib/platforms/youtube/youtube-api-keys";
+import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +10,10 @@ export const dynamic = "force-dynamic";
  * Selects which API key (either "env" or a custom key ID) is active for YouTube API requests.
  */
 export async function POST(request: Request) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const body = (await request.json()) as { keyId?: string };
     if (!body.keyId || typeof body.keyId !== "string") {

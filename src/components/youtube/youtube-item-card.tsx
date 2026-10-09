@@ -1,7 +1,8 @@
-import { Bot, Check, Copy, ExternalLink, ListVideo, Play, Save, Tv, User } from "lucide-react";
+import { Bot, Check, Copy, ExternalLink, ListPlus, ListVideo, Play, Save, Tv, User } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
+import { AddToPlaylistDialog } from "@/components/library/add-to-playlist-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,15 +40,36 @@ export function YouTubeItemCard({
   );
 
   const handleToggleSave = () => toggleItemSaved(item);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const openPicker = () => setPickerOpen(true);
+
+  const dialog = (
+    <AddToPlaylistDialog item={item} open={pickerOpen} onClose={() => setPickerOpen(false)} />
+  );
 
   /* Route to the correct type-specific card */
   switch (item.itemType) {
     case "channel":
-      return <ChannelCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} />;
+      return (
+        <>
+          <ChannelCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} onOpenPicker={openPicker} />
+          {dialog}
+        </>
+      );
     case "playlist":
-      return <PlaylistCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} />;
+      return (
+        <>
+          <PlaylistCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} onOpenPicker={openPicker} />
+          {dialog}
+        </>
+      );
     default:
-      return <VideoCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} />;
+      return (
+        <>
+          <VideoCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} onOpenPicker={openPicker} />
+          {dialog}
+        </>
+      );
   }
 }
 
@@ -63,11 +85,13 @@ function VideoCard({
   onAiExplore,
   isSaved,
   onToggleSave,
+  onOpenPicker,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
   isSaved: boolean;
   onToggleSave: () => void;
+  onOpenPicker: () => void;
 }) {
   const isShortsLike = item.isShortsLike || item.itemType === "shorts_like";
 
@@ -179,6 +203,14 @@ function VideoCard({
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
           </Button>
+          <Button
+            variant="secondary"
+            className="h-8 px-2"
+            title="Add to playlist"
+            onClick={onOpenPicker}
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+          </Button>
           {/* Copy title — clipboard copy with brief ✓ feedback */}
           <Button
             variant="secondary"
@@ -227,11 +259,13 @@ function ChannelCard({
   onAiExplore,
   isSaved,
   onToggleSave,
+  onOpenPicker,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
   isSaved: boolean;
   onToggleSave: () => void;
+  onOpenPicker: () => void;
 }) {
   return (
     <article className="yt-card flex h-full flex-col">
@@ -329,6 +363,14 @@ function ChannelCard({
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
           </Button>
+          <Button
+            variant="secondary"
+            className="h-8 px-2"
+            title="Add channel to playlist"
+            onClick={onOpenPicker}
+          >
+            <ListPlus className="h-3.5 w-3.5" />
+          </Button>
           <a
             href={item.url}
             target="_blank"
@@ -355,11 +397,13 @@ function PlaylistCard({
   onAiExplore,
   isSaved,
   onToggleSave,
+  onOpenPicker,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
   isSaved: boolean;
   onToggleSave: () => void;
+  onOpenPicker: () => void;
 }) {
   return (
     <article className="yt-card flex h-full flex-col">
@@ -459,6 +503,14 @@ function PlaylistCard({
             onClick={onToggleSave}
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
+          </Button>
+          <Button
+            variant="secondary"
+            className="h-8 px-2"
+            title="Add YouTube playlist to my playlist"
+            onClick={onOpenPicker}
+          >
+            <ListPlus className="h-3.5 w-3.5" />
           </Button>
           <a
             href={item.url}

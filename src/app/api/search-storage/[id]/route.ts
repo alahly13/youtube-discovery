@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteSearchFromArchive, getSearchFromArchive } from "@/lib/search-storage/search-storage-archive";
+import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,10 +9,9 @@ export const dynamic = "force-dynamic";
  * GET /api/search-storage/[id]
  * Loads the complete historical search record from disk without triggering any YouTube API call.
  */
-export async function GET(
-  _request: Request,
-  props: { params: Promise<{ id: string }> },
-) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const { id } = await props.params;
     const record = await getSearchFromArchive(id);
@@ -31,10 +31,11 @@ export async function GET(
  * DELETE /api/search-storage/[id]
  * Deletes a specific historical search record from the archive.
  */
-export async function DELETE(
-  _request: Request,
-  props: { params: Promise<{ id: string }> },
-) {
+export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const { id } = await props.params;
     const success = await deleteSearchFromArchive(id);

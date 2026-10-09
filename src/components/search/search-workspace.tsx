@@ -42,6 +42,8 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { YouTubeItemCard } from "@/components/youtube/youtube-item-card";
 import { BackToTop } from "@/components/ui/back-to-top";
 import { applyYouTubeResultPipeline } from "@/lib/filters/youtube-result-filters";
+import { authFetch } from "@/lib/client/auth-fetch";
+import { saveSearchRecord } from "@/lib/client/blob-upload";
 import {
   formatSearchCacheAge,
   isLastSearchValid,
@@ -275,7 +277,7 @@ export function SearchWorkspace() {
 
       try {
         const nextTypes = activeResource === "ALL" ? ["video", "channel", "playlist"] : [activeResource];
-        const response = await fetch("/api/youtube/search", {
+        const response = await authFetch("/api/youtube/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -337,19 +339,16 @@ export function SearchWorkspace() {
           searchedAt,
         });
 
-        // Also persist complete record with full rawJson to server archive
-        fetch("/api/search-storage", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: searchRecordId,
-            query: activeQuery,
-            resourceSelection: activeResource,
-            settings: { ...activeSettings },
-            filters,
-            manifest: newManifest,
-          }),
-        }).catch((archiveErr) => {
+        // Also persist complete record with full rawJson to server Blob archive
+        // (direct POST for small records, staged chunked upload when large).
+        saveSearchRecord({
+          id: searchRecordId,
+          query: activeQuery,
+          resourceSelection: activeResource,
+          settings: { ...activeSettings },
+          filters,
+          manifest: newManifest,
+        }).catch((archiveErr: unknown) => {
           console.error("Failed to archive search on server:", archiveErr);
         });
 
@@ -411,7 +410,7 @@ export function SearchWorkspace() {
     setCurrentManifest(null);
     clearLastSearch();
     hasRestoredRef.current = true;
-    fetch("/api/search-storage", { method: "DELETE" }).catch(() => {});
+    authFetch("/api/search-storage", { method: "DELETE" }).catch(() => {});
   }, [clearLastSearch, setCurrentManifest]);
 
   /* ── Direct Load from Archived Search Record (?load=...) ───────────── */
@@ -425,7 +424,7 @@ export function SearchWorkspace() {
       try {
         setLoading(true);
         setError(null);
-        const res = await fetch(`/api/search-storage/${encodeURIComponent(validLoadId)}`);
+        const res = await authFetch(`/api/search-storage/${encodeURIComponent(validLoadId)}`);
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.error || "Archived search not found or expired");
@@ -452,7 +451,7 @@ export function SearchWorkspace() {
             filters: record.filters,
             manifest: record.manifest,
             searchedAt: record.searchedAt,
-            expiresAt: record.expiresAt,
+            expiresAt: record.expiresAt ?? undefined,
           });
           hasRestoredRef.current = true;
         }
@@ -501,7 +500,7 @@ export function SearchWorkspace() {
 
     // Fallback: restore latest complete search from server archive if store was empty
     let cancelled = false;
-    fetch("/api/search-storage/latest")
+    authFetch("/api/search-storage/latest")
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled || !data || !data.record) return;
@@ -526,7 +525,7 @@ export function SearchWorkspace() {
             filters: rec.filters,
             manifest: rec.manifest,
             searchedAt: rec.searchedAt,
-            expiresAt: rec.expiresAt,
+            expiresAt: rec.expiresAt ?? undefined,
           });
         }
       })

@@ -5,11 +5,16 @@ import { toPublicYouTubeError } from "@/lib/platforms/youtube/youtube-errors";
 import { estimateQuotaCost } from "@/lib/platforms/youtube/youtube-quota";
 import { normalizeVideoDetail } from "@/lib/platforms/youtube/youtube-normalize";
 import { YouTubeDetailsRequestSchema } from "@/lib/validation/youtube-schemas";
+import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const payload = await readJson(request);
     const { ids } = YouTubeDetailsRequestSchema.parse(payload);

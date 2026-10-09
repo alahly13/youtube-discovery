@@ -27,6 +27,18 @@ if (!process.env.NEXT_PUBLIC_APP_URL) {
 const requiredPublicKeys = ["NEXT_PUBLIC_APP_URL"];
 const optionalServerKeys = ["YOUTUBE_API_KEY", "GEMINI_API_KEY"];
 const requiredWhenPersistenceEnabled = ["DATABASE_URL"];
+/* Blob + auth are required at RUNTIME (local .env.local and Vercel Project
+   Settings) but only warn here so CI/preview builds without them still pass.
+   Routes return clear 503/401 errors instead of silently falling back. */
+const blobAuthKeys = [
+  "BLOB_STORE_ID",
+  "BLOB_READ_WRITE_TOKEN",
+  "ADMIN_INITIAL_PASSWORD",
+  "ADMIN_SESSION_SECRET",
+  "API_KEYS_ENCRYPTION_KEY",
+];
+/* BLOB_WEBHOOK_PUBLIC_KEY is webhook-only (no webhook endpoint exists) and
+   is intentionally never required for reads, writes, or authentication. */
 
 const missingRequired = requiredPublicKeys.filter((key) => !process.env[key]);
 const missingOptional = optionalServerKeys.filter((key) => !process.env[key]);
@@ -56,6 +68,16 @@ if (missingPersistence.length > 0) {
 if (missingOptional.length > 0) {
   console.warn(
     `[env] Optional provider keys are missing and related live features will be disabled: ${missingOptional.join(", ")}`,
+  );
+}
+
+const missingBlobAuth = blobAuthKeys.filter((key) => !process.env[key]);
+if (missingBlobAuth.length > 0) {
+  console.warn(
+    `[env] Blob/auth persistence is not fully configured (missing: ${missingBlobAuth.join(", ")}). ` +
+      `Protected routes will return clear errors until BLOB_STORE_ID, BLOB_READ_WRITE_TOKEN, ` +
+      `ADMIN_INITIAL_PASSWORD, ADMIN_SESSION_SECRET, and API_KEYS_ENCRYPTION_KEY are set. ` +
+      `See .env.example. Local-only storage is never used as a substitute.`,
   );
 }
 

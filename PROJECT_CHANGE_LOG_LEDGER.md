@@ -1185,6 +1185,173 @@ No.
 
 No.
 
+---
+
+## 2026-10-09 (Saved Library & Playlist Management Upgrade, Shared Local Search, Dailymotion Sidebar Link)
+
+### Date/time
+
+2026-10-09 ~12:00–13:30 UTC
+
+### Agent/model if known
+
+Muse Spark 1.3 (OpenCode agent)
+
+### Task summary
+
+Built the complete Saved Library & personal playlist management system: dedicated `/saved` hub (Playlists / Saved Items / Saved Searches tabs), dedicated `/saved/[playlistId]` workspace per user playlist, heterogeneous entries (video, Shorts, YouTube playlist, channel, custom notes) with per-item notes, user sections/groups, HTML5 drag-and-drop + Move Up/Down manual ordering, in-playlist search/filter/12-mode sort, shared FlexSearch local-search service reused by Saved + playlists + History, per-playlist dedicated manifest files (`data/playlists/*.json` + lightweight `index.json`) with atomic writes and self-contained JSON export, permanent retention independent of `SEARCH_STORAGE_TTL_HOURS`, add-to-playlist picker on all result cards, and a Dailymotion Discovery sidebar link to `https://dailymotion-video-discovery.vercel.app/`.
+
+### Reason/root cause
+
+The app had only a flat localStorage saved-items list and no personal playlist concept; searches expired via TTL with no permanent user collections; History/Saved searches were hand-rolled `includes()` filters with FlexSearch installed but unused; no durable per-playlist record or export existed.
+
+### Files changed
+
+- `src/types/library.ts` (new): discriminated playlist model, groups, manifest v1, `canonicalYoutubeKey` (video≡Shorts identity), slug/id helpers.
+- `src/lib/validation/library-schemas.ts` (new): Zod API contracts.
+- `src/lib/playlists/playlist-archive.ts` (new): server-only file archive, atomic tmp+rename writes, stable filenames, no TTL.
+- `src/lib/playlists/playlist-query.ts` (new): snapshot adapter, published-date presets + custom range, views range, 12 sorts (manual positions never rewritten by transient sorts).
+- `src/lib/search/local-search.ts` (new): shared FlexSearch Document service (title-weighted) + weighted fallback; `searchRanked` + `toSearchDoc` adapters.
+- `src/lib/state/user-playlists-store.ts` (new): Zustand cache + server sync, all membership/group/order ops, brief undo window, export download.
+- `src/components/library/add-to-playlist-dialog.tsx` (new): in-place picker with inline creation + duplicate prevention.
+- `src/components/library/playlist-detail-workspace.tsx` (new): full playlist workspace UI.
+- `src/components/layout/dailymotion-icon.tsx` (new): local Dailymotion brand SVG.
+- `src/app/saved/[playlistId]/page.tsx` (new): dedicated playlist route.
+- `src/app/api/playlists/route.ts`, `src/app/api/playlists/[id]/route.ts` (new): index/manifest CRUD.
+- `src/components/layout/navigation.tsx`: external Dailymotion entry (exact URL, new tab, `noopener noreferrer`, accessible name).
+- `src/components/saved/saved-library-workspace.tsx`: rebuilt as 3-tab hub (playlists with shared search/sort/collages/rename/delete; items with standalone detection + type filter + picker; searches preserved).
+- `src/components/youtube/youtube-item-card.tsx`: Add-to-Playlist button on video/channel/playlist cards.
+- `src/components/history/history-workspace.tsx`: keyword filter moved onto the shared FlexSearch service; typed the archive index (`any[]` removed).
+- `src/app/saved/page.tsx`: hub title/description.
+- `.gitignore`: `/data` ignored (playlist/search archives never committed).
+- `src/app/api/search-storage/route.ts`, `src/app/settings/settings-client.tsx`, `src/lib/platforms/youtube/youtube-client.ts`, `src/lib/state/youtube-workspace-store.ts`: fixed pre-existing lint failures (typed payloads, unused imports, mount-fetch guards).
+- `youtube_discovery_ledger.md`, `PROJECT_CHANGE_LOG_LEDGER.md`: documentation updated.
+
+### Technical details
+
+- Manifest schema: `{manifestVersion: 1, type: "youtube-discovery-playlist", playlist: {id,name,description,createdAt,updatedAt}, groups[], items[]}`; membership `entryId` is `yt-<kind>:<platformId>` for YouTube (dedupes video≡Shorts) and unique ids for custom entries; `position` is canonical manual order per container; filenames `playlist-<slug>-<ts>-<id6>.json` are stable for life so renames cannot lose identity.
+- Index rows carry only metadata + up to 4 thumbnails, never full contents. Export re-reads from disk so it reflects persisted state.
+- Reorder/drag allowed only in manual mode with no active search/filters; other sorts are transient views. Group delete offers keep-items (ungroup) vs delete-items (with undo).
+- localStorage persists only a client cache; the server archive is the authority. No browser-only persistence claim is made for deployed serverless filesystems.
+
+### Architecture impact
+
+One consistent file-persistence pattern (per-record JSON + lightweight index) shared with the search archive; one shared search abstraction for all local features; no new search/dnd dependencies (native HTML5 DnD + keyboard alternatives); `/playlists/[playlistId]` (YouTube explorer) untouched.
+
+### Environment impact
+
+None. No new env vars. `SEARCH_STORAGE_TTL_HOURS` untouched and provably unrelated to playlists (separate directory, no expiry code path).
+
+### Database/migration impact
+
+None created/applied; `db:apply` not run. Prisma schema untouched — manifest schema is versioned for a future DB cutover without format change.
+
+### YouTube API/quota impact
+
+Zero: playlist pages, searches, filters, sorts, and History reuse stored data only (verified by code path + live tests with no provider calls).
+
+### AI scope/safety impact
+
+None. No AI changes; no secrets in manifests/exports/indexes/URLs/logs (scanned).
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors, 0 warnings).
+- `npm run typecheck`: passed (0 errors).
+- `npm run build`: passed (Next.js 16.2.6 Turbopack; new routes registered).
+- Live dev-server API lifecycle: create 201 → invalid create 400 → index → full PUT (5 heterogeneous items, 2 groups) → read (types video,shorts,youtube_playlist,channel,custom; secret-scan clean; no TTL) → rename (same id, stable filename) → garbage PUT now 400 (fixed mid-test) → missing 404 → on-disk corruption → 404 recoverable + healthy index → delete → index consistent.
+- Compiled `local-search` module executed in node: exact/partial/case-insensitive/multi-token/fuzzy-typo queries rank correctly; empty query preserves order; no-match returns [].
+- Pages `/saved`, `/saved/[playlistId]`, `/` return 200 with hub/detail content and the exact Dailymotion URL in sidebar HTML.
+
+### Blocked checks, if any
+
+Browser drag-and-drop exercised at code level only (no browser automation in this environment); HTML5 DnD + Move Up/Down paths verified by review. Deployment-filesystem permanence beyond local disk not testable here (documented honestly in ledger).
+
+### Remaining risks/limitations
+
+- `data/playlists/` is ephemeral on serverless redeploys without attached storage (documented; DB cutover path prepared).
+- FlexSearch multi-token queries favor recall over precision (best hit first; fallback guarantees coverage).
+- Test playlist data was created then fully deleted; `data/playlists/index.json` remains as an empty index.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+
+---
+
+## 2026-10-09 (Private Blob Persistence, Single-Admin Auth, Quota Pools)
+
+### Date/time
+
+2026-10-09 ~14:00–18:00 UTC (includes server restarts; resumed without repeating verified work)
+
+### Agent/model if known
+
+Muse Spark 1.3 (OpenCode agent)
+
+### Task summary
+
+Implemented the full follow-up scope on top of the Saved Library upgrade without undoing it: (1) Private Vercel Blob (`@vercel/blob` 2.8.1) as authoritative storage for playlists, saved search history (permanent, complete records), and encrypted managed API keys; automatic chunking with staged browser uploads for >4.5 MB records; idempotent disk→Blob migration. (2) Single-administrator account (scrypt, opaque Blob sessions, 7-day TTL, rate limiting, Settings credential management, login page) replacing any shared-secret approach — no `BLOB_DATA_ADMIN_SECRET` anywhere. (3) Validation of all three Blob env vars incl. store-identity verification and webhook-key separation, plus a safe diagnostics endpoint. (4) Multi-project quota pools: project/account metadata per key, verified/declared/unknown associations, bucket-aware cross-pool rotation with error classification, persistent usage accounting, and a labeled-estimate quota dashboard.
+
+### Reason/root cause
+
+Local disk is ephemeral on serverless redeploys; managed keys were plaintext on disk; saved history expired via TTL; rotation was key-blind (same-pool retries) with no usage visibility; no authentication existed.
+
+### Files changed
+
+New: `src/lib/blob/*` (paths, config, backend, vercel backend, record-format, record-store, chunked-upload, verify, migration, factory), `src/lib/auth/*` (password, cookies, session, account-store, rate-limit, require-auth), `src/lib/keys/key-crypto.ts`, `src/lib/keys/quota-pools.ts`, `src/lib/client/auth-fetch.ts`, `src/lib/client/blob-upload.ts`, `src/app/login/page.tsx`, `src/proxy.ts` (replaces deprecated middleware convention), `src/app/api/auth/*`, `src/app/api/admin/*`, `src/app/api/blob-upload/[action]`, `src/app/api/youtube/keys/usage`, `src/components/settings/*` (account-security, storage-migration, quota-dashboard, key-metadata-editor), `scripts/blob-tests/*` + `scripts/run-blob-tests.mjs`, `docs/blob-persistence.md`.
+Modified: playlist/search archives → Blob (same exports), `youtube-api-keys.ts` (encrypted store + project model + pool rotation), `youtube-client.ts` (single choke point: bucket classification, pool-aware retry, attribution), 29 API routes (requireAdmin/CSRF via reviewed codemod), `search-workspace.tsx` (auth fetch, staged large saves, null-expiry), history/saved stores (auth fetch), `settings-client.tsx` (quota dashboard, key editor, storage, account sections), `.env.example`, `app-validate-env.mjs`, `.gitignore` (`/data`), `package.json` (`@vercel/blob`, `test:blob` scripts), both ledgers.
+
+### Technical details
+
+- Records: deterministic JSON, UTF-8-measured; ≤4 MiB single object, else 2 MiB chunks + manifest (generation id, order, count, bytes, SHA-256). Staged browser uploads (init/chunk/commit/abort). CAS index writes (ETag ifMatch + retry). Read-back verification before success. Trailing-slash list scoping (found + fixed via failing integration test: Blob list() is pure string-prefix).
+- Keys: AES-256-GCM via `API_KEYS_ENCRYPTION_KEY`; saves refused without it; masked last-4 only client-side; ENV key stays fallback, never copied to Blob.
+- Pools: `project:<id>` shared pools; unknown keys form solo `key:<id>` pools (never merged). Buckets `search`/`other` exhaust independently until next Pacific midnight. quotaExceeded → pool-bucket cooldown + correlated ≥2-key promotion declared→verified. Invalid-key reasons → disable key only. Others fail fast. Every attempt recorded (key+project+bucket+outcome) with CAS-safe daily docs.
+- Auth: atomic create-if-absent bootstrap; env never overwrites persisted account; credential changes bump authVersion + revoke all sessions; Blob sliding-window rate limit (10/15min) + memory mirror.
+
+### Verification run and results
+
+- `npm run test:blob`: 118 assertions pass (mocked Blob), incl. 26 quota-pool acceptance checks + keys-migration idempotency.
+- `npm run test:blob:integration` (real private store, `__test__`-prefixed records only): small round-trip, 12.1 MiB / 7-chunk reassemble exact, index listing, full cleanup — PASSED.
+- `npm run typecheck`: passed (incl. final tree: `proxy.ts`, edge-safe cookie module, quota-pool types).
+- `npm run lint`: passed (0 errors, 0 warnings) on the final tree.
+- `npm run build`: passed (all routes incl. `/login`, `/api/admin/*`, `/api/blob-upload/*`, `/api/youtube/keys/usage`); no middleware-deprecation and no Edge `node:crypto` warnings after moving to `proxy.ts` + edge-safe cookie module.
+- Live dev-server E2E (`e2e-blob.cjs`, 18 assertions): public username prefill; 401s without session (playlists, keys); generic 401 on wrong password; first-login bootstrap + HttpOnly cookie + status; playlist create/PUT/read-back (Arabic intact)/delete; cross-origin mutation 403; usage dashboard shape with no plaintext; storage-verify (config/list/write PASS; storeIdentity honestly UNVERIFIED — private-blob hosts do not embed the store id); migration idempotent; logout + session revocation 401 — ALL PASSED.
+- Live migration+keys E2E (`e2e-migrate.cjs`, 10 assertions): seeded legacy disk playlist + plaintext key → migrate imported 1+1; rerun skipped (fixed keys double-count bug found by this test); migrated playlist readable; migrated key encrypted-at-rest + masked; PATCH metadata; usage shows declared pool; full cleanup (Blob + fixtures) — ALL PASSED.
+
+### Blocked checks, if any
+
+- Full `npm run lint` passes on the final tree (0 errors, 0 warnings); an earlier environment-level stall while loading `eslint.config.mjs` resolved on retry.
+- No browser automation available: login/UI flows verified by review + API-level E2E (28 assertions).
+
+### Remaining risks/limitations
+
+- Quota figures are local estimates (no official monitoring connected); manual project IDs stay `declared` until behavioral evidence verifies them.
+- Blob requires configured token/store; routes fail closed with clear errors (no silent fallback).
+- Prisma schema present but unused by the Blob runtime; no migrations created/applied; `db:apply` not run.
+
+### Whether secrets were printed
+
+No. All probes/diagnostics report labels and pass/fail only; tokens, keys, hashes never logged, committed, or returned to browsers.
+
+### Whether migrations were created/applied
+
+No Prisma migrations. Data migration = idempotent disk→Blob importer (Settings → Migrate; disk originals left in place).
+
+### Whether `db:apply` was run
+
+No.
+
 
 
 

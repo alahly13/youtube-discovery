@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getArchiveTtlInfo, getLatestSearchFromArchive } from "@/lib/search-storage/search-storage-archive";
+import { requireAdmin } from "@/lib/auth/require-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,7 +9,9 @@ export const dynamic = "force-dynamic";
  * GET /api/search-storage/latest
  * Returns the most recent non-expired complete search record with all rawJson preserved.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const record = await getLatestSearchFromArchive();
     const ttlInfo = getArchiveTtlInfo();

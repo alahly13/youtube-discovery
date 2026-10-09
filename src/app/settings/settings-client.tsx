@@ -6,11 +6,17 @@ import {
   CheckCircle2,
   Key,
   Loader2,
+  Pencil,
   Plus,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { authFetch } from "@/lib/client/auth-fetch";
+import { AccountSecurityCard } from "@/components/settings/account-security";
+import { KeyMetadataEditor } from "@/components/settings/key-metadata-editor";
+import { QuotaDashboardCard } from "@/components/settings/quota-dashboard";
+import { StorageMigrationCard } from "@/components/settings/storage-migration";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +39,12 @@ interface SafeApiKeyItem {
   source: "env" | "custom";
   isActive: boolean;
   createdAt: string;
+  accountLabel?: string | null;
+  projectId?: string | null;
+  projectDisplayName?: string | null;
+  projectAssociation?: "verified" | "declared" | "unknown";
+  status?: string;
+  order?: number;
 }
 
 export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
@@ -49,13 +61,18 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
   const [keyActionLoading, setKeyActionLoading] = useState<string | null>(null);
   const [newKeyLabel, setNewKeyLabel] = useState("");
   const [newKeyValue, setNewKeyValue] = useState("");
+  const [newKeyAccount, setNewKeyAccount] = useState("");
+  const [newKeyProject, setNewKeyProject] = useState("");
+  const [newKeyProjectName, setNewKeyProjectName] = useState("");
   const [keyError, setKeyError] = useState<string | null>(null);
   const [keySuccess, setKeySuccess] = useState<string | null>(null);
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
+  const [quotaRefresh, setQuotaRefresh] = useState(0);
 
   const fetchKeys = async () => {
     setLoadingKeys(true);
     try {
-      const res = await fetch("/api/youtube/keys");
+      const res = await authFetch("/api/youtube/keys");
       if (res.ok) {
         const data = await res.json();
         setApiKeys(data.keys || []);
@@ -68,16 +85,18 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
     }
   };
 
+  /* eslint-disable react-hooks/set-state-in-effect -- Mount-only API key fetch */
   useEffect(() => {
     fetchKeys();
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSelectKey = async (keyId: string) => {
     setKeyActionLoading(`select-${keyId}`);
     setKeyError(null);
     setKeySuccess(null);
     try {
-      const res = await fetch("/api/youtube/keys/select", {
+      const res = await authFetch("/api/youtube/keys/select", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keyId }),
@@ -89,6 +108,7 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
       setKeySuccess("Active YouTube API key updated successfully.");
       setTimeout(() => setKeySuccess(null), 3000);
       await fetchKeys();
+      setQuotaRefresh((v) => v + 1);
     } catch (err) {
       setKeyError(err instanceof Error ? err.message : "Failed to select key");
     } finally {
@@ -104,12 +124,15 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
     setKeyError(null);
     setKeySuccess(null);
     try {
-      const res = await fetch("/api/youtube/keys", {
+      const res = await authFetch("/api/youtube/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           label: newKeyLabel.trim() || undefined,
           apiKey: newKeyValue.trim(),
+          accountLabel: newKeyAccount.trim() || undefined,
+          projectId: newKeyProject.trim() || undefined,
+          projectDisplayName: newKeyProjectName.trim() || undefined,
         }),
       });
       if (!res.ok) {
@@ -118,9 +141,13 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
       }
       setNewKeyLabel("");
       setNewKeyValue("");
+      setNewKeyAccount("");
+      setNewKeyProject("");
+      setNewKeyProjectName("");
       setKeySuccess("Added custom YouTube API key successfully.");
       setTimeout(() => setKeySuccess(null), 3000);
       await fetchKeys();
+      setQuotaRefresh((v) => v + 1);
     } catch (err) {
       setKeyError(err instanceof Error ? err.message : "Failed to add key");
     } finally {
@@ -133,7 +160,7 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
     setKeyError(null);
     setKeySuccess(null);
     try {
-      const res = await fetch(`/api/youtube/keys/${encodeURIComponent(keyId)}`, {
+      const res = await authFetch(`/api/youtube/keys/${encodeURIComponent(keyId)}`, {
         method: "DELETE",
       });
       if (!res.ok) {
@@ -143,6 +170,7 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
       setKeySuccess("Custom API key deleted.");
       setTimeout(() => setKeySuccess(null), 3000);
       await fetchKeys();
+      setQuotaRefresh((v) => v + 1);
     } catch (err) {
       setKeyError(err instanceof Error ? err.message : "Failed to delete key");
     } finally {
@@ -323,9 +351,10 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
             ) : (
               <div className="divide-y divide-border/60 rounded-lg border border-border bg-surface">
                 {apiKeys.map((k) => (
-                  <div key={k.id} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div key={k.id}>
+                  <div className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-medium text-foreground">{k.label}</span>
                         <Badge tone={k.source === "env" ? "primary" : "neutral"} className="text-[10px]">
                           {k.source === "env" ? "ENV" : "Custom"}
@@ -335,8 +364,22 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
                             Active
                           </span>
                         )}
+                        {k.source === "custom" && k.projectAssociation === "verified" && (
+                          <Badge tone="success" className="text-[10px]">Verified pool</Badge>
+                        )}
+                        {k.source === "custom" && k.projectAssociation === "declared" && (
+                          <Badge tone="warning" className="text-[10px]">Declared (unverified)</Badge>
+                        )}
                       </div>
                       <p className="font-mono text-[11px] text-muted">{k.masked}</p>
+                      {k.source === "custom" && (k.accountLabel || k.projectId) && (
+                        <p className="text-[11px] text-muted">
+                          {k.accountLabel && <span>{k.accountLabel}</span>}
+                          {k.accountLabel && k.projectId && <span> · </span>}
+                          {k.projectId && <span className="font-mono">{k.projectId}</span>}
+                          {k.projectDisplayName && <span> ({k.projectDisplayName})</span>}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-2 self-end sm:self-auto">
@@ -361,22 +404,57 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
                       )}
 
                       {k.source === "custom" && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-7 w-7 p-0 text-muted hover:text-danger hover:bg-danger/10"
-                          disabled={keyActionLoading !== null}
-                          onClick={() => handleDeleteKey(k.id)}
-                          title="Delete this custom API key"
-                        >
-                          {keyActionLoading === `delete-${k.id}` ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
+                        <>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted hover:text-foreground"
+                            disabled={keyActionLoading !== null}
+                            onClick={() => setEditingKeyId(editingKeyId === k.id ? null : k.id)}
+                            title="Edit key labels and project association"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-muted hover:text-danger hover:bg-danger/10"
+                            disabled={keyActionLoading !== null}
+                            onClick={() => handleDeleteKey(k.id)}
+                            title="Delete this custom API key"
+                          >
+                            {keyActionLoading === `delete-${k.id}` ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </>
                       )}
                     </div>
+                  </div>
+                  {editingKeyId === k.id && k.source === "custom" && (
+                    <div className="border-t border-border/60 p-3">
+                      <KeyMetadataEditor
+                        initial={{
+                          id: k.id,
+                          label: k.label,
+                          accountLabel: k.accountLabel,
+                          projectId: k.projectId,
+                          projectDisplayName: k.projectDisplayName,
+                          enabled: k.status !== "disabled",
+                          status: k.status ?? "available",
+                          order: k.order,
+                        }}
+                        onCancel={() => setEditingKeyId(null)}
+                        onSaved={() => {
+                          setEditingKeyId(null);
+                          void fetchKeys();
+                          setQuotaRefresh((v) => v + 1);
+                        }}
+                      />
+                    </div>
+                  )}
                   </div>
                 ))}
               </div>
@@ -417,6 +495,42 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
                     className="filter-input text-xs font-mono"
                   />
                 </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-muted">
+                    Gmail / Account Label (optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Gmail Account 1"
+                    value={newKeyAccount}
+                    onChange={(e) => setNewKeyAccount(e.target.value)}
+                    className="filter-input text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-muted">
+                    Google Cloud Project ID (optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. my-yt-project-123456"
+                    value={newKeyProject}
+                    onChange={(e) => setNewKeyProject(e.target.value)}
+                    className="filter-input font-mono text-xs"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-[11px] font-medium text-muted">
+                    Project Display Name (optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Main Research Project"
+                    value={newKeyProjectName}
+                    onChange={(e) => setNewKeyProjectName(e.target.value)}
+                    className="filter-input text-xs"
+                  />
+                </div>
               </div>
               <div className="flex items-center justify-between pt-1">
                 <span className="text-[11px] text-muted flex items-center gap-1">
@@ -446,6 +560,15 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
           </div>
         </div>
       </Card>
+
+      {/* ── Quota Pools & Usage (per-project monitoring) ──────────── */}
+      <QuotaDashboardCard refreshToken={quotaRefresh} />
+
+      {/* ── Private Blob Storage & Migration ──────────────────────── */}
+      <StorageMigrationCard />
+
+      {/* ── Account Security (single administrator) ─────────────────── */}
+      <AccountSecurityCard />
 
       <Card>
         <CardHeader title="Environment & API Status" eyebrow="Server-side integrations" />

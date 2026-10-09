@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils/format";
+import { DailymotionIcon } from "@/components/layout/dailymotion-icon";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: Home },
@@ -58,6 +59,21 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
           </Link>
         );
       })}
+      {/* External companion app — separate Dailymotion discovery product. */}
+      <a
+        href="https://dailymotion-video-discovery.vercel.app/"
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open Dailymotion Discovery in a new tab"
+        title="Open Dailymotion Discovery (external app)"
+        className={cn(
+          "flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm transition",
+          "text-muted hover:bg-surface-muted hover:text-foreground",
+        )}
+      >
+        <DailymotionIcon className="h-4 w-4 shrink-0" />
+        <span>Dailymotion Discovery</span>
+      </a>
       <div className="mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs text-muted">
         Community posts stay unsupported until an official API endpoint exposes them.
       </div>

@@ -1,4 +1,10 @@
 import { NextResponse } from "next/server";
+import type { YouTubeManifest } from "@/types/manifest";
+import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
+import type {
+  YouTubeResultFilters,
+  YouTubeSearchSettings,
+} from "@/types/youtube";
 import {
   clearSearchArchive,
   getArchiveTtlInfo,
@@ -13,7 +19,9 @@ export const dynamic = "force-dynamic";
  * GET /api/search-storage
  * Returns the lightweight search archive index and TTL metadata for fast history filtering.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const items = await listSearchArchiveIndex();
     const ttlInfo = getArchiveTtlInfo();
@@ -34,14 +42,18 @@ export async function GET() {
  * Saves a COMPLETE search record including full rawJson to its dedicated file on disk.
  */
 export async function POST(request: Request) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     const payload = (await request.json()) as {
       id?: string;
       query: string;
       resourceSelection: "ALL" | "video" | "channel" | "playlist";
-      settings: any;
-      filters?: any;
-      manifest: any;
+      settings: YouTubeSearchSettings;
+      filters?: YouTubeResultFilters;
+      manifest: YouTubeManifest;
     };
 
     if (!payload.query || !payload.manifest) {
@@ -65,7 +77,11 @@ export async function POST(request: Request) {
  * DELETE /api/search-storage
  * Clears the entire search archive.
  */
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   try {
     await clearSearchArchive();
     return NextResponse.json({ success: true });

@@ -1,10 +1,15 @@
 import { getMemoryManifest, saveManifestInMemory } from "@/lib/manifests/manifest-memory-store";
 import { notFound } from "@/lib/http/api-response";
+import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(_request: Request, context: { params: Promise<{ manifestId: string }> }) {
+export async function POST(request: Request, context: { params: Promise<{ manifestId: string }> }) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
   const { manifestId } = await context.params;
   const manifest = getMemoryManifest(manifestId);
 

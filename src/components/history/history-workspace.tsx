@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from "@/lib/client/auth-fetch";
 import {
   AlertTriangle,
   Archive,
@@ -31,12 +32,18 @@ import type { YouTubeManifestSummary } from "@/types/manifest";
 import type {
   SearchHistoryItem,
   YouTubeSearchResourceSelection,
+  YouTubeSearchSettings,
 } from "@/types/youtube";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { BackToTop } from "@/components/ui/back-to-top";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
+import {
+  createLocalSearcher,
+  searchRanked,
+  toSearchDoc,
+} from "@/lib/search/local-search";
 import { formatDate, formatFullDateTime, formatRelativeDate } from "@/lib/utils/format";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -99,7 +106,7 @@ export function HistoryWorkspace() {
   async function fetchServerManifests() {
     setLoadingManifests(true);
     try {
-      const res = await fetch("/api/youtube/manifests");
+      const res = await authFetch("/api/youtube/manifests");
       if (res.ok) {
         const data = (await res.json()) as {
           manifests: YouTubeManifestSummary[];
@@ -112,13 +119,28 @@ export function HistoryWorkspace() {
   }
 
   /* ── Server Search Storage Archive Index ────────────────────────────── */
-  const [archiveItems, setArchiveItems] = useState<any[]>([]);
+  interface ArchiveIndexItem {
+    id: string;
+    title: string;
+    query: string;
+    resourceSelection: YouTubeSearchResourceSelection;
+    settings: Partial<YouTubeSearchSettings>;
+    createdAt: string;
+    itemCount: number;
+    videoCount?: number;
+    channelCount?: number;
+    playlistCount?: number;
+    quotaCostEstimate?: number;
+    status: SearchHistoryItem["status"];
+    topThumbnails?: string[];
+  }
+  const [archiveItems, setArchiveItems] = useState<ArchiveIndexItem[]>([]);
   const [, setLoadingArchive] = useState(false);
 
   async function fetchSearchArchive() {
     setLoadingArchive(true);
     try {
-      const res = await fetch("/api/search-storage");
+      const res = await authFetch("/api/search-storage");
       if (res.ok) {
         const data = await res.json();
         startTransition(() => {
@@ -168,39 +190,40 @@ export function HistoryWorkspace() {
     return Array.from(map.values());
   }, [searchHistory, archiveItems]);
 
+  /* ── Shared local search over stored history (strictly local, 0 quota) ──
+     Index is rebuilt only when the unified list changes — never per keystroke. */
+  const historySearchDocs = useMemo(
+    () =>
+      unifiedSearches.map((item) =>
+        toSearchDoc(item.id, `${item.title} ${item.query}`, `${item.resourceSelection} ${item.status}`, [
+          item.query,
+          item.settings?.regionCode,
+          item.settings?.safeSearch,
+          item.settings?.relevanceLanguage,
+          item.settings?.order,
+        ]),
+      ),
+    [unifiedSearches],
+  );
+  const historySearcher = useMemo(
+    () =>
+      historySearchDocs.length > 0 ? createLocalSearcher(historySearchDocs) : null,
+    [historySearchDocs],
+  );
+  const keywordMatchedIds = useMemo(() => {
+    if (!keywordFilter.trim() || !historySearcher) return null;
+    const ranked = searchRanked(unifiedSearches, historySearchDocs, historySearcher, keywordFilter, 2000);
+    return new Set(ranked.map((item) => item.id));
+  }, [unifiedSearches, historySearchDocs, historySearcher, keywordFilter]);
+
   /* ── Filtered & Sorted Search History ────────────────────────────────── */
   const filteredSearches = useMemo(() => {
     return unifiedSearches
       .filter((item) => {
-        // Keyword match across title, query, and metadata
-        if (keywordFilter.trim()) {
-          const q = keywordFilter.toLowerCase();
-          const matchTitle = (item.title ?? "").toLowerCase().includes(q);
-          const matchQuery = (item.query ?? "").toLowerCase().includes(q);
-          const matchRegion = (item.settings?.regionCode ?? "")
-            .toLowerCase()
-            .includes(q);
-          const matchResource = (item.resourceSelection ?? "")
-            .toLowerCase()
-            .includes(q);
-          const matchSafe = (item.settings?.safeSearch ?? "")
-            .toLowerCase()
-            .includes(q);
-          const matchLang = (item.settings?.relevanceLanguage ?? "")
-            .toLowerCase()
-            .includes(q);
-          const matchStatus = (item.status ?? "").toLowerCase().includes(q);
-          if (
-            !matchTitle &&
-            !matchQuery &&
-            !matchRegion &&
-            !matchResource &&
-            !matchSafe &&
-            !matchLang &&
-            !matchStatus
-          ) {
-            return false;
-          }
+        // Keyword match via the shared FlexSearch service (titles weighted
+        // above metadata) with a plain-includes fallback for edge runtimes.
+        if (keywordMatchedIds && !keywordMatchedIds.has(item.id)) {
+          return false;
         }
 
         // Resource type match
@@ -229,7 +252,7 @@ export function HistoryWorkspace() {
         }
         return 0;
       });
-  }, [unifiedSearches, keywordFilter, resourceFilter, modeFilter, sortOrder]);
+  }, [unifiedSearches, keywordMatchedIds, resourceFilter, modeFilter, sortOrder]);
 
   /* ── Statistics Summary ──────────────────────────────────────────────── */
   const stats = useMemo(() => {
@@ -270,7 +293,7 @@ export function HistoryWorkspace() {
     deleteSearchHistoryItem(id);
     setArchiveItems((prev) => prev.filter((x) => x.id !== id));
     try {
-      await fetch(`/api/search-storage/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await authFetch(`/api/search-storage/${encodeURIComponent(id)}`, { method: "DELETE" });
     } catch {
       // Ignore network errors
     }
@@ -285,7 +308,7 @@ export function HistoryWorkspace() {
     setIsClearModalOpen(false);
     showToast("Cleared all search history.");
     try {
-      await fetch("/api/search-storage", { method: "DELETE" });
+      await authFetch("/api/search-storage", { method: "DELETE" });
     } catch {
       // Ignore network errors
     }

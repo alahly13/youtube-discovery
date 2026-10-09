@@ -2,8 +2,8 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { YouTubeManifest, PersistedLastSearch } from "@/types/manifest";
-import { LAST_SEARCH_TTL_MS } from "@/types/manifest";
+import type { YouTubeManifest } from "@/types/manifest";
+import type { PersistedLastSearch } from "@/types/manifest";
 import type { NormalizedYouTubeDiscoveryItem, SavedSearch, SearchHistoryItem, YouTubeResultFilters } from "@/types/youtube";
 
 export type SuggestionSourcePriority = "manifest" | "same_channel" | "mixed";
@@ -79,7 +79,6 @@ interface YouTubeWorkspaceStore {
 
 import {
   formatSearchTtlRemaining,
-  getSearchStorageTtlMs,
   isSearchExpired,
 } from "@/lib/config/search-storage-config";
 

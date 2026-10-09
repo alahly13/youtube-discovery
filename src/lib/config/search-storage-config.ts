@@ -52,8 +52,10 @@ export function calculateExpirationTimestamp(searchedAtMs: number): number {
 
 /**
  * Determines whether a search has expired based on its searchedAt or expiresAt timestamp.
+ * A null/undefined custom expiry means PERMANENT (Blob-backed saved history never expires).
  */
-export function isSearchExpired(searchedAtMs: number, customExpiresAt?: number): boolean {
+export function isSearchExpired(searchedAtMs: number, customExpiresAt?: number | null): boolean {
+  if (customExpiresAt === null) return false;
   if (!searchedAtMs || typeof searchedAtMs !== "number") {
     return true;
   }
@@ -66,7 +68,7 @@ export function isSearchExpired(searchedAtMs: number, customExpiresAt?: number):
  */
 export function formatSearchTtlRemaining(
   searchedAtMs: number,
-  customExpiresAt?: number,
+  customExpiresAt?: number | null,
 ): { elapsedText: string; remainingText: string; isExpired: boolean } {
   const now = Date.now();
   const expiresAt = customExpiresAt ?? calculateExpirationTimestamp(searchedAtMs);
@@ -89,6 +91,14 @@ export function formatSearchTtlRemaining(
     }
     return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
   };
+
+  if (customExpiresAt === null) {
+    return {
+      elapsedText: `${formatHoursMins(ageMs)} ago`,
+      remainingText: "Saved permanently",
+      isExpired: false,
+    };
+  }
 
   return {
     elapsedText: `${formatHoursMins(ageMs)} ago`,

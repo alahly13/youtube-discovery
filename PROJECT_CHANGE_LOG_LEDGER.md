@@ -1356,6 +1356,52 @@ No.
 
 ---
 
+## 2026-10-10 (Unrestricted Query Input + Full-Width Search UI + Transform Buttons)
+
+### Date/time
+
+2026-10-10 UTC
+
+### Task summary
+
+Audited the full query pipeline and removed silent query mutation: the primary YouTube request now sends the user's exact string (previously `cleanQueryString` stripped all quotes and broke emoji ZWJ sequences on the primary path); trims removed from submit/URL/save/schema (blank-gating preserved via `isSubmittableQuery`, Zod `min(1)` + non-blank refine, length cap removed). Transport was already safe (`URLSearchParams.set`, JSON bodies). Redesigned the search area: full-width input row with embedded submit, three transform buttons directly below, secondary controls in a collapsed-by-default animated/disclosure panel (`inert` when collapsed). Added Shuffle Words / Trim Spaces / Shuffle One Word with explicit-override submission (no stale state), busy-ref double-fire guard, and no-op notes.
+
+### Files changed
+
+- `src/lib/search/query-pipeline.ts` (new), `src/lib/search/query-transforms.ts` (new)
+- `src/lib/validation/youtube-schemas.ts` (query rule), `src/lib/platforms/youtube/youtube-search-service.ts` (primary query verbatim; fallbacks intact)
+- `src/components/search/search-workspace.tsx` (gates, full-width UI, options panel, transform buttons)
+- `scripts/search-tests/*`, `scripts/run-search-tests.mjs`, `package.json` (`test:search`)
+- `youtube_discovery_ledger.md`, `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Verification run and results
+
+- `npm run test:search`: 58 assertions pass (verbatim corpus incl. Arabic/emoji/ZWJ/Arabic-Indic, long query, rejections, single-encoding round-trips, fallback integrity, transform properties).
+- `npm run typecheck`: passed. `npm run lint`: passed (0/0). `npm run build`: passed.
+- Dev-server SSR render check (11 assertions): input w-full without maxlength, 3 buttons + group label, collapsed disclosure with region/panel/select, embedded submit — ALL PASSED.
+- Interaction behaviors (Enter/button submit, collapse persistence, no stale-state submit) verified by code review; no browser automation in this environment.
+
+### Remaining risks/limitations
+
+- YouTube applies its own token filtering upstream; zero-result fallback candidates still use the cleaning helper explicitly with a `relaxed_query_used` warning (unchanged, transparent).
+- No documented upstream `q` length limit; absurd lengths surface as provider errors rather than silent truncation.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+
+---
+
 ## 2026-10-10 (Dailymotion Sidebar URL Update)
 
 ### Date/time

@@ -288,6 +288,8 @@ Forbidden public secrets:
 - `src/lib/playlists/playlist-archive.ts`: server-only file archive (`data/playlists/`, atomic writes, lightweight index, no TTL).
 - `src/lib/playlists/playlist-query.ts`: YouTube→snapshot adapter, date/views filters, 12 sorts, position resequencing.
 - `src/lib/search/local-search.ts`: shared FlexSearch local-search service + adapters (Saved, playlists, History).
+- `src/lib/search/query-pipeline.ts`: verbatim-query acceptance helpers (blank-gate only, single-encode round-trip).
+- `src/lib/search/query-transforms.ts`: Shuffle Words / Trim Spaces / Shuffle One Word (grapheme-safe, injectable randomness).
 - `src/lib/state/user-playlists-store.ts`: client playlist cache + server sync, membership/group/order ops, undo, export download.
 - `src/lib/state/youtube-workspace-store.ts`: centralized Zustand store managing persisted workspace state including configurable TTL last search cache with full data preservation, watch preferences, and saved items.
 - `src/components/manifests/manifest-summary.tsx`: temporary manifest status and quota summary.
@@ -341,8 +343,10 @@ Latest verification results on 2026-10-09:
 - `npm run typecheck`: passed (0 errors, incl. final tree).
 - `npm run build`: passed cleanly with Next.js 16.2.6 Turbopack (all routes incl. `/login`, `/api/admin/*`, `/api/blob-upload/*`, `/api/youtube/keys/usage`; proxy convention, no Edge warnings).
 - `npm run test:blob`: 118 assertions pass (mocked Blob).
+- `npm run test:search`: 58 assertions pass (query pipeline + transforms, no network).
 - `npm run test:blob:integration` (real private store, `__test__` records only): small round-trip, 12.1 MiB / 7-chunk exact reassemble, index listing, full cleanup — PASSED.
 - Live E2E (dev server, 28 assertions): auth gating, bootstrap, CRUD, CSRF 403, usage without plaintext, diagnostics, idempotent migration, key lifecycle, logout revocation — ALL PASSED.
+- Search UI render check (dev server, 11 assertions): full-width input without maxlength, 3 transform buttons with labeled group, options disclosure collapsed with region/panel/select, embedded submit — ALL PASSED.
 - Earlier Saved-Library verification (disk era): lifecycle, manifest, export, and search checks passed; superseded by the Blob-backed equivalents above.
 - Earlier search-module checks: exact/partial/case-insensitive/multi-token/fuzzy-typo ranking verified.
 - Pages `/saved`, `/saved/[id]`, `/` return 200 with the Dailymotion sidebar link present.

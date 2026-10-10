@@ -138,8 +138,12 @@ export async function runYouTubeSearch(settings: YouTubeSearchSettings): Promise
     }
   }
 
-  /* ── 2. Standard Search Execution with Clean Query ───────────────────── */
-  const cleanQuery = cleanQueryString(settings.query) || settings.query;
+  /* ── 2. Standard Search Execution with the ORIGINAL query ──────────
+     The user's exact string is sent verbatim: no quote stripping, no case
+     folding, no emoji/ZWJ surgery, no truncation. cleanQueryString is used
+     ONLY for zero-result fallback candidates (explicitly warned) and for
+     internal relevance scoring — never for the primary request. ───────── */
+  const primaryQuery = settings.query;
   const rawSearchItems: NonNullable<SearchListResponse["items"]> = [];
   const warnings: YouTubeManifestWarning[] = [];
   let pageToken = settings.pageToken;
@@ -154,7 +158,7 @@ export async function runYouTubeSearch(settings: YouTubeSearchSettings): Promise
 
     const response = await client.searchList<SearchListResponse>({
       part: "snippet",
-      q: cleanQuery,
+      q: primaryQuery,
       type: settings.types.join(","),
       maxResults: Math.min(settings.pageSize, settings.maxItems - rawSearchItems.length),
       order: settings.order,
@@ -221,7 +225,7 @@ export async function runYouTubeSearch(settings: YouTubeSearchSettings): Promise
 
     // Tier B: Worldwide unrestricted fallback if still 0 items
     if (rawSearchItems.length === 0) {
-      const allCandidates = [cleanQuery, ...candidates].filter((c): c is string => Boolean(c && c.length >= 3));
+      const allCandidates = [primaryQuery, ...candidates].filter((c): c is string => Boolean(c && c.length >= 3));
       for (const candidate of allCandidates) {
         const response = await client.searchList<SearchListResponse>({
           part: "snippet",

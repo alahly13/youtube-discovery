@@ -17,6 +17,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:blob": "node scripts/run-blob-tests.mjs",
+    "test:search": "node scripts/run-search-tests.mjs",
     "test:blob:integration": "node --env-file=.env.local scripts/run-blob-tests.mjs --integration",
     "verify": "npm run lint && npm run typecheck && npm run build"
   },

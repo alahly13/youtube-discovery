@@ -10,8 +10,16 @@ const optionalIsoDate = z
 
 export const YouTubeSearchSettingsSchema = z
   .object({
-    /* Extended query length from 200 to 1000 to safely accommodate full video titles, quotes, and descriptions */
-    query: z.string().trim().min(1).max(1000),
+    /* Query acceptance: the original user string is preserved verbatim —
+       no trim transform, no case folding, no punctuation/emoji stripping,
+       no Unicode normalization, no app-level length cap. Only genuinely
+       empty input is rejected (non-blank refine). Oversized payloads are
+       bounded by platform request limits and surfaced as upstream errors,
+       never silently truncated. */
+    query: z
+      .string()
+      .min(1)
+      .refine((q) => q.trim().length > 0, "Query must contain non-whitespace characters"),
     types: z.array(z.enum(["video", "channel", "playlist"])).min(1).max(3).default(["video"]),
     pageSize: z.coerce.number().int().min(1).max(50).default(25),
     maxPages: z.coerce.number().int().min(1).max(10).default(3),

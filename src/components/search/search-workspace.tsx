@@ -9,7 +9,9 @@ import {
   ChevronUp,
   Clock,
   Copy,
+  Dices,
   Download,
+  Eraser,
   Filter,
   Loader2,
   Play,
@@ -17,6 +19,7 @@ import {
   Save,
   Search,
   ShieldAlert,
+  Shuffle,
   SlidersHorizontal,
   Star,
   Trash2,
@@ -44,6 +47,13 @@ import { BackToTop } from "@/components/ui/back-to-top";
 import { applyYouTubeResultPipeline } from "@/lib/filters/youtube-result-filters";
 import { authFetch } from "@/lib/client/auth-fetch";
 import { saveSearchRecord } from "@/lib/client/blob-upload";
+import { isSubmittableQuery } from "@/lib/search/query-pipeline";
+import {
+  shuffleOneWord,
+  shuffleWords,
+  trimSpaces,
+  type QueryTransformResult,
+} from "@/lib/search/query-transforms";
 import {
   formatSearchCacheAge,
   isLastSearchValid,
@@ -200,6 +210,12 @@ export function SearchWorkspace() {
 
   /* ── API Settings panel collapsed/expanded state ─────────────────────── */
   const [apiSettingsOpen, setApiSettingsOpen] = useState(false);
+  /* Secondary controls live in a collapsible panel (collapsed by default)
+     so the search input owns its own full-width row. */
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  /* Smart-transform feedback (no-op notes) + double-fire guard. */
+  const [transformNote, setTransformNote] = useState<string | null>(null);
+  const transformBusyRef = useRef(false);
 
   const setCurrentManifest = useYouTubeWorkspaceStore((s) => s.setCurrentManifest);
   const fetchSettings = useYouTubeWorkspaceStore((s) => s.fetchSettings);
@@ -261,8 +277,11 @@ export function SearchWorkspace() {
       overrideResource?: YouTubeSearchResourceSelection,
       overrideSettings?: Partial<YouTubeSearchSettings>,
     ) => {
-      const activeQuery = (overrideQuery ?? settings.query).trim();
-      if (!activeQuery) return;
+      const rawQuery = overrideQuery ?? settings.query;
+      /* Blank-gate only: whitespace-only input is blocked WITHOUT modifying
+         the query. A non-blank query is submitted EXACTLY as entered. */
+      if (!isSubmittableQuery(rawQuery)) return;
+      const activeQuery = rawQuery;
 
       const activeResource = overrideResource ?? resourceSelection;
       const activeSettings: YouTubeSearchSettings = {
@@ -559,10 +578,11 @@ export function SearchWorkspace() {
   }, [lastSearch, isRestoredFromCache, clearLastSearch]);
 
   /* ── Detect Query from URL (Forwarded from History with auto-paste) ─── */
+  /* Next.js decodes ?q= exactly once; the value is used verbatim (blank-gated). */
   useEffect(() => {
     const qParam = searchParams.get("q");
-    if (qParam && qParam.trim()) {
-      const decodedQuery = qParam.trim();
+    if (qParam && isSubmittableQuery(qParam)) {
+      const decodedQuery = qParam;
 
       /* startTransition batches these state updates at low priority,
          avoiding synchronous cascading renders inside the effect body
@@ -599,9 +619,39 @@ export function SearchWorkspace() {
     await executeSearch();
   }
 
-  /* ── Save Search Title Handlers ──────────────────────────────────────── */
+  /* ── Smart Query Transformations ───────────────────────────────────
+     Each button reads the LIVE input state, transforms it, writes the
+     result back to the visible input, and submits the transformed string
+     EXPLICITLY via executeSearch override — never relying on just-updated
+     state (which would submit the stale pre-transform query). The
+     transformed query then flows through the normal pipeline (history,
+     filters, quota, pagination) untouched. No-ops show a subtle note and
+     fire no search; in-flight searches block re-entry via the busy ref. */
+  const runQueryTransform = (transform: (query: string) => QueryTransformResult) => {
+    if (loading || transformBusyRef.current) return;
+    const current = settings.query;
+    if (!isSubmittableQuery(current)) {
+      setTransformNote("Type a search query first");
+      return;
+    }
+    const result = transform(current);
+    if (!result.changed) {
+      setTransformNote(result.message ?? "No change");
+      return;
+    }
+    transformBusyRef.current = true;
+    setTransformNote(null);
+    setSettings((c) => ({ ...c, query: result.query }));
+    void executeSearch(result.query).finally(() => {
+      transformBusyRef.current = false;
+    });
+  };
+
+  /* ── Save Search Title Handlers ────────────────────────────────────────
+     Title is a user label (trimmed, blank-guarded). The saved QUERY is the
+     exact submitted string, preserved verbatim for faithful re-execution. */
   const handleOpenSaveModal = () => {
-    if (!settings.query.trim()) return;
+    if (!isSubmittableQuery(settings.query)) return;
     setSaveTitleInput(settings.query.trim());
     setSaveNotesInput("");
     setIsSaveModalOpen(true);
@@ -613,7 +663,7 @@ export function SearchWorkspace() {
 
     saveSearch({
       title: saveTitleInput.trim(),
-      query: settings.query.trim(),
+      query: settings.query,
       resourceSelection,
       settings: { ...settings },
       notes: saveNotesInput.trim() || undefined,
@@ -693,20 +743,26 @@ export function SearchWorkspace() {
           )}
 
           <form
-            className="grid gap-3 md:grid-cols-[minmax(0,1fr)_10rem_10rem_auto]"
+            className="w-full"
             onSubmit={(e) => {
               e.preventDefault();
               void runSearch();
             }}
           >
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+            {/* ── Full-width premium search input ───────────────────────
+                The input owns its own row (w-full, min-w-0). The submit
+                action lives INSIDE the input container so it never shrinks
+                the text field. Enter submission is preserved via the form.
+                ─────────────────────────────────────────────────────────── */}
+            <div className="relative w-full min-w-0">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <input
                 ref={searchInputRef}
-                className={`h-11 w-full rounded-lg border bg-surface pl-10 pr-16 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] transition-all ${
+                aria-label="YouTube search query"
+                className={`h-12 w-full min-w-0 rounded-xl border bg-surface pl-11 pr-24 text-[15px] shadow-xs transition-all focus:outline-none focus:ring-2 focus:ring-[var(--ring)] sm:pr-32 ${
                   pastedFromHistory
                     ? "border-emerald-500 ring-2 ring-emerald-500/50 shadow-sm shadow-emerald-500/20"
-                    : "border-border"
+                    : "border-border focus:border-primary/50"
                 }`}
                 value={settings.query}
                 onChange={(e) => setSettings((c) => ({ ...c, query: e.target.value }))}
@@ -719,54 +775,148 @@ export function SearchWorkspace() {
                     setSettings((c) => ({ ...c, query: "" }));
                     searchInputRef.current?.focus();
                   }}
-                  className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-muted hover:text-foreground hover:bg-surface-muted transition-colors"
+                  className="absolute right-24 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted transition-colors hover:bg-surface-muted hover:text-foreground sm:right-28"
                   title="Clear search query"
                   aria-label="Clear search query"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
-              <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 hidden select-none rounded border border-border bg-surface-muted px-1.5 py-0.5 font-mono text-[10px] text-muted sm:inline-block">
-                /
-              </kbd>
+              <button
+                type="submit"
+                disabled={loading || !isSubmittableQuery(settings.query)}
+                className="absolute right-1.5 top-1/2 inline-flex h-9 -translate-y-1/2 items-center gap-1.5 rounded-lg border border-primary bg-primary px-3 text-sm font-medium text-white transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50 dark:text-[#240004] sm:px-4"
+                title="Run YouTube search (Enter)"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                <span className="hidden sm:inline">Search</span>
+              </button>
             </div>
-            <select
-              className="h-11 rounded-lg border border-border bg-surface px-3 text-sm"
-              value={resourceSelection}
-              onChange={(e) => setResourceSelection(e.target.value as YouTubeSearchResourceSelection)}
-            >
-              <option value="ALL">ALL</option>
-              <option value="video">Videos</option>
-              <option value="channel">Channels</option>
-              <option value="playlist">Playlists</option>
-            </select>
-
-            {/* ── API Settings toggle button ──────────────────────────────
-                Shows a badge with the count of non-default settings so the
-                user can see at a glance how many API parameters are active.
-                ──────────────────────────────────────────────────────────── */}
-            <Button
-              type="button"
-              variant="secondary"
-              className="h-11 gap-1.5"
-              onClick={() => setApiSettingsOpen((v) => !v)}
-              title={apiSettingsOpen ? "Collapse API settings" : "Expand API settings"}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              <span className="hidden sm:inline">API Settings</span>
-              {activeApiCount > 0 && (
-                <Badge tone="primary" className="ml-1 px-1.5 py-0 text-[10px]">
-                  {activeApiCount}
-                </Badge>
-              )}
-              {apiSettingsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </Button>
-
-            <Button type="submit" className="h-11" disabled={loading || !settings.query.trim()}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              Search
-            </Button>
           </form>
+
+          {/* ── Smart query transformations ──────────────────────────
+              Three buttons directly under the full-width Search Bar. Each
+              rewrites the LIVE input value and auto-submits the transformed
+              query through the normal pipeline. Independent of the options
+              panel below (which keeps its own collapsed/expanded state). */}
+          <div
+            className="mt-2.5 flex flex-wrap items-center gap-2"
+            role="group"
+            aria-label="Smart query transformations"
+          >
+            <TransformButton
+              icon={<Shuffle className="h-3.5 w-3.5" />}
+              label="Shuffle Words"
+              title="Randomly reorder the words (Enter to run a plain search instead)"
+              disabled={loading || !isSubmittableQuery(settings.query)}
+              onClick={() => runQueryTransform(shuffleWords)}
+            />
+            <TransformButton
+              icon={<Eraser className="h-3.5 w-3.5" />}
+              label="Trim Spaces"
+              title="Remove leading and trailing whitespace only"
+              disabled={loading || !isSubmittableQuery(settings.query)}
+              onClick={() => runQueryTransform(trimSpaces)}
+            />
+            <TransformButton
+              icon={<Dices className="h-3.5 w-3.5" />}
+              label="Shuffle One Word"
+              title="Shuffle the characters inside one randomly picked word"
+              disabled={loading || !isSubmittableQuery(settings.query)}
+              onClick={() => runQueryTransform(shuffleOneWord)}
+            />
+            {transformNote && (
+              <span role="status" className="text-xs text-muted">
+                {transformNote}
+              </span>
+            )}
+          </div>
+
+          {/* ── Collapsible search options (collapsed by default) ───────
+              Resource type, API parameters, and quick controls live here.
+              Collapsing never resets state, never submits, and the input +
+              Enter submission work independently of this panel. */}
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setOptionsOpen((v) => !v)}
+              aria-expanded={optionsOpen}
+              aria-controls="search-options-panel"
+              className="flex w-full items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5 text-sm transition hover:border-primary/40 hover:bg-surface-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 shrink-0 text-muted" />
+                <span className="truncate font-medium">Search options & filters</span>
+                {activeApiCount > 0 && (
+                  <Badge tone="primary" className="shrink-0 px-1.5 py-0 text-[10px]">
+                    {activeApiCount} active
+                  </Badge>
+                )}
+                {resourceSelection !== "ALL" && (
+                  <Badge tone="neutral" className="shrink-0 px-1.5 py-0 text-[10px] uppercase">
+                    {resourceSelection}
+                  </Badge>
+                )}
+              </span>
+              {optionsOpen ? (
+                <ChevronUp className="h-4 w-4 shrink-0 text-muted" />
+              ) : (
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted" />
+              )}
+            </button>
+            <div
+              id="search-options-panel"
+              role="region"
+              aria-label="Search options and filters"
+              inert={!optionsOpen}
+              className={`grid transition-all duration-300 ease-in-out ${
+                optionsOpen ? "mt-3 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+              }`}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <div className="grid gap-3 rounded-xl border border-border/60 bg-surface-muted/30 p-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <label htmlFor="search-resource-type" className="text-[11px] font-medium text-muted">
+                      Resource type
+                    </label>
+                    <select
+                      id="search-resource-type"
+                      className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                      value={resourceSelection}
+                      onChange={(e) => setResourceSelection(e.target.value as YouTubeSearchResourceSelection)}
+                    >
+                      <option value="ALL">ALL</option>
+                      <option value="video">Videos</option>
+                      <option value="channel">Channels</option>
+                      <option value="playlist">Playlists</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-medium text-muted">
+                      API parameters{activeApiCount > 0 ? ` (${activeApiCount} active)` : ""}
+                    </span>
+                    {/* ── API Settings toggle button ────────────────────
+                        Badge shows the count of non-default settings.
+                        ──────────────────────────────────────────────── */}
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="h-10 w-full gap-1.5"
+                      onClick={() => setApiSettingsOpen((v) => !v)}
+                      title={apiSettingsOpen ? "Collapse API settings" : "Expand API settings"}
+                      aria-expanded={apiSettingsOpen}
+                    >
+                      <SlidersHorizontal className="h-4 w-4" />
+                      <span>API Settings</span>
+                      {activeApiCount > 0 && (
+                        <Badge tone="primary" className="ml-1 px-1.5 py-0 text-[10px]">
+                          {activeApiCount}
+                        </Badge>
+                      )}
+                      {apiSettingsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </Button>
+                  </div>
+                </div>
 
           {/* ── Quick Controls & Unrestricted Mode Bar ────────────────── */}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/50 pt-3">
@@ -796,7 +946,7 @@ export function SearchWorkspace() {
                 type="button"
                 variant="secondary"
                 className="h-8 gap-1.5 px-3 text-xs"
-                disabled={!settings.query.trim()}
+                disabled={!isSubmittableQuery(settings.query)}
                 onClick={handleOpenSaveModal}
                 title="Save this search query with a custom title"
               >
@@ -1141,6 +1291,9 @@ export function SearchWorkspace() {
               </div>
             </div>
           )}
+              </div>
+            </div>
+          </div>
         </Card>
         <div className="col-span-12 xl:col-span-4">
           {manifest ? (
@@ -1408,6 +1561,34 @@ export function SearchWorkspace() {
    design language. They provide labels, hints, and consistent sizing for
    the collapsible API settings panel.
    ═══════════════════════════════════════════════════════════════════════════ */
+
+function TransformButton({
+  icon,
+  label,
+  title,
+  disabled,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={label}
+      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-foreground shadow-xs transition hover:border-primary/50 hover:bg-primary-soft hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface disabled:hover:text-foreground"
+    >
+      <span className="text-primary">{icon}</span>
+      <span>{label}</span>
+    </button>
+  );
+}
 
 function ApiSelect({
   label,

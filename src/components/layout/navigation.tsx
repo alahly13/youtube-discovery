@@ -61,7 +61,7 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
       })}
       {/* External companion app — separate Dailymotion discovery product. */}
       <a
-        href="https://dailymotion-video-discovery.vercel.app/"
+        href="https://dailymotion-discovery.vercel.app/"
         target="_blank"
         rel="noopener noreferrer"
         aria-label="Open Dailymotion Discovery in a new tab"

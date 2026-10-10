@@ -1354,5 +1354,41 @@ No.
 
 
 
+---
+
+## 2026-10-10 (Dailymotion Sidebar URL Update)
+
+### Date/time
+
+2026-10-10 UTC
+
+### Task summary
+
+Changed the Sidebar Dailymotion Discovery link destination from `https://dailymotion-video-discovery.vercel.app/` to `https://dailymotion-discovery.vercel.app/` per user request. Updated `src/components/layout/navigation.tsx` and the current-state project ledger. Prior change-log entries intentionally keep the old URL as historical record.
+
+### Files changed
+
+- `src/components/layout/navigation.tsx` (href only)
+- `youtube_discovery_ledger.md` (file-map URL reference)
+
+### Verification run and results
+
+- Grep confirms the new URL in `navigation.tsx` and no remaining old-URL references in source (old URL survives only inside dated historical change-log entries, by design).
+- String-literal-only change: no type, lint, or behavior impact beyond the link destination.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+
 
 

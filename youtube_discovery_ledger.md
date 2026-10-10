@@ -276,7 +276,7 @@ Forbidden public secrets:
 - `src/lib/platforms/youtube/youtube-api-keys.ts`: encrypted Blob key store, project/account metadata, pool-aware rotation, invalid-key isolation.
 - `src/lib/platforms/youtube/youtube-client.ts`: single choke point — bucket classification, cross-pool rotation, outcome attribution.
 - `src/lib/config/search-storage-config.ts`: null expiry = permanent.
-- `src/components/layout/navigation.tsx`: app nav incl. external `Dailymotion Discovery` entry (exact `https://dailymotion-video-discovery.vercel.app/`, new tab, `noopener noreferrer`) with local brand SVG.
+- `src/components/layout/navigation.tsx`: app nav incl. external `Dailymotion Discovery` entry (exact `https://dailymotion-discovery.vercel.app/`, new tab, `noopener noreferrer`) with local brand SVG.
 - `src/components/layout/dailymotion-icon.tsx`: local inline Dailymotion brand-mark SVG (no external image, no generic icon).
 - `src/components/saved/saved-library-workspace.tsx`: Saved hub (playlists/items/searches tabs, shared search, standalone detection, add-to-playlist hooks).
 - `src/components/library/add-to-playlist-dialog.tsx`: add-to-playlist picker with inline creation and per-playlist duplicate prevention.

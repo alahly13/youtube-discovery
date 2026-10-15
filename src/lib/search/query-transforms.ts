@@ -2,17 +2,22 @@
  * ═══════════════════════════════════════════════════════════════════════════
  * Smart Query Transformations — explicit, user-invoked query rewrites.
  * ──────────────────────────────────────────────────────────────────────────
- * These run ONLY when the user clicks a transform button. They are the
- * opposite of silent pipeline mutation: each returns the new query (or a
- * no-change message), the caller writes it to the visible input AND passes
- * it explicitly to the search function, so the submitted query always
- * matches the input. The downstream pipeline then transmits it verbatim.
+ * These run ONLY when the user clicks a transform button. Each returns the
+ * new query (or a no-change message); the caller writes it to the visible
+ * input ONLY and never submits, never calls the YouTube API, and never
+ * touches search history. The user reviews/edits the transformed text and
+ * presses the existing Search button (or Enter) explicitly when ready.
  *
- * - Unicode-safe throughout: tokens split on whitespace runs (never inside
- *   surrogate pairs); grapheme shuffling uses Intl.Segmenter with a
- *   code-point fallback (fallback may split ZWJ/joiner sequences — noted).
+ * - Shuffle Words: Fisher–Yates word reorder; standalone quoted phrases
+ *   ("exact phrase") travel as one unit; separators stay fixed in place.
+ * - Trim Spaces: trim outer whitespace + collapse every inner whitespace
+ *   run to a single ordinary space; operators/punctuation untouched.
+ * - Shuffle One Word: keep the first THREE grapheme clusters of one random
+ *   eligible word, Fisher–Yates shuffle only the suffix clusters.
+ * - Unicode-safe: whitespace-token split never breaks surrogate pairs;
+ *   grapheme handling uses Intl.Segmenter with a code-point fallback.
  * - Randomness is injectable (`random` param) for deterministic tests; the
- *   UI uses Math.random.
+ *   UI passes Math.random for a fresh permutation on every click.
  * Pure module: unit-testable in plain Node.
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -32,7 +37,7 @@ const NO_CHANGE = (message: string, query: string): QueryTransformResult => ({
   message,
 });
 
-/** Fisher–Yates shuffle (pure: returns a new array). */
+/** Fisher–Yates shuffle (pure: returns a new array, unbiased permutation). */
 export function shuffledArray<T>(items: readonly T[], random: RandomFn = Math.random): T[] {
   const arr = [...items];
   for (let i = arr.length - 1; i > 0; i -= 1) {
@@ -42,47 +47,88 @@ export function shuffledArray<T>(items: readonly T[], random: RandomFn = Math.ra
   return arr;
 }
 
+/** Maximum fresh-shuffle attempts before accepting that no distinct order exists. */
+const MAX_SHUFFLE_ATTEMPTS = 25;
+
+interface TextUnit {
+  text: string;
+  start: number;
+  end: number;
+}
+
 /**
- * Shuffle Words: randomly reorder whitespace-separated tokens.
- * Words keep spelling + attached punctuation; separators stay in place so
- * internal spacing is preserved exactly. Retries until the order differs
- * (when any distinct arrangement exists); otherwise reports a no-op.
+ * Collect reorderable units: a standalone double-quoted phrase ("...") is
+ * one unit so its internal word order survives; every other
+ * whitespace-separated token is its own unit. An unbalanced quote falls
+ * back to plain token behavior. Positions are UTF-16 spans used only for
+ * whole-unit splicing (never splitting inside a unit).
+ */
+function collectShuffleUnits(query: string): TextUnit[] {
+  const units: TextUnit[] = [];
+  const unitRe = /"[^"]*"|\S+/g;
+  let match: RegExpExecArray | null;
+  while ((match = unitRe.exec(query)) !== null) {
+    units.push({ text: match[0], start: match.index, end: match.index + match[0].length });
+  }
+  return units;
+}
+
+/**
+ * Shuffle Words: randomly reorder the query's word units.
+ * - Each unit keeps its spelling, punctuation, and capitalization.
+ * - Standalone quoted phrases ("exact phrase") move as a single unit.
+ * - Separators (leading/trailing/repeated whitespace) stay fixed in place,
+ *   so spacing is preserved exactly and no information is lost.
+ * - Retries with a fresh permutation until the effective order differs
+ *   (when any distinct arrangement exists); otherwise reports a no-op.
  */
 export function shuffleWords(query: string, random: RandomFn = Math.random): QueryTransformResult {
-  const parts = query.split(/(\s+)/);
-  const wordIndices: number[] = [];
-  parts.forEach((part, i) => {
-    if (!/^\s*$/.test(part) && part.length > 0) wordIndices.push(i);
-  });
-  if (wordIndices.length < 2) {
+  const units = collectShuffleUnits(query);
+  if (units.length < 2) {
     return NO_CHANGE("Add at least two words to shuffle their order", query);
   }
-  const words = wordIndices.map((i) => parts[i]);
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const reordered = shuffledArray(words, random);
-    const same = reordered.every((w, k) => w === words[k]);
+  if (units.every((u) => u.text === units[0].text)) {
+    return NO_CHANGE("Words are identical — no different order exists", query);
+  }
+  const texts = units.map((u) => u.text);
+  for (let attempt = 0; attempt < MAX_SHUFFLE_ATTEMPTS; attempt += 1) {
+    const reordered = shuffledArray(texts, random);
+    const same = reordered.every((w, k) => w === texts[k]);
     if (!same) {
-      const next = [...parts];
-      wordIndices.forEach((partIdx, k) => {
-        next[partIdx] = reordered[k];
-      });
-      return { changed: true, query: next.join("") };
+      // Splice shuffled units back into their original slots; every
+      // whitespace separator between them stays byte-identical.
+      const next =
+        query.slice(0, units[0].start) +
+        reordered
+          .map((text, k) => {
+            const gapAfter = k < units.length - 1 ? query.slice(units[k].end, units[k + 1].start) : "";
+            return text + gapAfter;
+          })
+          .join("") +
+        query.slice(units[units.length - 1].end);
+      return { changed: true, query: next };
     }
   }
   return NO_CHANGE("Words are identical — no different order exists", query);
 }
 
 /**
- * Trim Spaces: native trim() baseline — strips leading/trailing whitespace
- * (including Unicode whitespace), preserves everything else byte-for-byte.
- * No-change → message, no search.
+ * Trim Spaces: strip leading/trailing whitespace and collapse every inner
+ * whitespace run (spaces, tabs, newlines, NBSP) to a single ordinary space.
+ * Spelling, capitalization, punctuation, word order, and search operators
+ * (-, |, quotes, intitle:) are preserved byte-for-byte. Empty input is
+ * returned safely without errors. Runs only on explicit button click —
+ * never on keystroke, page load, or submission.
  */
 export function trimSpaces(query: string): QueryTransformResult {
-  const trimmed = query.trim();
-  if (trimmed === query) {
-    return NO_CHANGE("No extra outer spaces to remove", query);
+  if (query.length === 0) {
+    return NO_CHANGE("Query is empty — nothing to trim", query);
   }
-  return { changed: true, query: trimmed };
+  const normalized = query.replace(/\s+/g, " ").trim();
+  if (normalized === query) {
+    return NO_CHANGE("No extra spaces to remove", query);
+  }
+  return { changed: true, query: normalized };
 }
 
 /** Split a string into grapheme clusters (emoji-safe) with fallback. */
@@ -103,40 +149,67 @@ export function distinctClusterCount(clusters: string[]): number {
   return new Set(clusters).size;
 }
 
-interface WordSpan {
+/** Number of leading grapheme clusters that are never shuffled. */
+export const SHUFFLE_ONE_WORD_PREFIX_SIZE = 3;
+
+interface EligibleWord {
   word: string;
   start: number;
   end: number;
+  /** First three grapheme clusters — copied verbatim, never shuffled. */
+  prefix: string;
+  /** Remaining grapheme clusters — the only shuffled material. */
+  suffix: string[];
 }
 
 /**
- * Shuffle One Word: pick one random ELIGIBLE word (≥2 distinct grapheme
- * clusters) and shuffle its characters, leaving every other word and all
- * spacing/punctuation exactly in place. Surrogate pairs are never split
- * (code-point fallback at minimum); ZWJ sequences survive intact when
- * Intl.Segmenter is available. Retries words/shuffles until visible change
- * is possible; otherwise reports a no-op.
+ * Shuffle One Word: pick one random ELIGIBLE word and shuffle ONLY the
+ * grapheme clusters after its first three, leaving the prefix, every other
+ * word, and all spacing exactly in place.
+ * - Eligibility: the word has more than three grapheme clusters AND its
+ *   suffix holds at least two distinct clusters (so a visible change is
+ *   possible). Ineligible words are skipped, never mangled.
+ * - Surrogate pairs, combining marks, and emoji sequences are never split:
+ *   segmentation is grapheme-based (Intl.Segmenter) with a code-point
+ *   fallback that at minimum keeps surrogate pairs intact.
+ * - Both the word pick and the suffix order use fresh Fisher–Yates
+ *   shuffles; suffix no-ops are retried, then the next eligible word is
+ *   tried, until a visible change is produced or every option is proven
+ *   exhausted (no-op message, input untouched).
  */
 export function shuffleOneWord(query: string, random: RandomFn = Math.random): QueryTransformResult {
-  const spans: WordSpan[] = [];
+  const candidates: EligibleWord[] = [];
   const tokenRe = /\S+/g;
   let match: RegExpExecArray | null;
   while ((match = tokenRe.exec(query)) !== null) {
-    spans.push({ word: match[0], start: match.index, end: match.index + match[0].length });
+    const { clusters } = splitGraphemes(match[0]);
+    if (clusters.length <= SHUFFLE_ONE_WORD_PREFIX_SIZE) continue;
+    const suffix = clusters.slice(SHUFFLE_ONE_WORD_PREFIX_SIZE);
+    if (distinctClusterCount(suffix) < 2) continue;
+    candidates.push({
+      word: match[0],
+      start: match.index,
+      end: match.index + match[0].length,
+      prefix: clusters.slice(0, SHUFFLE_ONE_WORD_PREFIX_SIZE).join(""),
+      suffix,
+    });
   }
-  const eligible = spans.filter((s) => distinctClusterCount(splitGraphemes(s.word).clusters) >= 2);
-  if (eligible.length === 0) {
-    return NO_CHANGE("No eligible word to shuffle — need a word with at least two different characters", query);
+  if (candidates.length === 0) {
+    return NO_CHANGE(
+      "No eligible word to shuffle — need a word with at least two different characters after its first three",
+      query,
+    );
   }
-  const order = shuffledArray(eligible, random);
-  for (const span of order) {
-    const { clusters } = splitGraphemes(span.word);
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const reordered = shuffledArray(clusters, random);
-      if (reordered.join("") !== span.word) {
+  const order = shuffledArray(candidates, random);
+  for (const candidate of order) {
+    const originalSuffix = candidate.suffix.join("");
+    for (let attempt = 0; attempt < MAX_SHUFFLE_ATTEMPTS; attempt += 1) {
+      const reordered = shuffledArray(candidate.suffix, random);
+      if (reordered.join("") !== originalSuffix) {
+        const nextWord = candidate.prefix + reordered.join("");
         return {
           changed: true,
-          query: query.slice(0, span.start) + reordered.join("") + query.slice(span.end),
+          query: query.slice(0, candidate.start) + nextWord + query.slice(candidate.end),
         };
       }
     }

@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-10-09 (Private Blob persistence, single-admin auth, quota pools)
+Last updated: 2026-10-15 (query utilities no-auto-search fix, Search Guide 2026)
 
 ## Project Identity And Mission
 
@@ -76,7 +76,8 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 
 - `/login`: single-administrator sign-in with current-username prefill (only public page besides API auth helpers).
 - `/`: dashboard with product posture, system boundaries, quick actions, and manifest overview.
-- `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control.
+- `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control. The three query-utility buttons (Shuffle Words, Trim Spaces, Shuffle One Word) rewrite the visible input ONLY — they never submit, call the API, or record history; the user presses Search explicitly.
+- `/search-guide`: static Search Guide 2026 reference (documented vs experimental vs structured-filter labels, Arabic explanations, copyable examples, official doc links).
 - `/ai-search`: AI Search / AI Discovery workspace and safety contract.
 - `/link-explorer`: parses YouTube URLs and reports official API strategy without scraping.
 - `/channels`: **FULL** saved channel library (localStorage-backed).
@@ -276,7 +277,9 @@ Forbidden public secrets:
 - `src/lib/platforms/youtube/youtube-api-keys.ts`: encrypted Blob key store, project/account metadata, pool-aware rotation, invalid-key isolation.
 - `src/lib/platforms/youtube/youtube-client.ts`: single choke point — bucket classification, cross-pool rotation, outcome attribution.
 - `src/lib/config/search-storage-config.ts`: null expiry = permanent.
-- `src/components/layout/navigation.tsx`: app nav incl. external `Dailymotion Discovery` entry (exact `https://dailymotion-discovery.vercel.app/`, new tab, `noopener noreferrer`) with local brand SVG.
+- `src/app/search-guide/page.tsx`: static Search Guide 2026 reference page (server component, utilities + sections A–I, support badges, RTL Arabic + LTR copyable examples).
+- `src/components/search-guide/copy-button.tsx`: client-isolated clipboard button for guide examples.
+- `src/components/layout/navigation.tsx`: app nav incl. `Search Guide 2026` (`/search-guide`) entry plus external `Dailymotion Discovery` entry (exact `https://dailymotion-discovery.vercel.app/`, new tab, `noopener noreferrer`) with local brand SVG.
 - `src/components/layout/dailymotion-icon.tsx`: local inline Dailymotion brand-mark SVG (no external image, no generic icon).
 - `src/components/saved/saved-library-workspace.tsx`: Saved hub (playlists/items/searches tabs, shared search, standalone detection, add-to-playlist hooks).
 - `src/components/library/add-to-playlist-dialog.tsx`: add-to-playlist picker with inline creation and per-playlist duplicate prevention.
@@ -289,7 +292,7 @@ Forbidden public secrets:
 - `src/lib/playlists/playlist-query.ts`: YouTube→snapshot adapter, date/views filters, 12 sorts, position resequencing.
 - `src/lib/search/local-search.ts`: shared FlexSearch local-search service + adapters (Saved, playlists, History).
 - `src/lib/search/query-pipeline.ts`: verbatim-query acceptance helpers (blank-gate only, single-encode round-trip).
-- `src/lib/search/query-transforms.ts`: Shuffle Words / Trim Spaces / Shuffle One Word (grapheme-safe, injectable randomness).
+- `src/lib/search/query-transforms.ts`: Shuffle Words (Fisher–Yates, quoted phrases stay whole, separators fixed) / Trim Spaces (outer trim + inner collapse to one space) / Shuffle One Word (first 3 grapheme clusters fixed, suffix-only Fisher–Yates) — input-only rewrites, injectable randomness.
 - `src/lib/state/user-playlists-store.ts`: client playlist cache + server sync, membership/group/order ops, undo, export download.
 - `src/lib/state/youtube-workspace-store.ts`: centralized Zustand store managing persisted workspace state including configurable TTL last search cache with full data preservation, watch preferences, and saved items.
 - `src/components/manifests/manifest-summary.tsx`: temporary manifest status and quota summary.
@@ -336,6 +339,16 @@ Forbidden public secrets:
 - `npm run build`: env preflight, Prisma generate, Next build.
 - `npm run db:status`: checks migration status only when `DATABASE_URL` is present.
 - `npm run db:apply`: guarded migration deploy; requires `CONFIRM_DB_APPLY=true`.
+
+Latest verification results on 2026-10-15 (query utilities + Search Guide 2026):
+
+- `npm run test:search`: 77 assertions pass (query pipeline + spec-compliant transforms, no network).
+- Scoped ESLint on the 6 changed files: clean (0 errors, 0 warnings).
+- Full `eslint .`: 8 errors + 56 warnings, ALL pre-existing in vendored skill dot-directories and generated Prisma contract files (`migrations/snapshots`, `src/prisma/contract.d.ts`); zero findings in changed files.
+- `tsc --noEmit --incremental false`: passed (0 errors; prisma generate skipped — nothing imports the generated client and the Prisma 8 CLI entry fails in this env, pre-existing).
+- Production `next build`: passed (all routes incl. new static `/search-guide`; proxy convention, no Edge warnings).
+- Prerendered `/search-guide` HTML + `/search` HTML verified: guide title, utilities, sections A–I, both official links, RTL/lang attributes, and the `/search-guide` nav link all present; `/search-guide` serves 200 (login gate applies as with all pages).
+- `npm run` shim note: `node_modules/.bin` lost the `eslint`/`prisma` shims (interrupted relink leftovers); tools were invoked directly via `node <package>/bin|dist/...`. No dependencies changed.
 
 Latest verification results on 2026-10-09:
 

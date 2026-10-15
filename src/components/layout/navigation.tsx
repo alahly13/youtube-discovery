@@ -2,6 +2,7 @@
 
 import {
   Archive,
+  BookOpen,
   Bot,
   Compass,
   FolderKanban,
@@ -23,6 +24,7 @@ import { DailymotionIcon } from "@/components/layout/dailymotion-icon";
 const navItems = [
   { href: "/", label: "Dashboard", icon: Home },
   { href: "/search", label: "Search", icon: Search },
+  { href: "/search-guide", label: "Search Guide 2026", icon: BookOpen },
   { href: "/ai-search", label: "AI Search", icon: Bot },
   { href: "/link-explorer", label: "Link Explorer", icon: LinkIcon },
   { href: "/channels", label: "Channels", icon: Tv },

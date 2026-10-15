@@ -213,9 +213,8 @@ export function SearchWorkspace() {
   /* Secondary controls live in a collapsible panel (collapsed by default)
      so the search input owns its own full-width row. */
   const [optionsOpen, setOptionsOpen] = useState(false);
-  /* Smart-transform feedback (no-op notes) + double-fire guard. */
+  /* Smart-transform feedback (no-op notes). Transforms never search. */
   const [transformNote, setTransformNote] = useState<string | null>(null);
-  const transformBusyRef = useRef(false);
 
   const setCurrentManifest = useYouTubeWorkspaceStore((s) => s.setCurrentManifest);
   const fetchSettings = useYouTubeWorkspaceStore((s) => s.fetchSettings);
@@ -619,16 +618,16 @@ export function SearchWorkspace() {
     await executeSearch();
   }
 
-  /* ── Smart Query Transformations ───────────────────────────────────
-     Each button reads the LIVE input state, transforms it, writes the
-     result back to the visible input, and submits the transformed string
-     EXPLICITLY via executeSearch override — never relying on just-updated
-     state (which would submit the stale pre-transform query). The
-     transformed query then flows through the normal pipeline (history,
-     filters, quota, pagination) untouched. No-ops show a subtle note and
-     fire no search; in-flight searches block re-entry via the busy ref. */
+  /* ── Smart Query Transformations (never auto-search) ───────────────
+     Each button reads the LIVE input state, transforms it, and writes the
+     result back to the visible input ONLY. Nothing here submits the form,
+     calls the YouTube API, records history, or touches the manifest: the
+     user reviews/edits the transformed query and presses the existing
+     Search button (or Enter) explicitly when ready. Focus returns to the
+     input so keyboard flow continues; no-ops show a subtle accessible
+     note via role="status" and leave the input untouched. */
   const runQueryTransform = (transform: (query: string) => QueryTransformResult) => {
-    if (loading || transformBusyRef.current) return;
+    if (loading) return;
     const current = settings.query;
     if (!isSubmittableQuery(current)) {
       setTransformNote("Type a search query first");
@@ -639,12 +638,10 @@ export function SearchWorkspace() {
       setTransformNote(result.message ?? "No change");
       return;
     }
-    transformBusyRef.current = true;
     setTransformNote(null);
     setSettings((c) => ({ ...c, query: result.query }));
-    void executeSearch(result.query).finally(() => {
-      transformBusyRef.current = false;
-    });
+    // Keep the transformed text in the same input, ready to edit/search.
+    requestAnimationFrame(() => searchInputRef.current?.focus());
   };
 
   /* ── Save Search Title Handlers ────────────────────────────────────────
@@ -796,9 +793,11 @@ export function SearchWorkspace() {
 
           {/* ── Smart query transformations ──────────────────────────
               Three buttons directly under the full-width Search Bar. Each
-              rewrites the LIVE input value and auto-submits the transformed
-              query through the normal pipeline. Independent of the options
-              panel below (which keeps its own collapsed/expanded state). */}
+              rewrites the LIVE input value in place and stops there: no
+              submit, no API call, no history write. The user reviews or
+              edits the result, then presses Search (or Enter) manually.
+              Independent of the options panel below (which keeps its own
+              collapsed/expanded state). */}
           <div
             className="mt-2.5 flex flex-wrap items-center gap-2"
             role="group"
@@ -807,21 +806,21 @@ export function SearchWorkspace() {
             <TransformButton
               icon={<Shuffle className="h-3.5 w-3.5" />}
               label="Shuffle Words"
-              title="Randomly reorder the words (Enter to run a plain search instead)"
+              title="Randomly reorder the words in the input (does not search — press Search or Enter to run it)"
               disabled={loading || !isSubmittableQuery(settings.query)}
               onClick={() => runQueryTransform(shuffleWords)}
             />
             <TransformButton
               icon={<Eraser className="h-3.5 w-3.5" />}
               label="Trim Spaces"
-              title="Remove leading and trailing whitespace only"
+              title="Remove outer whitespace and collapse repeated spaces (does not search)"
               disabled={loading || !isSubmittableQuery(settings.query)}
               onClick={() => runQueryTransform(trimSpaces)}
             />
             <TransformButton
               icon={<Dices className="h-3.5 w-3.5" />}
               label="Shuffle One Word"
-              title="Shuffle the characters inside one randomly picked word"
+              title="Shuffle the characters after the first three of one randomly picked word (does not search)"
               disabled={loading || !isSubmittableQuery(settings.query)}
               onClick={() => runQueryTransform(shuffleOneWord)}
             />

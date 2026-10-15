@@ -139,9 +139,17 @@ export async function suiteShuffleWords(): Promise<void> {
   const arR = shuffleWords(ar, STUB_ZERO);
   check("unicode + spacing preserved", arR.changed && tokensOf(arR.query).sort().join("|") === tokensOf(ar).sort().join("|"));
   check("separators untouched", arR.query.replace(/\S+/g, "#") === ar.replace(/\S+/g, "#"));
+  // Standalone quoted phrases travel as a single unit.
+  const q = shuffleWords('"machine learning" tutorials 2026', STUB_ZERO);
+  check("quoted phrase kept intact", q.changed && q.query.includes('"machine learning"'));
+  check("quoted phrase multiset", tokensOf(q.query.replace(/"machine learning"/g, "QUOTED")).sort().join("|") === "2026|QUOTED|tutorials");
+  const qar = shuffleWords('"تعلم بايثون" دروس 2026', STUB_ZERO);
+  check("arabic quoted phrase kept intact", qar.changed && qar.query.includes('"تعلم بايثون"'));
   // No-ops: single token and blank.
   const one = shuffleWords("lonely", STUB_ZERO);
   check("single word no-op + message", !one.changed && one.query === "lonely" && Boolean(one.message));
+  const blank = shuffleWords("   ", STUB_ZERO);
+  check("blank no-op + message", !blank.changed && blank.query === "   " && Boolean(blank.message));
   const same = shuffleWords("same same same", STUB_ZERO);
   check("identical words no-op", !same.changed && same.query === "same same same");
   // Property: random runs over distinct words eventually differ (bounded attempts here).
@@ -153,22 +161,30 @@ export async function suiteShuffleWords(): Promise<void> {
     }
   }
   check("random shuffle differs", differed);
+  // Property: repeated clicks use fresh randomness (stub sequences differ).
+  const seqA = shuffleWords("one two three four", () => 0.1);
+  const seqB = shuffleWords("one two three four", () => 0.9);
+  check("fresh permutation per random source", seqA.query !== seqB.query || (!seqA.changed && !seqB.changed));
 }
 
 export async function suiteTrimSpaces(): Promise<void> {
   console.log("\n[ trim spaces ]");
-  check("native trim baseline", trimSpaces("   machine    learning   tutorials  ").query === "machine    learning   tutorials");
+  check("outer trim + inner collapse", trimSpaces("   machine    learning   tutorials  ").query === "machine learning tutorials");
+  check("task example", trimSpaces("   molecular     biology   practical   ").query === "molecular biology practical");
+  check("operators intact", trimSpaces("  iPhone 15|iPhone 16 -case  ").query === "iPhone 15|iPhone 16 -case");
   check("changed flag", trimSpaces("  x  ").changed === true);
-  check("tabs/newlines trimmed", trimSpaces("\t\n hello \n").query === "hello");
+  check("tabs/newlines collapsed", trimSpaces("\t\n hello \n world \n").query === "hello world");
   check("nbsp trimmed", trimSpaces(" hello ").query === "hello");
   const noop = trimSpaces("already clean 🤖!");
   check("no-op message, no search", !noop.changed && noop.query === "already clean 🤖!" && Boolean(noop.message));
-  check("internal content untouched", trimSpaces("  a  b  ").query === "a  b");
+  check("quotes and minus preserved", trimSpaces('  "exact phrase" -excluded  ').query === '"exact phrase" -excluded');
+  check("empty safe", trimSpaces("").query === "" && !trimSpaces("").changed);
+  check("whitespace-only safe", trimSpaces("   ").query === "" && typeof trimSpaces("   ").changed === "boolean");
 }
 
 export async function suiteShuffleOneWord(): Promise<void> {
-  console.log("\n[ shuffle one word ]");
-  // Stub random picks deterministically: first eligible word, rotated clusters.
+  console.log("\n[ shuffle one word — first-three-graphemes preserved ]");
+  // Stub random picks deterministically; suffix order is a Fisher–Yates rotation.
   const r = shuffleOneWord("machine learning tutorials", STUB_ZERO);
   check("one word shuffled", r.changed);
   const before = tokensOf("machine learning tutorials");
@@ -176,16 +192,36 @@ export async function suiteShuffleOneWord(): Promise<void> {
   check("word count preserved", after.length === 3);
   const changedIdx = after.findIndex((w, i) => w !== before[i]);
   check("exactly one word changed", changedIdx >= 0 && after.filter((w, i) => w !== before[i]).length === 1);
+  // Mandatory prefix rule: first three grapheme clusters byte-identical.
+  const beforeClusters = splitGraphemes(before[changedIdx]).clusters;
+  const afterClusters = splitGraphemes(after[changedIdx]).clusters;
+  check("word length preserved", afterClusters.length === beforeClusters.length);
   check(
-    "grapheme multiset preserved",
-    splitGraphemes(after[changedIdx]).clusters.sort().join("|") ===
-      splitGraphemes(before[changedIdx]).clusters.sort().join("|"),
+    "first three graphemes unchanged",
+    afterClusters.slice(0, 3).join("") === beforeClusters.slice(0, 3).join(""),
   );
+  check(
+    "suffix multiset preserved",
+    [...afterClusters.slice(3)].sort().join("|") === [...beforeClusters.slice(3)].sort().join("|"),
+  );
+  check("suffix order differs", afterClusters.slice(3).join("") !== beforeClusters.slice(3).join(""));
   // Positions of the other words are byte-identical.
   check("neighbors untouched", r.query.replace(after[changedIdx], "#") === "machine learning tutorials".replace(before[changedIdx], "#"));
-  // Arabic word: code points preserved, order changed.
+  // Spacing around the changed word is preserved exactly.
+  const spaced = shuffleOneWord("  machine   learning  ", STUB_ZERO);
+  check("spacing preserved", spaced.changed && spaced.query.replace(/\S+/g, "#") === "  machine   learning  ".replace(/\S+/g, "#"));
+  // Arabic word: prefix clusters preserved, suffix reordered, code points intact.
   const ar = shuffleOneWord("مرحبا بالعالم", STUB_ZERO);
   check("arabic eligible shuffled", ar.changed && [...ar.query].sort().join("") === [..."مرحبا بالعالم"].sort().join(""));
+  if (ar.changed) {
+    const arBefore = tokensOf("مرحبا بالعالم");
+    const arAfter = tokensOf(ar.query);
+    const arIdx = arAfter.findIndex((w, i) => w !== arBefore[i]);
+    const bCl = splitGraphemes(arBefore[arIdx]).clusters;
+    const aCl = splitGraphemes(arAfter[arIdx]).clusters;
+    check("arabic prefix preserved", aCl.slice(0, 3).join("") === bCl.slice(0, 3).join(""));
+    check("arabic suffix differs", aCl.slice(3).join("") !== bCl.slice(3).join(""));
+  }
   // Emoji family (single grapheme) can never be the eligible word alone.
   const fam = shuffleOneWord("👨‍👩‍👧 test", STUB_ZERO);
   if (fam.changed) {
@@ -193,9 +229,32 @@ export async function suiteShuffleOneWord(): Promise<void> {
   } else {
     check("family-only no-op safe", fam.query === "👨‍👩‍👧 test");
   }
-  // Ineligible queries explain instead of searching.
-  for (const q of ["a b c", "aaa bbb", "x", "   "]) {
+  // Accented/diacritic word: combining marks travel with their grapheme.
+  const acc = shuffleOneWord("résumé expliqué", STUB_ZERO);
+  if (acc.changed) {
+    const accAfter = tokensOf(acc.query);
+    const accIdx = accAfter.findIndex((w, i) => w !== tokensOf("résumé expliqué")[i]);
+    const bCl = splitGraphemes(tokensOf("résumé expliqué")[accIdx]).clusters;
+    const aCl = splitGraphemes(accAfter[accIdx]).clusters;
+    check("accented prefix preserved", aCl.slice(0, 3).join("") === bCl.slice(0, 3).join(""));
+  } else {
+    check("accented no-op safe", acc.query === "résumé expliqué");
+  }
+  // Ineligible queries explain instead of searching: short words, uniform
+  // suffixes, single chars, and blank input.
+  for (const q of ["a b c", "aaa bbb", "x", "   ", "abc def", "abcaaaa"]) {
     const res = shuffleOneWord(q, STUB_ZERO);
     check(`ineligible no-op: ${JSON.stringify(q)}`, !res.changed && res.query === q && Boolean(res.message));
   }
+  // Repeated clicks perform fresh randomization (stub sequences differ or both exhaust).
+  let freshDiffers = false;
+  for (let i = 0; i < 10; i += 1) {
+    const a = shuffleOneWord("programming tutorial advanced", () => Math.random());
+    const b = shuffleOneWord("programming tutorial advanced", () => Math.random());
+    if (a.query !== b.query) {
+      freshDiffers = true;
+      break;
+    }
+  }
+  check("fresh randomization across clicks", freshDiffers);
 }

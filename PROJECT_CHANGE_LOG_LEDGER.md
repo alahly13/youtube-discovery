@@ -1438,3 +1438,95 @@ No.
 
 
 
+
+---
+
+## 2026-10-15 (Search Query Utilities Fix + Search Guide 2026)
+
+### Date/time
+
+2026-10-15 ~17:30–22:30 UTC
+
+### Agent/model if known
+
+Muse Spark 1.3 (OpenCode agent)
+
+### Task summary
+
+Fixed the three search-input utility buttons so they transform the visible query ONLY and never auto-execute a search; brought all three transforms into full spec compliance (quoted-phrase units, inner-whitespace collapse, first-three-graphemes prefix rule); added a dedicated static Search Guide 2026 page (`/search-guide`) with nav entry, documenting utilities, operators, structured filters, templates, and official links with honest Documented/Experimental/Structured labels.
+
+### Reason/root cause
+
+1. `runQueryTransform` in `search-workspace.tsx` called `executeSearch(result.query)` after every transform — clicking Shuffle/Trim/Shuffle-One-Word silently fired a YouTube API request, consumed quota, and wrote history, violating the never-auto-search rule.
+2. `trimSpaces` only ran native `.trim()` and never collapsed repeated inner whitespace.
+3. `shuffleOneWord` shuffled ALL grapheme clusters of the picked word with whole-word eligibility — the mandatory keep-first-three rule was entirely unimplemented, and quoted phrases were split by `shuffleWords`.
+
+### Files changed
+
+- `src/lib/search/query-transforms.ts` — spec-compliant rewrites (see technical details).
+- `src/components/search/search-workspace.tsx` — `runQueryTransform` now writes input state only + refocuses; removed `executeSearch` call and busy-ref; updated button titles/comments; `type="button"` already in place via `TransformButton`.
+- `scripts/search-tests/suites.ts` — suites updated to the corrected contract (quoted phrases, collapse, prefix rule, new edge cases).
+- `src/app/search-guide/page.tsx` (new) — static reference page, utilities + sections A–I, support badges, TOC anchors, RTL Arabic + LTR copyable examples.
+- `src/components/search-guide/copy-button.tsx` (new) — client-isolated clipboard button.
+- `src/components/layout/navigation.tsx` — added `Search Guide 2026` (`/search-guide`, BookOpen icon) after Search.
+- `youtube_discovery_ledger.md` — route map, file map, verification records updated.
+
+### Technical details
+
+- Shuffle Words: units are double-quoted phrases or whitespace-separated tokens (standalone quoted phrases stay whole; unbalanced quotes degrade to tokens); units are spliced back into original slots so every whitespace separator stays byte-identical; Fisher–Yates with up to 25 fresh attempts; identical-words/single-word/blank inputs return accessible no-op messages.
+- Trim Spaces: collapse every whitespace run (spaces, tabs, newlines, NBSP) to one ordinary space plus outer trim; spelling, operators (`-`, `|`, quotes, `intitle:`), and order untouched; empty input returns safely.
+- Shuffle One Word: per-word grapheme split (`Intl.Segmenter`, code-point fallback); eligible iff more than 3 clusters AND suffix holds at least 2 distinct clusters; prefix = first 3 clusters verbatim, only suffix Fisher–Yates shuffled; candidate order also shuffled; up to 25 suffix attempts per candidate, then next candidate; no-op message when exhausted. Other words/spacing byte-identical.
+- Guide accuracy: Documented = `-word` NOT and `|` OR (plus `%7C` raw-URL note, no double-encode); Experimental = `"exact phrase"`, `+word`, `, playlist/channel/live/hd/4k/short/long` suffixes (with mapping table to real filters), `intitle:`; Structured = type, duration, definition, eventType, order, date range, captions, embeddable, region, language, safeSearch. Shorts-vs-short-duration, HD-vs-4K, and live-word-vs-live-filter distinctions stated explicitly.
+
+### Architecture impact
+
+Provider-vs-local boundary strengthened: transforms are now pure input edits with zero API/history/manifest side effects. No route, schema, quota, or history behavior changed. Guide page is a static server component reusing existing Card/Badge/tokens; no new dependencies.
+
+### Environment impact
+
+None. No new env vars; no secrets handled.
+
+### Database/migration impact
+
+None. No migrations created or applied.
+
+### YouTube API/quota impact
+
+Positive: utility clicks no longer consume search quota (each click previously fired provider requests). Guide teaches structured filters, reducing wasted queries.
+
+### AI scope/safety impact
+
+None. No AI surfaces touched.
+
+### Verification run and results
+
+- `npm run test:search` (official runner): all suites passed, 77 assertions, no network.
+- Standalone transpile check of transforms: 26 assertions pass (order, multiset, separators, quotes, collapse, operators, prefix rule, Arabic, ineligibles).
+- Scoped ESLint on the 6 changed/new files: 0 errors, 0 warnings.
+- Full `eslint .`: 8 errors + 56 warnings, all pre-existing in vendored skill dot-dirs and generated Prisma contract files; zero in changed files.
+- `tsc --noEmit --incremental false`: passed, 0 errors (prisma generate skipped: nothing imports the generated client; the Prisma 8 CLI entry throws an ESM/execa interop error in this env — pre-existing).
+- Production `next build` (env preflight + Turbopack): passed, BUILD_EXIT 0; `/search-guide` prerendered static.
+- Prerendered HTML verified: guide contains title, utilities, sections A–I, both official doc links, RTL/lang attributes; `/search` HTML contains the `/search-guide` nav link. Live `/search-guide` serves 200 (login gate applies, same as all pages).
+- Live manual click-through (button focus/no-search behavior in a real browser) was not run — no browser tooling in this env; logic is covered by unit suites + code inspection (no submit/API/history path reachable from `runQueryTransform`).
+
+### Blocked checks, if any
+
+- `npm run lint` / `npm run typecheck` npm-shim entry points broken in this env (`node_modules/.bin` lost the `eslint`/`prisma` shims — interrupted relink leftovers); worked around by invoking package binaries directly. No dependencies added/changed/upgraded.
+- Prisma CLI `generate` fails in this env (pre-existing ESM issue); not needed for this task.
+
+### Remaining risks/limitations
+
+- `intitle:`, quotes, `+word`, and comma suffixes remain provider-dependent; the guide labels them experimental but live API behavior was not re-verified (no `YOUTUBE_API_KEY` live check in scope).
+- No browser-level focus/click E2E; jsdom-style coverage absent (project has no component-test harness).
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

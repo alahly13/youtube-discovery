@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-10-15 (query utilities no-auto-search fix, Search Guide 2026)
+Last updated: 2026-11-02 (Phase 1.6 Legacy Vercel Data Recovery, Complete Manifest Download Center & Media Card Readability; Phase 1.5 Database Security Hardening + OLD Legacy Manifest Archive System, 19 Canonical Tables, Supabase Storage RLS, ASDY/OLD/ Archive Root, and Strict Owner Isolation)
 
 ## Project Identity And Mission
 
@@ -19,15 +19,18 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Community posts remain unsupported/future-ready unless an official endpoint exposes them.
 - Use `Known public playlist appearances`, never `All playlists containing this video`.
 - AI must use explicit scopes and must not invent IDs, URLs, counts, videos, playlist relationships, or private data.
+- Remote Vercel Blob objects must never be deleted or purged before verified migration to Supabase Storage.
 
 ## Current Tech Stack And Library Decisions
 
-- Next.js `16.2.6` App Router with React `19.2.4`.
-- TypeScript strict mode.
+- Next.js `16.4.2` App Router with React `19.2.4`.
+- TypeScript strict mode (`tsc --noEmit --incremental false`).
 - Tailwind CSS 4 with centralized CSS variables in `src/app/globals.css`.
 - lucide-react for iconography.
 - Zod for server route validation.
-- Prisma 7 with `prisma.config.ts`, generated client output under `src/generated/prisma`, and Supabase PostgreSQL-oriented schema.
+- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections. Domain tables and migrations intentionally unpopulated awaiting user schema.
+- Supabase Auth and Supabase Storage (`@supabase/supabase-js@2.118.0`, `@supabase/ssr@0.12.7`) with server/browser/admin client singletons (`src/lib/supabase/*`).
+- `@vercel/blob` runtime dependency completely uninstalled and removed; all storage routes delegate to `SupabaseStorageBackend` with local `DiskStorageBackend` fallback, and `blob-inventory.ts` preserves native fetch read access to remote Blob objects without deleting them.
 - `@next/env` for standalone script env loading from root `.env.local`.
 - Google GenAI SDK through server-only Gemini helpers.
 - FlexSearch (used): shared local-search service in `src/lib/search/local-search.ts` (Document index, title-weighted, with a weighted fallback matcher) powers Saved Library, playlist contents, and History — strictly local, zero YouTube quota. Zustand, TanStack Query, and Framer Motion remain installed for state/UX expansion.
@@ -36,29 +39,21 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 - Local Windows/PowerShell: run from `F:\discovery\youtube-discovery`; keep local secrets in root `.env.local`; use `vercel env pull .env.local --yes` when linked to Vercel.
 - Vercel production/preview: configure server-only variables in Vercel Project Settings; do not run database migrations during normal build.
-- Supabase PostgreSQL: `DATABASE_URL` is server-only; `db:apply` uses guarded `prisma migrate deploy` and requires explicit confirmation.
-- GitHub Actions: `.github/workflows/ci.yml` runs npm install, DB schema validation, lint, typecheck, and build on Node 24.
+- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; awaiting user's final domain schema.
+- Supabase Storage: private bucket `youtube-discovery` configured for archives, manifests, and exports.
+- GitHub Actions: `.github/workflows/ci.yml` runs npm install, lint, typecheck, and build on Node 24.
 - Codex/online environment: provider keys and DB may be missing; live provider/DB checks must be reported honestly.
 
 ## Architecture Overview
 
 The app is manifest-first. Every provider fetch returns a `YouTubeManifest` with provenance, settings snapshot, pages fetched, quota estimate, status, duplicate count, warnings/errors, and normalized items.
 
-Authoritative persistence is the PRIVATE Vercel Blob store (`@vercel/blob`
-2.8.1, `access: "private"` everywhere) under `youtube-discovery/v1/`:
-playlists, saved-history (complete records, permanent), encrypted managed
-API keys (+ per-day usage accounting, pool exhaustion state), and the single
-admin account/sessions. One logical record in → one logical record out:
-small records are single objects, large records are chunked (2 MiB pieces +
-manifest with SHA-256) with staged browser uploads, versioned CAS index
-writes, and read-back verification. No TTL expiry on user data. Browser
-storage is cache only; local `data/` is legacy import source only.
+Authoritative persistence uses Supabase Storage (private bucket `youtube-discovery`) via `src/lib/storage/supabase-storage-backend.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development. The legacy `@vercel/blob` runtime dependency has been removed, but existing remote Blob objects are preserved and accessible via native read-only fetch in `blob-inventory.ts`.
+- Structured data persistence is prepared for Prisma 7 / Supabase PostgreSQL.
+- File and archive storage routes through Supabase Storage buckets.
+- Manifests, playlists, and search histories are permanently stored without TTL data loss.
 
-Access is gated by a single-admin session system (scrypt password hash in
-Blob, opaque Blob-backed sessions, 7-day default TTL, Blob sliding-window
-login rate limiting). Every data API route enforces `requireAdmin()`
-itself; middleware redirects are UX only. `/login` and the username prefill
-endpoint are the only public surfaces.
+Access is gated by a single-admin session system with Supabase Auth (`@supabase/ssr`) prioritized alongside legacy scrypt password session fallback. Every data API route enforces `requireAdmin()` itself; middleware redirects are UX only. `/login` and the username prefill endpoint are the only public surfaces.
 
 Provider quota model: keys are grouped into Google Cloud project pools
 (`project:<id>`; unknown keys form solo pools, never merged). Rotation is
@@ -74,8 +69,12 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 
 ## Route Map And Page Responsibilities
 
-- `/login`: single-administrator sign-in with current-username prefill (only public page besides API auth helpers).
+- `/login`: single-administrator sign-in with Supabase Auth and session store fallbacks.
 - `/`: dashboard with product posture, system boundaries, quick actions, and manifest overview.
+- `/saved`: **FULL DEDICATED** Saved Items page supporting all 3 YouTube entity types (Videos, Channels, Playlists) with **Daily Grouping** by calendar date (e.g., "November 2, 2026", newer first, clear visual separators), type filters (All, Videos, Channels, Playlists), search, sort, add-to-playlist actions, and **Phase 1.6 UI Readability Upgrades** (spacious 3-column responsive grid `grid gap-5 sm:grid-cols-2 lg:grid-cols-3`, crisp 16:9 thumbnail containers, centered circular channel artwork, and prominent 2-line title typography `line-clamp-2 text-base font-bold`).
+- `/playlist-manager`: **FULL DEDICATED** Personal Playlist Manager workspace for creating, editing, renaming, deleting, and reviewing personal playlists, featuring prominent video thumbnail galleries, bold multi-line titles (`line-clamp-2 text-base font-bold`), item count badges, section badges, and direct links to `/saved/[playlistId]`.
+- `/saved-searches`: **FULL DEDICATED** Saved Searches workspace for pinned search titles, quick rerun links (`/search?q=...`), copyable titles with enhanced readability (`line-clamp-2 text-base font-bold`), and research notes.
+- `/saved/[playlistId]`: **FULL** personal-playlist workspace — enlarged media thumbnails (`h-20 w-36 sm:h-22 sm:w-40`), multi-line wrapped titles (`line-clamp-2 text-base font-bold`), in-playlist FlexSearch search, content-type/date/views filters, 12 transient sort modes plus canonical manual order, user sections/groups (create/rename/note/collapse/reorder/delete keep-or-delete), custom items/notes, HTML5 drag-and-drop with Move Up/Down alternatives, multi-select bulk move/copy/group/remove, Undo, and self-contained JSON export. Zero YouTube API calls.
 - `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control. The three query-utility buttons (Shuffle Words, Trim Spaces, Shuffle One Word) rewrite the visible input ONLY — they never submit, call the API, or record history; the user presses Search explicitly.
 - `/search-guide`: static Search Guide 2026 reference (documented vs experimental vs structured-filter labels, Arabic explanations, copyable examples, official doc links).
 - `/ai-search`: AI Search / AI Discovery workspace and safety contract.
@@ -86,14 +85,21 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/playlists`: **FULL** saved playlist library (localStorage-backed).
 - `/playlist-explorer`: playlist workflow scaffold.
 - `/playlists/[playlistId]`: **FULL** playlist explorer with order-preserving list/grid view, play-next navigation, local filters/sort/search-inside-playlist, export, and scoped AI panel.
-- `/manifests`: manifest library with interactive manifest listing, clickable navigation to detail pages.
+- `/manifests`: **FULL** Manifest Storage Explorer workspace with real-time PostgreSQL registry reconciliation, Supabase Storage browser, 6 canonical reconciliation states, individual part download stream, and generation ZIP exports.
 - `/manifests/[manifestId]`: **FULL** manifest detail workspace with local search/filter/sort, export, and scoped AI analysis.
-- `/collections`: **FULL** collection management workspace with create/delete/search and runtime manifest reference (localStorage-backed).
-- `/saved`: **FULL** Saved Library hub with three tabs — user Playlists (create/rename/delete/search/sort, thumbnail collages, open dedicated page), Saved Items (global entities with standalone-vs-in-playlist detection, type filter, add-to-playlist), and the Saved Search Titles shelf (Zustand & localStorage-backed).
-- `/saved/[playlistId]`: **FULL** personal-playlist workspace — in-playlist FlexSearch search, content-type/date/views filters, 12 transient sort modes plus canonical manual order, user sections/groups (create/rename/note/collapse/reorder/delete keep-or-delete), custom items/notes, HTML5 drag-and-drop with Move Up/Down alternatives, multi-select bulk move/copy/group/remove, Undo, and self-contained JSON export. Zero YouTube API calls.
+- `/collections`: DEPRECATED and REMOVED in Phase 1.4 in favor of dedicated Saved Items (`/saved`), Playlist Manager (`/playlist-manager`), and Saved Searches (`/saved-searches`).
 - `/history`: **FULL** chronological history workspace with shared FlexSearch `Search history...` filter across title/query/metadata without calling YouTube API, unified client + server archive listing, "View Results" action loading full search data from the archive with zero quota consumption, and Back-to-Top control.
+- `/old`: **FULL DEDICATED** OLD Legacy Manifest Archive Dashboard with overview statistics, 5 category cards, recent imported archives table, and quick import CTA.
+- `/old/saved-items`: Dedicated archive browser for legacy saved items featuring 4 explicit classification filters (`VIDEO`, `SHORTS`, `CHANNELS`, `PLAYLISTS`), upgraded spacious 3-column thumbnail grid (`grid gap-5 sm:grid-cols-2 lg:grid-cols-3`), 2-line title wrapping (`line-clamp-2 text-base font-bold`), engagement counters, and one-click Raw JSON inspection modal.
+- `/old/saved-titles`: Dedicated archive browser for legacy saved titles and query presets.
+- `/old/saved-playlists`: Dedicated archive browser for legacy playlists.
+- `/old/search-history`: Dedicated archive browser for legacy search history records.
+- `/old/other`: Dedicated archive browser for miscellaneous legacy manifests and unstructured exports.
+- `/old/import`: Dedicated drag & drop and local file upload workspace with client-side preview, category selector, SHA-256 conflict detection, and import into `ASDY/OLD/`.
+- `/download-center`: **FULL DEDICATED** Manifest Download Center (مركز التحميل) with multi-origin filtering (ALL, NEW active domain manifests, OLD historical archives), 8-category filter pills, multi-manifest batch selection, bulk export engine assembling canonical ZIPs (`ASDY/NEW/<category>/...`, `ASDY/OLD/<category>/...`, `ASDY/SHA256SUMS.txt`, `ASDY/export-manifest.json`), and individual manifest metadata inspector.
+- `/download-center/legacy-recovery`: **FULL DEDICATED** Legacy Data Recovery Center with read-only discovery matrix across Vercel Blob (cursor-paginated REST scanner), disk cache, application runtime caches, and browser storage (IndexedDB `youtube_discovery_local_v1` + localStorage), category classification across 8 canonical categories, zero-deletion safety guarantees, and offline verifiable backup ZIP generation (`YouTube-Discovery-Legacy-Backup/...`).
 - `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings, and graceful error handling.
-- `/settings`: **FULL** Settings page with environment status, Default SafeSearch & Sensitivity Policy, persistent YouTube Fetch Controls, YouTube API Key Management (multi-key rotation, safe masked strings, active key switching, custom key deletion, per-key Gmail/project metadata editing), Quota Pools & Usage dashboard (per-project buckets, local-estimate confidence, per-key stats, last-request attribution), Private Blob Storage & Migration card (connection diagnostics, idempotent legacy import), Account Security card (username/password change, logout).
+- `/settings`: **FULL** Settings page with environment status, Default SafeSearch & Sensitivity Policy, persistent YouTube Fetch Controls, YouTube API Key Management (multi-key rotation, safe masked strings, active key switching, custom key deletion, per-key Gmail/project metadata editing), Quota Pools & Usage dashboard (per-project buckets, local-estimate confidence, per-key stats, last-request attribution), Private Storage & Migration card, Account Security card (username/password change, logout).
 
 ## API Route Map And Backend Authority Boundaries
 
@@ -143,6 +149,15 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `GET /api/search-storage/[id]`: retrieves complete search record from disk without calling YouTube API.
 - `DELETE /api/search-storage/[id]`: deletes individual search record from archive.
 - `GET /api/search-storage/latest`: retrieves latest archived search record.
+- `POST /api/old/preview`: parse and preview local legacy manifest file without persistence.
+- `POST /api/old/import`: validate, upload to `ASDY/OLD/<storage_owner_uuid>/<category>/<manifest_id>/manifest.json`, insert into `archived_manifests`, reject SHA-256 duplicates.
+- `GET /api/old/list`: list archived manifests for current owner with category filter.
+- `GET /api/old/[archiveId]`: retrieve archived manifest record and parsed envelope with item classification breakdown.
+- `GET /api/old/[archiveId]/download`: download raw archived manifest JSON as attachment.
+- `GET /api/download-center/inventory`: unified manifest inventory combining live domain PostgreSQL records and historical `archived_manifests` / storage archives across all 8 canonical categories.
+- `POST /api/download-center/export`: multi-manifest ZIP packager building `ASDY/NEW/<category>/...` and `ASDY/OLD/<category>/...` layouts with `ASDY/SHA256SUMS.txt` and `ASDY/export-manifest.json`.
+- `POST /api/download-center/legacy-recovery/scan`: protected legacy data discovery scanner with read-only safety guarantees across Vercel Blob, disk cache, and browser storage.
+- `POST /api/download-center/legacy-recovery/backup`: protected offline verifiable backup package generator streaming ZIP (`YouTube-Discovery-Legacy-Backup/...`) with `backup-manifest.json` and `checksums/SHA256SUMS.txt`.
 - `POST /api/ai/youtube-search-assistant`: scoped AI search helper.
 - `POST /api/ai/youtube-manifest-assistant`: scoped manifest analyst.
 - `POST /api/ai/youtube-video-explorer`: selected-video AI explorer.
@@ -151,36 +166,45 @@ Server-only modules import `server-only` where secrets/providers are involved. P
 
 ## Database And Schema Concepts
 
-Canonical committed schema: `prisma/schema.prisma`.
+Canonical schema: Approved Phase 1.5 schema foundation. All 19 models defined in `prisma/schema.prisma` and migrations authored in `prisma/migrations/20261102000000_canonical_v1_4_foundation` and `prisma/migrations/20261102220000_phase1_5_security_and_old_archive`.
 
-Initial migration: `prisma/migrations/20260508000100_initial_youtube_discovery/migration.sql`.
+Migrations: Authored locally for verification and Prisma client generation (`prisma validate`, `prisma generate`, `npm run db:migrations:local`). STRICT RESTRICTION: Migrations are NEVER applied or pushed to the live database during development.
 
-Canonical durable tables/models:
+Canonical 19 models (Phase 1.5 Architecture: 18 Core + 1 Archive Extension):
 
-- `VideoSource`
-- `YouTubeVideo`
-- `YouTubeChannel`
-- `YouTubePlaylist`
-- `Manifest`
-- `ManifestItem`
-- `SavedVideo`
-- `Collection`
-- `AiSession`
+- `user_profiles`: Authenticated profile 1:1 with `auth.users(id)` (via `ON DELETE SET NULL`), containing `storage_owner_uuid` for permanent physical storage paths, role: 'admin' | 'user', and security lockout flags.
+- `user_preferences`: 1:1 user settings, theme, auto-save settings, and preferred timezone.
+- `storage_datasets`: Authoritative registry of manifest datasets scoped to `owner_id`, with `current_revision` and `current_generation_id` pointer guarded by `trg_dataset_current_generation_guard`.
+- `storage_generations`: Committed immutable generation snapshots with linear parent lineage enforced by `uq_storage_generations_linear`, deterministic binary aggregate SHA-256, and composite foreign key `(owner_id, dataset_id, source_batch_id)` to `save_sync_batches`.
+- `storage_manifest_parts`: Individual chunks <= 45 MiB with exact UTF-8 byte counts and SHA-256 digests.
+- `storage_temp_objects`: Managed temporary and staging files with explicit TTL expirations and status lifecycle.
+- `saved_items_index`: Lightweight relational index for Saved Items (Videos, Channels, Playlists) with daily date grouping in owner timezone. Provenance foreign keys to parts use `ON DELETE SET NULL (generation_id, manifest_part_id)` with all-or-none check constraint, guarded by atomic pre-delete trigger on parts.
+- `user_playlists`: Personal playlists metadata, display order, and thumbnail aggregates.
+- `user_playlist_groups`: Section headers/groups inside personal playlists (composite key `(playlist_id, id)`).
+- `user_playlist_entries`: Ordered memberships (composite FK to group with `ON DELETE SET NULL (group_id)`, deduplicated by `(playlist_id, platform_item_id)` for YouTube items).
+- `research_queue_items`: “Items I Will Search For” saved from search/AI result cards (provenance `ON DELETE SET NULL`, guarded by atomic pre-delete trigger on parts).
+- `saved_references`: Manually saved titles, articles, and external non-YouTube URLs (provenance `ON DELETE SET NULL`, guarded by atomic pre-delete trigger on parts).
+- `saved_search_presets`: Reusable query presets with filters, tags, and pinned state.
+- `search_history_records`: Permanent audit of executed searches with raw manifest links (`ON DELETE RESTRICT`).
+- `managed_api_keys`: AES-256-GCM encrypted YouTube API v3 keys with AAD binding per owner.
+- `quota_usage_events`: Idempotent YouTube API request accounting and attribution with request fingerprints (`request_sha256`) and `ON DELETE RESTRICT`.
+- `save_sync_batches`: Option A (Single Dataset Per Batch) sync coordinator with `expected_revision` concurrency lock and request fingerprinting.
+- `audit_logs`: Security and high-impact administrative actions (append-only/restricted, `ON DELETE RESTRICT`).
+- `archived_manifests`: Dedicated historical manifest archive registry table for legacy imported files under `ASDY/OLD/`, tracking `manifest_id`, `category`, `source_format`, `storage_path`, `byte_count`, `record_count`, `content_sha256`, authentic timestamps (`source_created_at`, `source_exported_at`, `imported_at`), and filter summaries. Completely isolated from active data.
 
-Operational tables/models:
+Security Hardening (Phase 1.5):
+- **A1 — Atomic Reference Cascade Trigger:** `trg_nullify_manifest_part_references` on `storage_manifest_parts` automatically nullifies `generation_id`, `manifest_part_id`, and `item_position` across `saved_items_index`, `research_queue_items`, and `saved_references` before part deletion, ensuring the `chk_*_manifest_provenance_all_or_none` constraint is never violated.
+- **A2 — Linear Succession & Single Root Constraints:** Two partial unique indexes (`uq_storage_generations_single_root` and `uq_storage_generations_linear_successor`) ensure exactly one committed root generation per dataset and strictly linear non-forking chains, plus `chk_storage_generations_no_self_parent`.
+- **A3 — Database Immutability Triggers:** `trg_prevent_committed_generation_mutation` and `trg_prevent_committed_manifest_part_mutation` prevent any `UPDATE` or `DELETE` on committed generations or their parts, with a secure session escape hatch `app.privileged_maintenance = 'on'`.
+- **A4 — Direct Batch-Generation Relationship:** Composite FK `(owner_id, dataset_id, source_batch_id)` referencing `save_sync_batches(owner_id, dataset_id, id)` with unique index `uq_storage_generations_source_batch` ensuring at most one generation per sync batch.
+- **A5 — Supabase Storage RLS Policies:** Complete RLS on `storage.objects` for bucket `youtube-discovery` authorizing owner partition `<storage_owner_uuid>/...` and logical archive root `ASDY/OLD/<storage_owner_uuid>/...`. Strict enforcement that `UPDATE` and `DELETE` operations are ONLY permitted on temporary paths (`/temp/%`), with permanent manifests and archives immutable.
+- **A6 — SECURITY DEFINER Function Hardening:** All security definer functions (`current_user_profile_id`, `audit_log_append_internal`, etc.) hardened with `SET search_path = ''` and schema-qualified references.
 
-- `SearchJob`
-- `FetchJob`
-- `FetchPageAttempt`
-- `FetchJobEvent`
-- `ProviderRequestLog`
-- `QuotaUsageEvent`
+Collections status: Completely removed in Phase 1.4.
 
-Owner scope is represented by `ownerId` defaults for saved/persistent user data (schema foundation). Application access itself is gated by the single-administrator session system backed by Blob (see Architecture Overview); there is no multi-user model.
+Owner scope is represented by `owner_id UUID NOT NULL REFERENCES user_profiles(id)`. Every user-owned record is strictly partitioned. Application access remains single-administrator (`role = 'admin'`) for now, while database architecture is natively multi-user-ready.
 
-Legacy tables: none in this repository.
-
-Migration status: created but not applied. `db:apply` was not run.
+Migration status: Migration `20261102000000_canonical_v1_4_foundation` authored locally with zero live application. Live database remains unmutated per strict execution instructions.
 
 ## Environment Variable Map
 
@@ -229,6 +253,17 @@ Forbidden public secrets:
 ## File And Folder Map
 
 - `AGENTS.md`: repo operating rules; future agents must read it before edits.
+- `implementation-guide.md`: authoritative engineering implementation specification (v1.3); details Phase 0–1.3, multi-user foundation, direct permanent storage uploads, storage explorer, and approval gates.
+- `docs/data-architecture/erd.md`: canonical ERD (v1.3) with 18 tables, full generational chain composite foreign keys with linear parent lineage, current generation trigger, and decoupled resource types.
+- `docs/data-architecture/data-dictionary.md`: canonical data dictionary (v1.3) with exact 18 tables, nullable auth_user_id ON DELETE SET NULL, zero-coercion rule, soft-delete key archiving, and account suspension flags.
+- `docs/data-architecture/manifest-format.md`: manifest format and physical storage explorer specification (v1.3) with direct permanent uploads to <owner-auth-uuid>/persistence/..., 40/45 MiB sizing, PostgreSQL generation authority, 6 reconciliation states, and raw downloads/ZIP exports.
+- `docs/data-architecture/sync-and-recovery.md`: sync and crash recovery architecture (v1.3) detailing Option A single-dataset batches (no batch_items), direct immutable upload saga, row-level locks, and outbox lifecycle.
+- `docs/data-architecture/implementation-plan.md`: implementation roadmap across Phases A through G (v1.3) establishing strict approval gates and decoupled execution milestones.
+- `docs/data-architecture/adr-001-multi-user-storage-explorer.md`: architectural decision record ADR-001 (v1.3) resolving all v1.3 relational, lifecycle, and storage review findings.
+- `docs/data-architecture/current-state.md`: comprehensive Phase 0 audit of repository persistence sources, environments, and legacy dependencies.
+- `docs/security/auth-storage-rls.md`: comprehensive security specification (v1.3) including full 18-table RLS matrix, hardened current_user_profile_id(), role immutability trigger, versioned key envelope with AAD, and Supabase Storage path isolation.
+- `docs/database/migration-management.md`: read-only Prisma 7 migration CLI guide, verification commands, and exit code reference.
+- `scripts/db-migrations/*`: read-only migration management CLI toolkit (`npm run db:migrations`, `npm run test:migrations`).
 - `Guide-Files/youtube-discovery_full_guide_2026_updated.md`: primary product and architecture guide.
 - `Guide-Files/ai_youtube_discovery_ai_agent_prompt_rules_2026.md`: AI and implementation prompt/safety guide.
 - `Guide-Files/git_github_arabic_commands_guide.md`: Arabic Git/GitHub command workflow guide.
@@ -308,37 +343,94 @@ Forbidden public secrets:
 - `src/types/*`: normalized YouTube and manifest contracts.
 - `src/app/api/search-storage/*`: dedicated archive API routes (index, full record by ID, latest).
 - `src/app/api/youtube/keys/*`: dedicated API key management routes (list/mask, register, select, delete).
-- `prisma/schema.prisma`: canonical DB schema.
-- `prisma/migrations/*`: append-only migration history.
+- `src/lib/old/archive-envelope.ts`: Core envelope types, 4-filter classifier (`VIDEO`, `SHORTS`, `CHANNELS`, `PLAYLISTS`), category detector, pure Node.js ZIP extractor with Zip-Slip/Zip-Bomb protection, NDJSON parser, and SHA-256 calculator.
+- `src/lib/old/archive-store.ts`: Store service managing upload to `ASDY/OLD/`, database persistence in `archived_manifests`, SHA-256 deduplication, and listing with storage fallback.
+- `src/app/api/old/*`: Backend API routes for preview, import, listing, detail, and download.
+- `src/lib/recovery/legacy-scanner.ts`: Core legacy recovery scanner enumerating Vercel Blob via paginated REST API, local disk caches, and evaluating application/compiler caches with strict zero-deletion safety guarantees.
+- `src/lib/recovery/legacy-backup-builder.ts`: Offline verifiable backup builder assembling `YouTube-Discovery-Legacy-Backup/` ZIP with source inventory, recovery report, integrity report, ASDY mirrors, and `checksums/SHA256SUMS.txt`.
+- `src/lib/recovery/client-browser-scanner.ts`: Client-side scanner capturing IndexedDB (`youtube_discovery_local_v1` across 11 stores) and application-scoped localStorage keys.
+- `src/lib/download-center/download-center-service.ts`: Unified inventory and multi-manifest export engine creating `ASDY/NEW/` and `ASDY/OLD/` layouts with `ASDY/export-manifest.json` and `ASDY/SHA256SUMS.txt`.
+- `src/components/download-center/download-center-workspace.tsx`: Unified Download Center workspace UI supporting origin filters (ALL, NEW, OLD), 8-category pills, multi-manifest selection, and bulk export.
+- `src/components/download-center/legacy-recovery-workspace.tsx`: Dedicated Legacy Data Recovery Center UI with read-only safety guarantees, source discovery matrix, browser storage scanner, and backup download CTA.
+- `src/app/download-center/page.tsx`: Page route for `/download-center`.
+- `src/app/download-center/legacy-recovery/page.tsx`: Page route for `/download-center/legacy-recovery`.
+- `src/app/api/download-center/inventory/route.ts`: Protected endpoint returning unified manifest inventory across NEW and OLD sources.
+- `src/app/api/download-center/export/route.ts`: Protected endpoint streaming assembled multi-manifest ZIP.
+- `src/app/api/download-center/legacy-recovery/scan/route.ts`: Protected endpoint executing read-only legacy storage scan.
+- `src/app/api/download-center/legacy-recovery/backup/route.ts`: Protected endpoint streaming verifiable legacy backup ZIP.
+- `scripts/recovery-tests/suites.ts` + `scripts/test-phase1-6-recovery-and-download.mjs`: 93-assertion automated test suite for Phase 1.6 covering legacy scanner, cache evaluation, backup packaging, download center inventory, export layout, and 48 zero-deletion proof checks (`npm run test:recovery`).
+- `src/components/saved/raw-json-inspector-dialog.tsx`: Shared raw JSON inspection modal with one-click copy.
+- `src/components/old/*`: Workspaces for Dashboard, Saved Items (with 4 filters and inspector), Category Browser (Saved Titles, Saved Playlists, Search History, Other), and Import Preview.
+- `src/app/old/*`: Page routes for `/old`, `/old/saved-items`, `/old/saved-titles`, `/old/saved-playlists`, `/old/search-history`, `/old/other`, `/old/import`.
+- `scripts/test-phase1-5-database-security.mjs`: Test suite verifying A1-A6 database and storage security controls.
+- `scripts/test-phase1-5-old-archive.mjs`: Test suite verifying legacy envelope parsing, 4-filter classification, ZIP extraction, and store functionality.
+- `prisma/migrations/20261102220000_phase1_5_security_and_old_archive/migration.sql`: Migration script containing all Phase 1.5 triggers, partial unique indexes, RLS policies, and `archived_manifests` table DDL.
+- `scripts/db-migrations/cli.mjs`: Prisma 7 migration management CLI entrypoint (`npm run db:migrations`).
+- `scripts/db-migrations/core.mjs`: safe read-only PostgreSQL migration inspector querying `_prisma_migrations`.
+- `scripts/db-migrations/local.mjs`: local migration directory inspector and SHA-256 checksum calculator.
+- `scripts/db-migrations/reconcile.mjs`: reconciliation engine comparing local files and recorded database history.
+- `scripts/db-migrations/renderer.mjs`: terminal dashboard formatter with unicode box art, color-coded indicators, and summary metrics.
+- `scripts/db-migrations/test-migrations-cli.mjs`: 43-assertion verification suite covering all 8 representative migration scenarios.
+- `docs/data-architecture/current-state.md`: Phase 0 repository, routes, data contracts, and persistence audit.
+- `docs/data-architecture/erd.md`: Phase 1 canonical Entity-Relationship Diagram (design proposal pending approval).
+- `docs/data-architecture/data-dictionary.md`: Phase 1 table-by-table column types, nullability, constraints, indexes.
+- `docs/data-architecture/manifest-format.md`: Phase 1 manifest dataset sizing (40/45 MiB), immutable parts, and generational chain.
+- `docs/data-architecture/sync-and-recovery.md`: Phase 1 local durability, atomic outbox, power-loss protection, and Save Center.
+- `docs/database/migration-management.md`: professional documentation for migration CLI tools, indicators, exit codes, and workflows.
+- `prisma/schema.prisma`: canonical DB schema foundation (awaiting user schema approval before model creation).
+- `prisma/migrations/*`: append-only migration history (clean/unpopulated).
 - `scripts/*`: env and DB guardrails using root `.env.local`.
 - `.env.example`: tracked safe environment template.
 - `.github/workflows/ci.yml`: validation workflow.
 
 ## Current Limitations And Known Risks
 
-- Blob authoritative storage requires `BLOB_READ_WRITE_TOKEN` (+ `BLOB_STORE_ID`) locally and in Vercel; without them protected routes return clear 503/401 errors (never silent local fallback). Store identity is verified by comparing the observed Blob URL host with `BLOB_STORE_ID`; if the host cannot confirm it, diagnostics report UNVERIFIED explicitly.
-- Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation). No official Google Cloud monitoring is connected; exact remaining quota and programmatic project-ID verification are unavailable — manual project IDs stay `declared` until correlated exhaustion evidence promotes them to `verified`.
-- Password hashing uses scrypt (Node built-in) rather than Argon2id to avoid native bindings on serverless runtimes (documented rationale in code).
-- Prisma migration exists but was not applied; the Prisma schema is currently unused by the Blob-backed runtime.
-- Shared FlexSearch search favors recall on multi-token queries (best hit ranks first); the weighted fallback guarantees case-insensitive/partial/fuzzy coverage.
-- Drag-and-drop is intentionally disabled while search/filters are active or a non-manual sort is selected, so hidden items can never be silently reordered.
-
-- Live YouTube verification requires `YOUTUBE_API_KEY`; missing key returns a controlled unavailable error.
-- Live Gemini verification requires `GEMINI_API_KEY`; missing key returns a scoped unavailable response.
-- Prisma migration exists but was not applied; the Prisma schema is currently unused (Blob is the authoritative runtime store).
-- Access is gated by the single-admin Blob session system (no multi-user model).
-- Collections remain localStorage-backed (outside the Blob scope categories).
-- Channel and Playlist explorers are the primary entry points but `/channels` and `/playlists` list pages remain scaffolds.
-- The root `DESIGN.md` requested by the prompt is absent; `Guide-Files/DESIGN.md`, `DESIGN_DARK.md`, `DESIGN_LIGHT.md`, and HTML inspiration files were used.
+- Application domain models and migrations remain intentionally unapplied pending user review and approval of the Phase 1 canonical schema proposal.
+- Live database connection to Supabase PostgreSQL is verified `CONNECTED` over TLS; `_prisma_migrations` table is not yet initialized (`REGCLASS: null`), which the migration CLI correctly flags without errors.
+- Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation).
+- Remote Vercel Blob objects remain safely in the remote store and can be imported to Supabase Storage once credentials are provided.
 
 ## Verification Commands And Expected Checks
 
-- `npm run db:validate`: validates env shape and Prisma schema.
-- `npm run lint`: ESLint validation.
-- `npm run typecheck`: Prisma generate plus strict TypeScript.
-- `npm run build`: env preflight, Prisma generate, Next build.
-- `npm run db:status`: checks migration status only when `DATABASE_URL` is present.
-- `npm run db:apply`: guarded migration deploy; requires `CONFIRM_DB_APPLY=true`.
+- `npm run db:migrations`: Full formatted Prisma 7 migration status dashboard.
+- `npm run db:migrations:local`: Inspect local migration files without database access.
+- `npm run db:migrations:check`: Validate synchronization between local and database history (strict exit code).
+- `npm run db:migrations:json`: Machine-readable JSON export of migration status.
+- `npm run test:migrations`: 43-assertion automated suite verifying all 8 mocked migration scenarios.
+- `npm run test:security`: 15-assertion automated suite verifying Phase 1.5 database triggers, single root uniqueness, linear lineage, composite batch FK, storage RLS, and security definer search_path hardening.
+- `npm run test:old`: 15-assertion automated suite verifying OLD legacy manifest archive envelope parsing, 4-filter classification, pure Node.js ZIP extraction, and archive store operations.
+- `npm run test:recovery`: 93-assertion automated suite verifying Phase 1.6 legacy storage discovery, 8-category classification, cache evaluation, verifiable backup ZIP packaging, download center multi-manifest export, and 48 zero-deletion proof checks.
+- `npm run lint`: ESLint validation (0 errors).
+- `npm run typecheck`: strict TypeScript check (`tsc --noEmit --incremental false`).
+- `npm run test:blob`: 118 assertions unit test suite for storage.
+- `npm run test:search`: 77 assertions unit test suite for search query transforms.
+- `npm run verify`: One-step end-to-end verification (`npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run build`).
+
+Latest verification results on 2026-11-02 (Phase 1.6 Legacy Vercel Recovery, Complete Download Center & Media Card Readability):
+
+- `npm run lint`: passed (0 errors, 9 non-blocking disable directive warnings).
+- `npm run typecheck`: passed (0 errors; Prisma Client v7.10.1 generated + strict tsc check).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (93/93 assertions pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:blob`: passed (118/118 assertions pass).
+- `npm run test:search`: passed (77/77 assertions pass).
+- `node scripts/test-manifest-serializer.mjs`: passed (27/27 assertions pass).
+- Production `next build`: passed (all 40 routes generated cleanly with Turbopack).
+- Full `npm run verify`: passed end-to-end (exit code 0).
+
+Latest verification results on 2026-11-02 (Phase 1.5 Database Security + OLD Legacy Archive):
+
+- `npm run lint`: passed (0 errors).
+- `npm run typecheck`: passed (0 errors across all 19 Prisma models and Next.js routes).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:blob`: passed (118/118 assertions pass).
+- `npm run test:search`: passed (77/77 assertions pass).
+- `node scripts/test-manifest-serializer.mjs`: passed (27/27 assertions pass).
+- Production `next build`: passed (all static, dynamic, and archive routes compiled).
 
 Latest verification results on 2026-10-15 (query utilities + Search Guide 2026):
 

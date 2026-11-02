@@ -597,7 +597,7 @@ export function SettingsClient({ envStatus }: { envStatus: EnvStatus }) {
           </div>
           <div className="flex items-center justify-between">
              <div>
-                <p className="text-sm font-medium">PostgreSQL Database (Prisma)</p>
+                <p className="text-sm font-medium">PostgreSQL Database</p>
                 <p className="text-xs text-muted">Required for durable persistence.</p>
              </div>
              {envStatus.databaseEnabled ? (

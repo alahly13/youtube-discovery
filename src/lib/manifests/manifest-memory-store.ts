@@ -12,8 +12,8 @@ function getStore() {
   return storeGlobal.__youtubeDiscoveryManifestStore;
 }
 
-// This runtime store keeps temporary and saved manifests available while the
-// Prisma migration is not yet applied. It is intentionally documented as
+// This runtime store keeps temporary and saved manifests available while
+// database persistence is being established. It is intentionally documented as
 // non-durable so future agents do not mistake it for database persistence.
 export function saveManifestInMemory(manifest: YouTubeManifest, saved = false) {
   const store = getStore();

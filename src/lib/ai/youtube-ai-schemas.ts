@@ -6,7 +6,7 @@ export const AiScopeSchema = z.enum([
   "current_playlist_manifest",
   "current_link_explorer_manifest",
   "saved_library",
-  "collection",
+  "personal_playlist",
   "selected_video",
 ]);
 

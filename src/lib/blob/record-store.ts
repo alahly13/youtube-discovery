@@ -187,7 +187,7 @@ export async function saveRecord(
   for (let i = 0; i < chunks.length; i += 1) {
     await backend.putBytes(chunkPathname(namespace, recordId, generationId, i), chunks[i], {
       contentType: "application/octet-stream",
-      cacheSeconds: immutableCacheSeconds(),
+      cacheSeconds: immutableCacheSeconds,
     });
   }
   // 2. Verify every chunk reads back byte-identical.

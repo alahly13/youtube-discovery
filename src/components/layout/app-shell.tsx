@@ -4,6 +4,7 @@ import { Activity, Bell, Database, Menu, PanelLeftClose, PanelLeftOpen, Search, 
 import { useSyncExternalStore, useState } from "react";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Navigation } from "@/components/layout/navigation";
+import { SaveCenter } from "@/components/layout/save-center";
 import { Badge } from "@/components/ui/badge";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="mb-6 flex items-center gap-3">
+        <div className="mb-6 flex items-center gap-3 shrink-0">
           <div className="flex shrink-0 h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary">
             <Search className="h-5 w-5" />
           </div>
@@ -38,7 +39,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="font-mono text-xs text-muted whitespace-nowrap">Research Terminal</p>
           </div>
         </div>
-        <Navigation />
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          <Navigation />
+        </div>
       </aside>
 
       {/* Mobile Drawer Navigation */}
@@ -114,6 +117,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <SaveCenter />
               <Badge tone="primary" className="hidden sm:inline-flex">
                 <Activity className="h-3.5 w-3.5" />
                 <span className="hidden xl:inline">Quota-aware</span>

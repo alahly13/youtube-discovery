@@ -11,7 +11,7 @@ export async function GET(request: Request) {
     manifests: listMemoryManifests(),
     persistence: {
       durableDatabaseEnabled: process.env.ENABLE_YOUTUBE_MANIFEST_PERSISTENCE === "true",
-      note: "Runtime memory manifests are non-durable until Prisma migrations are applied and persistence repositories are enabled.",
+      note: "Runtime memory manifests are non-durable until database migrations are applied and persistence repositories are enabled.",
     },
   });
 }

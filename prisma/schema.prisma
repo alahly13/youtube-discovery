@@ -1,364 +1,507 @@
+// This is your Prisma schema file.
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
 }
 
-enum Platform {
-  YOUTUBE
+// ═══════════════════════════════════════════════════════════════════════════
+// Canonical 18 Database Models — Phase 1.4 Approved Foundation
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum UserRole {
+  admin
+  user
 }
 
-enum YouTubeItemType {
-  VIDEO
-  SHORTS_LIKE
-  CHANNEL
-  PLAYLIST
-  LIVE
-  UPCOMING
-  COMPLETED_LIVE
-  POST_UNSUPPORTED
-}
-
-enum VideoSourceType {
-  SEARCH
-  CHANNEL
-  PLAYLIST
-  LINK
-  COLLECTION
-  RELATED
-}
-
-enum ManifestType {
-  YOUTUBE_SEARCH
-  YOUTUBE_CHANNEL_UPLOADS
-  YOUTUBE_PLAYLIST
-  YOUTUBE_RELATED_VIDEOS
-  YOUTUBE_SAVED_COLLECTION
-  YOUTUBE_AI_RESULT_SET
-  YOUTUBE_LINK_EXPLORER
-}
-
-enum ManifestStatus {
-  DRAFT
-  RUNNING
-  COMPLETE
-  PARTIAL
+enum GenerationState {
+  PREPARING
+  UPLOADING
+  VERIFYING
+  COMMITTED
   FAILED
-  STOPPED
-  MAX_ITEMS_REACHED
-  QUOTA_LIMITED
-  PROVIDER_LIMITED
+  ABANDONED
+}
+
+enum TempObjectStatus {
+  ACTIVE
   EXPIRED
-}
-
-enum FetchJobStatus {
-  QUEUED
-  RUNNING
-  COMPLETE
-  PARTIAL
+  DELETING
+  DELETED
   FAILED
-  STOPPED
-  QUOTA_LIMITED
 }
 
-enum AiScopeType {
-  SEARCH_MANIFEST
-  CHANNEL_UPLOADS_MANIFEST
-  PLAYLIST_MANIFEST
-  LINK_EXPLORER_MANIFEST
-  SAVED_LIBRARY
-  COLLECTION
-  SELECTED_VIDEO
+enum SyncBatchState {
+  PENDING
+  PREPARING
+  UPLOADING
+  VERIFYING
+  COMMITTED
+  CONFLICT
+  FAILED
 }
 
-model VideoSource {
-  id               String          @id @default(cuid())
-  platform         Platform        @default(YOUTUBE)
-  sourceType       VideoSourceType
-  externalSourceId String
-  title            String?
-  canonicalUrl     String?
-  rawJson          Json?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-  manifests        Manifest[]
-  fetchJobs        FetchJob[]
-
-  @@unique([platform, sourceType, externalSourceId])
-  @@index([sourceType, updatedAt])
+enum QueueItemStatus {
+  PENDING
+  REVIEWED
+  DISMISSED
 }
 
-model YouTubeVideo {
-  id                   String         @id @default(cuid())
-  platform             Platform       @default(YOUTUBE)
-  platformVideoId      String
-  canonicalUrl         String         @unique
-  title                String
-  description          String?
-  thumbnailUrl         String?
-  channelId            String?
-  channelTitle         String?
-  publishedAt          DateTime?
-  durationSeconds      Int?
-  viewsCount           BigInt?
-  likesCount           BigInt?
-  commentsCount        BigInt?
-  language             String?
-  region               String?
-  categoryId           String?
-  tags                 String[]       @default([])
-  isEmbeddable         Boolean?
-  liveBroadcastContent String?
-  isShortsLike         Boolean        @default(false)
-  rawJson              Json?
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
-  manifestItems        ManifestItem[]
-  savedVideos          SavedVideo[]
-
-  @@unique([platform, platformVideoId])
-  @@index([channelId, publishedAt])
-  @@index([isShortsLike])
+enum SavedEntityType {
+  VIDEO
+  CHANNEL
+  PLAYLIST
 }
 
-model YouTubeChannel {
-  id                    String         @id @default(cuid())
-  platform              Platform       @default(YOUTUBE)
-  platformChannelId     String
-  handle                String?
-  title                 String
-  description           String?
-  thumbnailUrl          String?
-  uploadsPlaylistId     String?
-  publishedAt           DateTime?
-  subscriberCount       BigInt?
-  videoCount            BigInt?
-  viewCount             BigInt?
-  rawJson               Json?
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
-  manifestItems         ManifestItem[]
-
-  @@unique([platform, platformChannelId])
-  @@index([handle])
+enum PlaylistEntryEntityType {
+  VIDEO
+  CHANNEL
+  PLAYLIST
+  CUSTOM
 }
 
-model YouTubePlaylist {
-  id                 String         @id @default(cuid())
-  platform           Platform       @default(YOUTUBE)
-  platformPlaylistId String
-  title              String
-  description        String?
-  thumbnailUrl       String?
-  channelId          String?
-  channelTitle       String?
-  publishedAt        DateTime?
-  itemCount          Int?
-  rawJson            Json?
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
-  manifestItems      ManifestItem[]
+// ───────────────────────────────────────────────────────────────────────────
+// 1. Identity & Profiles
+// ───────────────────────────────────────────────────────────────────────────
 
-  @@unique([platform, platformPlaylistId])
-  @@index([channelId])
+model UserProfile {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auth_user_id     String?   @unique @db.Uuid
+  storage_owner_uuid String  @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storage_namespace String   @unique @db.VarChar(64)
+  username         String    @unique @db.VarChar(64)
+  role             UserRole  @default(admin)
+  is_suspended     Boolean   @default(false)
+  is_deleted       Boolean   @default(false)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @updatedAt @db.Timestamptz(6)
+  deleted_at       DateTime? @db.Timestamptz(6)
+
+  // Relations
+  preferences          UserPreference?
+  managed_api_keys     ManagedApiKey[]
+  storage_datasets     StorageDataset[]
+  storage_generations  StorageGeneration[]
+  storage_manifest_parts StorageManifestPart[]
+  storage_temp_objects StorageTempObject[]
+  saved_items          SavedItemIndex[]
+  playlists            UserPlaylist[]
+  playlist_groups      UserPlaylistGroup[]
+  playlist_entries     UserPlaylistEntry[]
+  research_queue       ResearchQueueItem[]
+  saved_references     SavedReference[]
+  saved_search_presets SavedSearchPreset[]
+  search_history       SearchHistoryRecord[]
+  quota_usage_events   QuotaUsageEvent[]
+  save_sync_batches    SaveSyncBatch[]
+  archived_manifests   ArchivedManifest[]
+  acted_audit_logs     AuditLog[]           @relation("AuditActor")
+  subject_audit_logs   AuditLog[]           @relation("AuditSubject")
+
+  @@map("user_profiles")
 }
 
-model Manifest {
-  id                     String         @id @default(cuid())
-  ownerId                String         @default("local")
-  manifestType           ManifestType
-  platform               Platform       @default(YOUTUBE)
-  title                  String
-  query                  String?
-  sourceId               String?
-  source                 VideoSource?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  searchSettingsSnapshot Json?
-  pagesFetched           Int            @default(0)
-  nextPageToken          String?
-  quotaCostEstimate      Int            @default(0)
-  status                 ManifestStatus @default(DRAFT)
-  itemCount              Int            @default(0)
-  duplicateCount         Int            @default(0)
-  warnings               String[]       @default([])
-  errors                 String[]       @default([])
-  collectedAt            DateTime       @default(now())
-  createdAt              DateTime       @default(now())
-  updatedAt              DateTime       @updatedAt
-  items                  ManifestItem[]
-  searchJobs             SearchJob[]
-  fetchJobs              FetchJob[]
-  aiSessions             AiSession[]
+model UserPreference {
+  id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id                String      @unique @db.Uuid
+  preferred_timezone      String      @default("America/Los_Angeles") @db.VarChar(64)
+  theme                   String      @default("system") @db.VarChar(16)
+  default_page_size       Int         @default(25)
+  default_max_pages       Int         @default(3)
+  default_max_items       Int         @default(150)
+  auto_save_enabled       Boolean     @default(true)
+  auto_save_interval_hours Int        @default(12)
+  created_at              DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime    @updatedAt @db.Timestamptz(6)
 
-  @@index([ownerId, updatedAt])
-  @@index([manifestType, status])
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
 }
 
-model ManifestItem {
-  id                 String          @id @default(cuid())
-  manifestId         String
-  manifest           Manifest        @relation(fields: [manifestId], references: [id], onDelete: Cascade)
-  itemType           YouTubeItemType
-  platformItemId     String
-  position           Int?
-  playlistPosition   Int?
-  sourcePage         Int?
-  sourcePageToken    String?
-  title              String
-  canonicalUrl       String?
-  videoId            String?
-  video              YouTubeVideo?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
-  channelRecordId    String?
-  channelRecord      YouTubeChannel? @relation(fields: [channelRecordId], references: [id], onDelete: SetNull)
-  playlistRecordId   String?
-  playlistRecord     YouTubePlaylist? @relation(fields: [playlistRecordId], references: [id], onDelete: SetNull)
-  normalizedJson     Json
-  rawJson            Json?
-  collectedAt        DateTime        @default(now())
+model ManagedApiKey {
+  id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id                String      @db.Uuid
+  key_nickname            String      @db.VarChar(64)
+  encrypted_key_bundle    Json
+  key_fingerprint         String      @db.VarChar(64)
+  google_cloud_project_id String?     @db.VarChar(64)
+  associated_account_email String?    @db.VarChar(255)
+  is_active               Boolean     @default(true)
+  daily_quota_limit       Int         @default(10000)
+  created_at              DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime    @updatedAt @db.Timestamptz(6)
+  revoked_at              DateTime?   @db.Timestamptz(6)
 
-  @@unique([manifestId, itemType, platformItemId])
-  @@index([manifestId, position])
-  @@index([platformItemId])
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  quota_events QuotaUsageEvent[]
+
+  @@unique([owner_id, id])
+  @@unique([owner_id, key_fingerprint])
+  @@index([owner_id, is_active])
+  @@map("managed_api_keys")
 }
 
-model SavedVideo {
-  id        String       @id @default(cuid())
-  ownerId   String       @default("local")
-  videoId   String
-  video     YouTubeVideo @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  notes     String?
-  tags      String[]     @default([])
-  createdAt DateTime     @default(now())
+// ───────────────────────────────────────────────────────────────────────────
+// 2. Storage Registry & Generational Lifecycle
+// ───────────────────────────────────────────────────────────────────────────
 
-  @@unique([ownerId, videoId])
-  @@index([ownerId, createdAt])
+model StorageDataset {
+  id                    String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id              String      @db.Uuid
+  dataset_type          String      @db.VarChar(32)
+  entity_id             String?     @db.VarChar(128)
+  display_name          String      @db.VarChar(255)
+  current_revision      BigInt      @default(0)
+  current_generation_id String?     @db.Uuid
+  created_at            DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime    @updatedAt @db.Timestamptz(6)
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  generations StorageGeneration[]
+  save_sync_batches SaveSyncBatch[]
+
+  @@unique([owner_id, id])
+  @@index([owner_id, dataset_type])
+  @@map("storage_datasets")
 }
 
-model Collection {
-  id          String   @id @default(cuid())
-  ownerId     String   @default("local")
-  title       String
-  description String?
-  itemCount   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model StorageGeneration {
+  id                   String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id             String          @db.Uuid
+  dataset_id           String          @db.Uuid
+  parent_generation_id String?         @db.Uuid
+  source_batch_id      String?         @db.Uuid
+  generation_number    Int
+  state                GenerationState @default(PREPARING)
+  total_parts          Int             @default(0)
+  total_records        Int             @default(0)
+  total_bytes          BigInt          @default(0)
+  aggregate_sha256     String?         @db.Char(64)
+  created_at           DateTime        @default(now()) @db.Timestamptz(6)
+  committed_at         DateTime?       @db.Timestamptz(6)
 
-  @@index([ownerId, updatedAt])
+  owner   UserProfile    @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  dataset StorageDataset @relation(fields: [owner_id, dataset_id], references: [owner_id, id], onDelete: Cascade)
+  parent  StorageGeneration? @relation("GenerationLineage", fields: [owner_id, dataset_id, parent_generation_id], references: [owner_id, dataset_id, id], onDelete: Restrict)
+  children StorageGeneration[] @relation("GenerationLineage")
+  source_batch SaveSyncBatch? @relation(fields: [owner_id, dataset_id, source_batch_id], references: [owner_id, dataset_id, id], onDelete: Restrict)
+  parts   StorageManifestPart[]
+
+  @@unique([owner_id, dataset_id, id])
+  @@unique([owner_id, dataset_id, generation_number])
+  @@index([owner_id, dataset_id, state])
+  @@map("storage_generations")
 }
 
-model SearchJob {
-  id          String         @id @default(cuid())
-  ownerId     String         @default("local")
-  manifestId  String?
-  manifest    Manifest?      @relation(fields: [manifestId], references: [id], onDelete: SetNull)
-  status      FetchJobStatus @default(QUEUED)
-  settings    Json
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+model StorageManifestPart {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id      String      @db.Uuid
+  dataset_id    String      @db.Uuid
+  generation_id String      @db.Uuid
+  part_number   Int
+  storage_path  String      @db.VarChar(512)
+  byte_count    BigInt
+  record_count  Int
+  sha256        String      @db.Char(64)
+  created_at    DateTime    @default(now()) @db.Timestamptz(6)
+
+  owner      UserProfile       @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  generation StorageGeneration @relation(fields: [owner_id, dataset_id, generation_id], references: [owner_id, dataset_id, id], onDelete: Cascade)
+
+  @@unique([owner_id, dataset_id, generation_id, id])
+  @@unique([generation_id, part_number])
+  @@index([owner_id, storage_path])
+  @@map("storage_manifest_parts")
 }
 
-model FetchJob {
-  id          String             @id @default(cuid())
-  ownerId     String             @default("local")
-  sourceId    String?
-  source      VideoSource?       @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  manifestId  String?
-  manifest    Manifest?          @relation(fields: [manifestId], references: [id], onDelete: SetNull)
-  status      FetchJobStatus     @default(QUEUED)
-  sourceKind  VideoSourceType
-  cursor      String?
-  maxItems    Int?
-  attempts    FetchPageAttempt[]
-  events      FetchJobEvent[]
-  startedAt   DateTime?
-  finishedAt  DateTime?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+model StorageTempObject {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id     String           @db.Uuid
+  storage_path String           @db.VarChar(512)
+  byte_count   BigInt
+  sha256       String           @db.Char(64)
+  purpose      String           @db.VarChar(64)
+  status       TempObjectStatus @default(ACTIVE)
+  expires_at   DateTime         @db.Timestamptz(6)
+  created_at   DateTime         @default(now()) @db.Timestamptz(6)
+  deleted_at   DateTime?        @db.Timestamptz(6)
 
-  @@index([ownerId, status, updatedAt])
-  @@index([sourceId, updatedAt])
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@index([owner_id, status, expires_at])
+  @@map("storage_temp_objects")
 }
 
-model FetchPageAttempt {
-  id              String   @id @default(cuid())
-  fetchJobId      String
-  fetchJob        FetchJob @relation(fields: [fetchJobId], references: [id], onDelete: Cascade)
-  pageToken       String?
-  pageNumber      Int
-  providerMethod  String
-  quotaCost       Int      @default(0)
-  status          String
-  itemCount       Int      @default(0)
-  errorCode       String?
-  errorMessage    String?
-  startedAt       DateTime @default(now())
-  finishedAt      DateTime?
+// ───────────────────────────────────────────────────────────────────────────
+// 3. User Research Libraries & Index Pointers
+// ───────────────────────────────────────────────────────────────────────────
 
-  @@index([fetchJobId, pageNumber])
+model SavedItemIndex {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id          String          @db.Uuid
+  entity_type       SavedEntityType
+  platform_item_id  String          @db.VarChar(64)
+  title             String          @db.VarChar(512)
+  channel_title     String?         @db.VarChar(255)
+  thumbnail_url     String?         @db.VarChar(512)
+  is_shorts_like    Boolean         @default(false)
+  is_age_restricted Boolean         @default(false)
+  published_at      DateTime?       @db.Timestamptz(6)
+  views_count       BigInt?
+  likes_count       BigInt?
+  comments_count    BigInt?
+  duration_seconds  Int?
+  saved_at          DateTime        @default(now()) @db.Timestamptz(6)
+  saved_date        String          @db.VarChar(10)
+  dataset_id        String?         @db.Uuid
+  generation_id     String?         @db.Uuid
+  manifest_part_id  String?         @db.Uuid
+  item_position     Int?
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@unique([owner_id, entity_type, platform_item_id])
+  @@index([owner_id, saved_date])
+  @@index([owner_id, entity_type])
+  @@index([owner_id, published_at])
+  @@map("saved_items_index")
 }
 
-model FetchJobEvent {
-  id         String   @id @default(cuid())
-  fetchJobId String
-  fetchJob   FetchJob @relation(fields: [fetchJobId], references: [id], onDelete: Cascade)
-  level      String
-  message    String
-  meta       Json?
-  createdAt  DateTime @default(now())
+model UserPlaylist {
+  id                String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id          String      @db.Uuid
+  title             String      @db.VarChar(255)
+  description       String?
+  display_order     Int         @default(0)
+  total_items_count Int         @default(0)
+  thumbnail_urls    Json        @default("[]")
+  created_at        DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime    @updatedAt @db.Timestamptz(6)
 
-  @@index([fetchJobId, createdAt])
+  owner   UserProfile         @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  groups  UserPlaylistGroup[]
+  entries UserPlaylistEntry[]
+
+  @@unique([owner_id, id])
+  @@index([owner_id, display_order])
+  @@map("user_playlists")
 }
 
-model ProviderRequestLog {
-  id             String   @id @default(cuid())
-  ownerId        String   @default("local")
-  platform       Platform @default(YOUTUBE)
-  operation      String
-  quotaCost      Int      @default(0)
-  status         String
-  requestSummary Json?
-  responseSummary Json?
-  errorCode      String?
-  createdAt      DateTime @default(now())
+model UserPlaylistGroup {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id     String      @db.Uuid
+  playlist_id  String      @db.Uuid
+  title        String      @db.VarChar(255)
+  notes        String?
+  position     Int         @default(0)
+  is_collapsed Boolean     @default(false)
+  created_at   DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime    @updatedAt @db.Timestamptz(6)
 
-  @@index([ownerId, createdAt])
-  @@index([platform, operation, createdAt])
+  owner    UserProfile       @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  playlist UserPlaylist      @relation(fields: [owner_id, playlist_id], references: [owner_id, id], onDelete: Cascade)
+  entries  UserPlaylistEntry[]
+
+  @@unique([playlist_id, id])
+  @@index([owner_id, playlist_id, position])
+  @@map("user_playlist_groups")
 }
+
+model UserPlaylistEntry {
+  id               String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id         String                  @db.Uuid
+  playlist_id      String                  @db.Uuid
+  group_id         String?                 @db.Uuid
+  entity_type      PlaylistEntryEntityType
+  platform_item_id String?                 @db.VarChar(64)
+  custom_title     String?                 @db.VarChar(512)
+  custom_url       String?                 @db.VarChar(1024)
+  notes            String?
+  position         Int                     @default(0)
+  added_at         DateTime                @default(now()) @db.Timestamptz(6)
+
+  owner    UserProfile        @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  playlist UserPlaylist       @relation(fields: [owner_id, playlist_id], references: [owner_id, id], onDelete: Cascade)
+  group    UserPlaylistGroup? @relation(fields: [playlist_id, group_id], references: [playlist_id, id], onDelete: SetNull)
+
+  @@index([owner_id, playlist_id, position])
+  @@index([owner_id, playlist_id, group_id])
+  @@map("user_playlist_entries")
+}
+
+model ResearchQueueItem {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id         String          @db.Uuid
+  query_text       String          @db.VarChar(512)
+  source_origin    String          @db.VarChar(64)
+  source_entity_id String?         @db.VarChar(64)
+  status           QueueItemStatus @default(PENDING)
+  priority         Int             @default(0)
+  dataset_id       String?         @db.Uuid
+  generation_id    String?         @db.Uuid
+  manifest_part_id String?         @db.Uuid
+  item_position    Int?
+  queued_at        DateTime        @default(now()) @db.Timestamptz(6)
+  reviewed_at      DateTime?       @db.Timestamptz(6)
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@index([owner_id, status, queued_at])
+  @@index([owner_id, priority])
+  @@map("research_queue_items")
+}
+
+model SavedReference {
+  id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id         String      @db.Uuid
+  title            String      @db.VarChar(512)
+  url              String      @db.VarChar(1024)
+  notes            String?
+  dataset_id       String?     @db.Uuid
+  generation_id    String?     @db.Uuid
+  manifest_part_id String?     @db.Uuid
+  item_position    Int?
+  created_at       DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime    @updatedAt @db.Timestamptz(6)
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@index([owner_id, created_at])
+  @@map("saved_references")
+}
+
+model SavedSearchPreset {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id        String      @db.Uuid
+  title           String      @db.VarChar(255)
+  query_text      String      @db.VarChar(512)
+  search_settings Json
+  filter_snapshot Json?
+  is_pinned       Boolean     @default(false)
+  tags            String[]    @default([])
+  created_at      DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime    @updatedAt @db.Timestamptz(6)
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@index([owner_id, is_pinned, created_at])
+  @@map("saved_search_presets")
+}
+
+model SearchHistoryRecord {
+  id                   String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id             String      @db.Uuid
+  query_text           String      @db.VarChar(512)
+  search_settings      Json
+  result_count         Int         @default(0)
+  quota_units_consumed Int         @default(100)
+  manifest_id          String      @db.VarChar(64)
+  generation_id        String?     @db.Uuid
+  executed_at          DateTime    @default(now()) @db.Timestamptz(6)
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@index([owner_id, executed_at])
+  @@map("search_history_records")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 4. Quota Accounting & Audit Log
+// ───────────────────────────────────────────────────────────────────────────
 
 model QuotaUsageEvent {
-  id          String   @id @default(cuid())
-  ownerId     String   @default("local")
-  platform    Platform @default(YOUTUBE)
-  operation   String
-  units       Int
-  manifestId  String?
-  sourceId    String?
-  createdAt   DateTime @default(now())
+  id                      String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id                String      @db.Uuid
+  managed_api_key_id      String?     @db.Uuid
+  google_cloud_project_id String      @db.VarChar(64)
+  endpoint_name           String      @db.VarChar(64)
+  operation_category      String      @db.VarChar(32)
+  quota_units             Int
+  http_status             Int
+  request_sha256          String      @db.Char(64)
+  occurred_at             DateTime    @default(now()) @db.Timestamptz(6)
 
-  @@index([ownerId, createdAt])
-  @@index([platform, operation, createdAt])
+  owner UserProfile    @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  key   ManagedApiKey? @relation(fields: [owner_id, managed_api_key_id], references: [owner_id, id], onDelete: SetNull)
+
+  @@index([owner_id, google_cloud_project_id, occurred_at])
+  @@index([owner_id, managed_api_key_id, occurred_at])
+  @@map("quota_usage_events")
 }
 
-model AiSession {
-  id              String      @id @default(cuid())
-  ownerId         String      @default("local")
-  scopeType       AiScopeType
-  manifestId      String?
-  manifest        Manifest?   @relation(fields: [manifestId], references: [id], onDelete: SetNull)
-  selectedVideoId String?
-  model           String
-  prompt          String
-  responseJson    Json?
-  evidenceRefs    Json?
-  itemCountUsed   Int         @default(0)
-  charCountUsed   Int         @default(0)
-  safetyStatus    String      @default("scoped")
-  createdAt       DateTime    @default(now())
+model SaveSyncBatch {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id           String         @db.Uuid
+  dataset_id         String         @db.Uuid
+  idempotency_key    String         @db.VarChar(128)
+  request_sha256     String         @db.Char(64)
+  expected_revision  BigInt
+  committed_revision BigInt?
+  state              SyncBatchState @default(PENDING)
+  error_message      String?
+  created_at         DateTime       @default(now()) @db.Timestamptz(6)
+  completed_at       DateTime?      @db.Timestamptz(6)
 
-  @@index([ownerId, createdAt])
-  @@index([scopeType, createdAt])
+  owner   UserProfile    @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  dataset StorageDataset @relation(fields: [owner_id, dataset_id], references: [owner_id, id], onDelete: Restrict)
+  generations StorageGeneration[]
+
+  @@unique([owner_id, dataset_id, id])
+  @@unique([owner_id, dataset_id, idempotency_key])
+  @@index([owner_id, dataset_id, state])
+  @@map("save_sync_batches")
+}
+
+model AuditLog {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actor_profile_id String?      @db.Uuid
+  subject_owner_id String?      @db.Uuid
+  action           String       @db.VarChar(64)
+  entity_type      String       @db.VarChar(64)
+  entity_id        String?      @db.VarChar(128)
+  details          Json?
+  ip_address       String?      @db.VarChar(45)
+  user_agent       String?      @db.VarChar(512)
+  created_at       DateTime     @default(now()) @db.Timestamptz(6)
+
+  actor   UserProfile? @relation("AuditActor", fields: [actor_profile_id], references: [id], onDelete: SetNull)
+  subject UserProfile? @relation("AuditSubject", fields: [subject_owner_id], references: [id], onDelete: SetNull)
+
+  @@index([actor_profile_id, created_at])
+  @@index([subject_owner_id, created_at])
+  @@index([action, created_at])
+  @@map("audit_logs")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 5. Historical Archive Extension — Phase 1.5 OLD Manifest System
+// ───────────────────────────────────────────────────────────────────────────
+
+model ArchivedManifest {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id            String    @db.Uuid
+  manifest_id         String    @db.VarChar(128)
+  category            String    @db.VarChar(64)
+  source_format       String    @db.VarChar(32)
+  storage_path        String    @db.VarChar(512)
+  byte_count          BigInt
+  record_count        Int
+  content_sha256      String    @db.Char(64)
+  source_created_at   DateTime? @db.Timestamptz(6)
+  source_exported_at  DateTime? @db.Timestamptz(6)
+  imported_at         DateTime  @default(now()) @db.Timestamptz(6)
+  provenance_metadata Json?
+  filter_summary      Json?
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@unique([owner_id, content_sha256])
+  @@unique([owner_id, manifest_id])
+  @@index([owner_id, category, imported_at])
+  @@map("archived_manifests")
 }

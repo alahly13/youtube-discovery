@@ -49,6 +49,8 @@ export interface NormalizedYouTubeDiscoveryItem {
   rawJson: unknown;
   manifestId?: string;
   collectedAt?: string;
+  /** Exact ISO timestamp of when the user saved this item to their library */
+  savedAt?: string;
   playlistPosition?: number | null;
   knownPublicPlaylistAppearances?: Array<{
     playlistId: string;

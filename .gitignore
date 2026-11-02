@@ -44,6 +44,27 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+node_modules/
+dist/
+.env
 
-# generated Prisma client
-/src/generated/prisma
+# Agent editor mirrors (canonical skills reside in .agents/ and skills/)
+/.aider-desk
+/.augment
+/.autohand
+/.bob
+/.claude
+/.codeartsdoer
+/.codebuddy
+/.codemaker
+/.codestudio
+/.commandcode
+/.continue
+/.cortex
+/.crush
+/.cursor
+/.devin
+/.mux
+/.qwen
+/.zcode
+/.zencoder

@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ manife
     manifest: saveManifestInMemory(manifest, true),
     persistence: {
       durableDatabaseEnabled: process.env.ENABLE_YOUTUBE_MANIFEST_PERSISTENCE === "true",
-      note: "Saved in the runtime manifest store. Apply Prisma migrations and enable persistence for durable saves.",
+      note: "Saved in the runtime manifest store. Apply database migrations and enable persistence for durable saves.",
     },
   });
 }

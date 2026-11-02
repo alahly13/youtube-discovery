@@ -10,7 +10,6 @@ export const YOUTUBE_MANIFEST_TYPES = [
   "youtube_channel_uploads",
   "youtube_playlist",
   "youtube_related_videos",
-  "youtube_saved_collection",
   "youtube_ai_result_set",
   "youtube_link_explorer",
 ] as const;

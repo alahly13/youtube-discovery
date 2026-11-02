@@ -1,26 +1,26 @@
-import { Library } from "lucide-react";
+import { BookmarkCheck } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { WorkspacePage } from "@/components/pages/workspace-page";
-import { SavedLibraryWorkspace } from "@/components/saved/saved-library-workspace";
+import { SavedItemsWorkspace } from "@/components/saved/saved-items-workspace";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Saved Library Hub — /saved
+   Dedicated Saved Items Workspace — /saved
    ──────────────────────────────────────────────────────────────────────────
-   Personal library hub: user-created playlists (each with its own permanent
-   manifest + dedicated page at /saved/[playlistId]), globally saved items
-   with standalone detection, and the saved-search titles shelf.
+   Unified repository for all saved YouTube entities (Videos, Channels, and
+   Playlists) grouped by actual calendar date with daily chronological
+   delimiters, live type filters, fast query search, and playlist actions.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function SavedPage() {
   return (
     <AppShell>
       <WorkspacePage
-        icon={Library}
-        eyebrow="Saved Library"
-        title="Saved Library and Playlists"
-        description="Create personal playlists, organize videos, Shorts, YouTube playlists, channels, and custom notes into sections, then search, sort, and export each playlist. Playlists persist until you delete them."
+        icon={BookmarkCheck}
+        eyebrow="My Library"
+        title="Saved Items"
+        description="Unified workspace for your saved YouTube videos, channels, and playlists. Every item is grouped by the actual calendar date it was saved with clear daily separators."
       >
-        <SavedLibraryWorkspace />
+        <SavedItemsWorkspace />
       </WorkspacePage>
     </AppShell>
   );

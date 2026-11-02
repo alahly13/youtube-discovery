@@ -27,6 +27,18 @@ export function formatCompactCount(value: number | null | undefined) {
   return Intl.NumberFormat("en", { notation: value >= 10000 ? "compact" : "standard" }).format(value);
 }
 
+/**
+ * Formats a byte size into human-readable KiB, MiB, GiB.
+ */
+export function formatBytes(bytes: number | bigint): string {
+  const num = typeof bytes === "bigint" ? Number(bytes) : bytes;
+  if (num === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const i = Math.floor(Math.log(num) / Math.log(k));
+  return `${(num / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
+
 export function formatDuration(seconds: number | null | undefined) {
   if (seconds === null || seconds === undefined) {
     return "Unknown";

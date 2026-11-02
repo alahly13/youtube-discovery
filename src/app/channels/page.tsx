@@ -10,7 +10,7 @@ export default function ChannelsPage() {
         icon={Tv}
         eyebrow="Saved Channels"
         title="Channel Library"
-        description="Saved channel sources will use channels.list metadata and uploads playlist manifests. Durable records are ready in the Prisma schema."
+        description="Saved channel sources will use channels.list metadata and uploads playlist manifests. Durable records will be persisted to the database."
       >
         <ChannelsClient />
       </WorkspacePage>

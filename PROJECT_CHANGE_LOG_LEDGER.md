@@ -1530,3 +1530,679 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+
+---
+
+## 2026-11-02 (Synchronize implementation-guide.md to Architecture Revision v1.1)
+
+### Date/time
+
+2026-11-02 ~18:45 UTC
+
+### Agent/model if known
+
+Antigravity AI (Google DeepMind)
+
+### Task summary
+
+Synchronized the primary authoritative specification `implementation-guide.md` with the Phase 1 Architecture Revision (v1.1) specifications, incorporating:
+1. Version bump to 1.1 (Phase 1 Architecture Revision) with baseline date 2 November 2026.
+2. Complete removal of Collections from the product architecture, documentation, and database design.
+3. Multi-user ready database foundation with single-administrator application frontend (introducing `user_profiles`, `user_preferences`, and `owner_id` scoping across all user-owned entities).
+4. Manifest Storage Explorer specification: physical Supabase Storage browsing hierarchy (`Owner -> Dataset Type -> Dataset -> Generation -> Parts -> Storage Objects`), 6 object reconciliation states (`VERIFIED`, `MISSING_FROM_STORAGE`, `UNTRACKED_ORPHAN`, `METADATA_MISMATCH`, `UNCOMMITTED_GENERATION`, `INCOMPLETE_PARTS`), 4 file operations (stream download, complete generation ZIP export, dataset export, integrity verification), and 40/45/500 MiB sizing rules.
+5. Composite foreign key constraint on personal playlist entries (`(playlist_id, group_id) REFERENCES user_playlist_groups(playlist_id, id)`) and YouTube deduplication (`UNIQUE (playlist_id, platform_item_id) WHERE entry_kind = 'youtube'`).
+6. Cloud synchronization Option A model: single dataset per batch with pessimistic row locking (`SELECT ... FOR UPDATE`), `expected_revision` optimistic concurrency check, and revision advancement.
+7. Quota event key foreign key (`quota_usage_events.managed_api_key_id UUID REFERENCES managed_api_keys(id) ON DELETE SET NULL`) and Pacific time daily reset calculation (`America/Los_Angeles`).
+8. Updated Phase 0 status (completed audit and migration CLI tools), Phase 1 status (v1.1 proposal pending owner review), and documentation index.
+
+### Reason/root cause
+
+User requested: "PLEASE UPDATE THE implementation-guide.md TO MATCH NEW UPDATES" to bring the project's root authoritative specification into complete alignment with the Phase 1 v1.1 design documents in `docs/data-architecture/`.
+
+### Files changed
+
+- `implementation-guide.md`: Updated header (v1.1), Section 0, 1, 2, 4, 6, 7, 8, 9, 10, 12, 15, 16, 17, 18.
+- `youtube_discovery_ledger.md`: Added `implementation-guide.md` and related data architecture docs to the file map.
+- `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this chronological entry.
+
+### Technical details
+
+- All user-owned entities reference `owner_id UUID REFERENCES user_profiles(id)`.
+- `user_profiles.role` cleanly decouples identity privilege (`'admin'` vs `'user'`) from data ownership.
+- `storage_manifest_parts` records exact byte counts and SHA-256 digests against physical Storage objects.
+- Collections references completely excised except for deprecation notices and legacy cleanup schedules.
+- Strict execution gate preserved: No database schema migrations or Prisma model definitions were created or applied.
+
+### Architecture impact
+
+`implementation-guide.md` is now 100% harmonized with `docs/data-architecture/erd.md`, `data-dictionary.md`, `manifest-format.md`, `sync-and-recovery.md`, and `adr-001-multi-user-storage-explorer.md`.
+
+### Environment impact
+
+None. Zero secrets printed or modified.
+
+### Database/migration impact
+
+Zero database mutations executed. No migrations created or applied. `prisma/schema.prisma` remained completely untouched.
+
+### YouTube API/quota impact when relevant
+
+None. Quota calculations properly specified to use `America/Los_Angeles` Pacific timezone.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `Select-String` search for `collection`: Verified all remaining occurrences are architectural deprecation / removal statements or staging garbage collection.
+- `Select-String` search for `admin_profiles`: 0 occurrences (100% replaced by `user_profiles` + `user_preferences`).
+- `node scripts/db-migrations/test-migrations-cli.mjs`: PASSED (43/43 assertions).
+- `git status`: Clean and expected.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+Database implementation remains strictly gated pending project owner review and explicit approval of the v1.1 architecture.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+---
+## 2026-11-02 (Phase 1.2 Architecture Integrity Correction & Strict Owner Isolation)
+
+### Date/time
+
+2026-11-02 ~17:15 UTC
+
+### Agent/model
+
+Antigravity (Claude 3.5 Sonnet / Gemini Pro architecture)
+
+### Task summary
+
+Completed Phase 1.2 Architecture Integrity Correction, Strict Owner Isolation, and Implementation Plan Alignment. Revised all Phase 1 specifications in `docs/data-architecture/` and `docs/security/` to v1.2, addressing 9 critical architectural problems identified during owner review, establishing a formal 18-table canonical database schema, detailing the 6-stage storage commit saga, defining an exhaustive RLS security matrix, and structuring the post-approval roadmap across Phases A through G.
+
+### Reason/root cause
+
+Owner review of v1.1 identified 9 critical architectural issues requiring strict resolution prior to implementation approval:
+1. Direct `owner_id` was required on all leaf/child tables to enable single-lookup $O(1)$ RLS policies without recursive joins.
+2. Composite foreign keys `(playlist_id, group_id)` and `(generation_id, manifest_part_id)` were needed to enforce cross-parent integrity.
+3. Decoupling YouTube resource types (`VIDEO`, `CHANNEL`, `PLAYLIST`) from orthogonal `is_shorts_like` boolean.
+4. Soft-delete fields (`is_archived`, `archived_at`) on `managed_api_keys` to preserve quota accounting attribution.
+5. Account suspension enforcement via `is_suspended` flag on `user_profiles`.
+6. Zero-coercion rule for foreign keys (missing parents must store standard SQL `NULL`, never synthetic zero UUIDs).
+7. Audit log actor vs. subject separation (`actor_profile_id` vs `subject_owner_id`).
+8. Normalized idempotency scopes: `(owner_id, idempotency_key)` for single-event operations, `(owner_id, dataset_id, idempotency_key)` for sync batches.
+9. PostgreSQL 15+ column-specific `ON DELETE SET NULL (group_id)` on `user_playlist_entries`.
+In addition, the project owner requested safe deprecation and removal of the legacy Collections feature scheduled for Phase B, and redesign of the `/manifests` page into a real Storage Explorer scheduled for Phase E.
+
+### Files changed
+
+- `docs/data-architecture/erd.md`: Fully updated to v1.2 with 18 tables, direct `owner_id` on all leaf tables, composite FKs, and decoupled enums.
+- `docs/data-architecture/data-dictionary.md`: Fully updated to v1.2 with complete table-by-table specifications, explicit constraints, zero-coercion rule, and soft-delete fields.
+- `docs/data-architecture/manifest-format.md`: Fully updated to v1.2 with PostgreSQL generation authority, derived root `manifest.json`, `<owner-auth-uuid>/` storage paths, 40/45/500 MiB limits, and 6 reconciliation states.
+- `docs/data-architecture/sync-and-recovery.md`: Fully updated to v1.2 with Option A single-dataset batching, 6-stage commit saga, row-level locks, and outbox lifecycle.
+- `docs/data-architecture/adr-001-multi-user-storage-explorer.md`: Fully updated to v1.2 with Decisions 2.1–2.9 addressing all 9 review findings.
+- `docs/data-architecture/implementation-plan.md`: Created new dedicated v1.2 roadmap detailing Phases A through G with prerequisites and deliverables.
+- `docs/data-architecture/current-state.md`: Updated Collections route status to mark it scheduled for safe removal in Phase B.
+- `docs/security/auth-storage-rls.md`: Created comprehensive v1.2 security specification with complete 18-table RLS matrix, helper functions, and private bucket path policies.
+- `implementation-guide.md`: Fully updated to v1.2 (header, Section 0, 1, 4, 6, 7, 8, 10 with 6-stage saga, 16 with Phases A–G, 17, 18).
+- `youtube_discovery_ledger.md`: Updated File and Folder Map and latest state summary to reflect v1.2 architecture truth.
+- `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this chronological entry.
+
+### Technical details
+
+- Direct `owner_id UUID NOT NULL REFERENCES user_profiles(id)` added to all 13 leaf/child tables, eliminating recursive joins in RLS policies.
+- Composite FK on `user_playlist_entries(playlist_id, group_id) REFERENCES user_playlist_groups(playlist_id, id) ON DELETE SET NULL (group_id)` ensures entries can only belong to groups within the same playlist.
+- Decoupled `platform_resource_type` enum (`VIDEO`, `CHANNEL`, `PLAYLIST`) from `is_shorts_like BOOLEAN NOT NULL DEFAULT false`.
+- Soft-delete enabled on `managed_api_keys` via `is_archived BOOLEAN NOT NULL DEFAULT false` and `archived_at TIMESTAMPTZ`, preserving historical quota attribution.
+- Added `is_suspended BOOLEAN NOT NULL DEFAULT false` to `user_profiles` for instant access revocation.
+- Zero-Coercion Rule enforced: optional FKs store standard SQL `NULL`, eliminating invalid synthetic zero UUIDs (`00000000-0000-0000-0000-000000000000`).
+- Audit logs distinguish `actor_profile_id` (who initiated the action) from `subject_owner_id` (the owner whose data was touched).
+- Normalized idempotency scopes: `(owner_id, idempotency_key)` on single events; `(owner_id, dataset_id, idempotency_key)` on sync batches.
+- 6-Stage Storage Commit Saga detailed: Prepare, Staged Upload, Verification, Atomic Commit with PostgreSQL row-lock on `storage_datasets`, Acknowledgement, Compensating Cleanup.
+- Comprehensive RLS policies specified for all 18 tables using `current_user_profile_id()` helper function.
+- Private bucket path validation specified for `<owner-auth-uuid>/persistence/...` and `<owner-auth-uuid>/temp/...`.
+- STRICT EXECUTION GATE PRESERVED: No application code, database migrations, or Prisma models were modified or applied.
+
+### Architecture impact
+
+The architecture is now mathematically consistent, owner-isolated, and production-ready for single-administrator operation today while fully preparing the database for future multi-user operation without redesign.
+
+### Environment impact
+
+None. Zero secrets printed or modified.
+
+### Database/migration impact
+
+Zero database mutations executed. No migrations created or applied. `prisma/schema.prisma` remained completely untouched awaiting project owner review and explicit approval.
+
+### YouTube API/quota impact when relevant
+
+None. Quota accounting preserved with soft-deleted key attribution and Pacific time resets (`America/Los_Angeles`).
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `node scripts/db-migrations/test-migrations-cli.mjs`: PASSED (43/43 assertions).
+- `git status`: Verified only documentation/Markdown files were modified/created for Phase 1.2.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+Database implementation remains strictly gated pending project owner review and explicit approval of the v1.2 architecture proposal.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+---
+## 2026-11-02 (Phase 1.3 Final Relational Integrity, Owner Isolation & Storage Lifecycle Correction)
+
+### Date/time
+
+2026-11-02 ~18:00 UTC
+
+### Agent/model
+
+Antigravity (Claude 3.5 Sonnet / Gemini Pro architecture)
+
+### Task summary
+
+Completed Phase 1.3 Final Relational Integrity, Owner Isolation & Storage Lifecycle Correction. Normalized the canonical table inventory to exactly 18 tables, completely excised `save_sync_batch_items` in alignment with Option A single-dataset batching, established full generational chain composite foreign keys with linear parent lineage, adopted direct permanent storage uploads eliminating move/rename operations, enforced current generation commitment via database trigger, defined explicit revision initialization semantics (`0` when empty, `1` on first commit), decoupled domain index records (`ON DELETE SET NULL`) to prevent bookmark deletion on generation pruning, designed non-destructive account lifecycle preserving audit/quota records (`auth_user_id ON DELETE SET NULL`), hardened `current_user_profile_id()` with a safe `search_path`, and specified the versioned API key encryption envelope with AAD binding.
+
+### Reason/root cause
+
+Owner review of v1.2 required resolving subtle relational, lifecycle, and storage failure modes prior to implementation approval:
+1. Normalization of table names (`saved_items_index`, `research_queue_items`, `saved_search_presets`, `search_history_records`) and complete excision of `save_sync_batch_items`.
+2. Full generational hierarchy composite foreign keys: ensuring a child generation cannot reference a parent from another dataset or owner, and manifest parts strictly belong to the same generation.
+3. Replacement of fragile temporary staging uploads with direct immutable permanent uploads targeting `<owner-auth-uuid>/persistence/datasets/...`, eliminating cross-folder move operations and TTL deletion hazards.
+4. Database trigger on `storage_datasets.current_generation_id` ensuring the referenced generation is in state `COMMITTED`.
+5. Revision initialization: starting at revision `0` when empty, advancing to revision `1` on first commit.
+6. Dataset uniqueness: partial unique indexes (`uq_storage_datasets_singleton`, `uq_storage_datasets_entity`) handling nullable `entity_id`.
+7. Domain index decoupling: live user bookmarks in `saved_items_index`, `research_queue_items`, and `saved_references` use `ON DELETE SET NULL` for manifest part pointers, preventing bookmark deletion when old generation snapshots are archived.
+8. Account lifecycle: `user_profiles.auth_user_id` made nullable with `ON DELETE SET NULL` and `is_deleted` soft-delete flag, ensuring `quota_usage_events` and `audit_logs` (`ON DELETE RESTRICT`) remain valid when an authentication account is deleted.
+9. RLS hardening: `current_user_profile_id()` configured with `SET search_path = public, pg_temp;` and verified instant lockout on both DB and Supabase Storage upon account suspension or soft-deletion.
+10. Versioned API key encryption envelope with Associated Authenticated Data (AAD) binding `<owner_id>:<key_record_id>`.
+
+### Files changed
+
+- `docs/data-architecture/data-dictionary.md`: Fully updated to v1.3 with exact 18 canonical tables, composite FKs, soft-deletion semantics, and constraint definitions.
+- `docs/data-architecture/erd.md`: Fully updated to v1.3 with 18 tables, linear parent generation lineage, current generation trigger, and decoupled resource types.
+- `docs/data-architecture/manifest-format.md`: Fully updated to v1.3 with direct permanent upload paths, 40/45/500 MiB sizing, PostgreSQL authority, and 6 reconciliation states.
+- `docs/data-architecture/sync-and-recovery.md`: Fully updated to v1.3 detailing Option A single-dataset batches (no batch items), 6-stage direct upload commit saga, and state machines.
+- `docs/security/auth-storage-rls.md`: Fully updated to v1.3 with hardened `current_user_profile_id()`, safe `search_path`, trigger role protection, and versioned key envelope with AAD.
+- `docs/data-architecture/adr-001-multi-user-storage-explorer.md`: Fully updated to v1.3 with Decisions 2.1–2.9 addressing all v1.3 review findings.
+- `docs/data-architecture/implementation-plan.md`: Fully updated to v1.3 establishing phased milestones across Phases A through G.
+- `docs/data-architecture/current-state.md`: Updated storage path conventions.
+- `implementation-guide.md`: Fully synchronized to v1.3 across all sections.
+- `youtube_discovery_ledger.md`: Updated to v1.3 current architecture truth.
+- `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this chronological entry.
+
+### Technical details
+
+- Exact 18 canonical tables established: `user_profiles`, `user_preferences`, `storage_datasets`, `storage_generations`, `storage_manifest_parts`, `storage_temp_objects`, `saved_items_index`, `user_playlists`, `user_playlist_groups`, `user_playlist_entries`, `research_queue_items`, `saved_references`, `saved_search_presets`, `search_history_records`, `managed_api_keys`, `quota_usage_events`, `save_sync_batches`, `audit_logs`.
+- Full composite foreign keys enforced:
+  - `storage_generations`: `(owner_id, dataset_id) REFERENCES storage_datasets(owner_id, id) ON DELETE CASCADE`.
+  - Parent Generation self-FK: `(owner_id, dataset_id, parent_generation_id) REFERENCES storage_generations(owner_id, dataset_id, id) ON DELETE RESTRICT`. Linear lineage; cross-dataset parentage is impossible.
+  - `storage_manifest_parts`: `(owner_id, dataset_id, generation_id) REFERENCES storage_generations(owner_id, dataset_id, id) ON DELETE CASCADE`.
+  - `user_playlist_entries`: `(playlist_id, group_id) REFERENCES user_playlist_groups(playlist_id, id) ON DELETE SET NULL (group_id)`.
+  - `quota_usage_events`: `(owner_id, managed_api_key_id) REFERENCES managed_api_keys(owner_id, id) ON DELETE SET NULL (managed_api_key_id)`.
+  - `save_sync_batches`: `(owner_id, dataset_id) REFERENCES storage_datasets(owner_id, id) ON DELETE RESTRICT`.
+- Direct permanent upload path: `<owner-auth-uuid>/persistence/datasets/<ds-id>/generations/<gen-id>/parts/part-<number>.json`. Invisible to reads until Stage 4 database commit.
+- Current generation trigger: `trg_verify_dataset_current_generation` ensures `current_generation_id` can only point to a generation with `state = 'COMMITTED'`.
+- Revision semantics: starts at `0` when empty, advances to `1` on first commit, increments by `1` monotonically.
+- Partial unique indexes handle nullable `entity_id`: `uq_storage_datasets_singleton` and `uq_storage_datasets_entity`.
+- Decoupled domain index records: `ON DELETE SET NULL` on manifest part provenance in `saved_items_index`, `research_queue_items`, and `saved_references`.
+- Account lifecycle: `user_profiles.auth_user_id` is nullable with `ON DELETE SET NULL` and `is_deleted` soft-delete flag, preserving audit and quota integrity.
+- Hardened `current_user_profile_id()` with `SET search_path = public, pg_temp;` and verified instant lockout on both DB and Supabase Storage upon account suspension or soft-deletion.
+- Versioned API key encryption envelope with AAD binding `<owner_id>:<key_record_id>`.
+- STRICT EXECUTION GATE PRESERVED: No application code, database migrations, or Prisma models were modified or applied.
+
+### Architecture impact
+
+The architecture achieves complete relational integrity, strict multi-user owner isolation, resilient storage lifecycle management, and zero split-brain risk, perfectly positioned for single-administrator operation today and seamless future multi-user activation.
+
+### Environment impact
+
+None. Zero secrets printed or modified.
+
+### Database/migration impact
+
+Zero database mutations executed. No migrations created or applied. `prisma/schema.prisma` remained completely untouched awaiting project owner review and explicit approval.
+
+### YouTube API/quota impact when relevant
+
+None. Quota accounting preserved with soft-deleted key attribution and Pacific time resets (`America/Los_Angeles`).
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `node scripts/db-migrations/test-migrations-cli.mjs`: PASSED (43/43 assertions).
+- `git status`: Verified only documentation/Markdown files were modified/created for Phase 1.3.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+Database implementation remains strictly gated pending project owner review and explicit approval of the v1.3 architecture proposal.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+---
+
+## 2026-11-02 (Phase 1.4 Final Architecture Correction + Local Implementation Authorization)
+
+### Date/time
+
+2026-11-02 ~21:00 UTC
+
+### Agent/model if known
+
+Antigravity AI (Advanced Agentic Coding)
+
+### Task summary
+
+Executed Phase 1.4: Final Architecture Correction and authorized local implementation roadmap setup.
+1. Updated architecture documentation across all specifications to v1.4:
+   - `docs/data-architecture/erd.md` (v1.4)
+   - `docs/data-architecture/data-dictionary.md` (v1.4)
+   - `docs/data-architecture/manifest-format.md` (v1.4)
+   - `docs/data-architecture/sync-and-recovery.md` (v1.4)
+   - `docs/security/auth-storage-rls.md` (v1.4)
+   - `docs/data-architecture/adr-001-multi-user-storage-explorer.md` (v1.4)
+   - `docs/data-architecture/implementation-plan.md` (v1.4)
+   - `implementation-guide.md` (v1.4)
+   - `youtube_discovery_ledger.md` (v1.4)
+2. Recorded explicit project owner authorization to proceed with local implementation (Phases B through F) without requesting additional approval gates.
+3. Established strict migration constraint: Author and generate migration source files only; NEVER apply or push migrations to any live database.
+
+### Reason/root cause
+
+Project owner reviewed v1.3 architecture proposal, provided final corrections (commit ordering, linear lineage index, binary aggregate SHA-256, `storage_owner_uuid` physical storage partition, request fingerprinting, column-specific set null with all-or-none check constraints), and explicitly authorized immediate local implementation across Phases B through F.
+
+### Files changed
+
+- `docs/data-architecture/data-dictionary.md`
+- `docs/data-architecture/erd.md`
+- `docs/data-architecture/manifest-format.md`
+- `docs/data-architecture/sync-and-recovery.md`
+- `docs/security/auth-storage-rls.md`
+- `docs/data-architecture/adr-001-multi-user-storage-explorer.md`
+- `docs/data-architecture/implementation-plan.md`
+- `implementation-guide.md`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Standardized exact 18 canonical tables across all models and documentation.
+- Integrated `storage_owner_uuid UUID NOT NULL DEFAULT gen_random_uuid()` into `user_profiles` to serve as immutable root for physical object storage paths (`<storage_owner_uuid>/persistence/...`).
+- Enforced linear lineage with unique partial index `uq_storage_generations_linear ON storage_generations (owner_id, dataset_id, parent_generation_id) WHERE state = 'COMMITTED'`.
+- Implemented deterministic binary aggregate SHA-256 specification across all manifest parts.
+- Fixed Stage 4 commit ordering so generation state transitions to `'COMMITTED'` before dataset pointer update, satisfying the `trg_dataset_current_generation_guard` trigger.
+- Implemented column-specific composite FKs `ON DELETE SET NULL (generation_id, manifest_part_id)` with all-or-none check constraint `((manifest_part_id IS NULL AND item_position IS NULL AND generation_id IS NULL) OR (manifest_part_id IS NOT NULL AND item_position IS NOT NULL AND generation_id IS NOT NULL))`.
+- Added request fingerprints (`request_sha256`) to `save_sync_batches` and `quota_usage_events`.
+- Storage RLS updated to verify paths against `current_user_storage_owner_uuid()`.
+
+### Architecture impact
+
+The architecture transition from design proposal to approved implementation foundation is complete. Data integrity, storage lifecycle, multi-user isolation, and crash recovery are fully specified.
+
+### Environment impact
+
+None. Zero secrets printed or modified.
+
+### Database/migration impact
+
+Authoring migration files locally. Zero live database migrations executed or pushed.
+
+### YouTube API/quota impact when relevant
+
+None.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- Cross-document static consistency check: Verified 18 tables, column names, constraints, and relationships match across ERD, Data Dictionary, RLS specification, and Implementation Plan.
+
+### Blocked checks, if any
+
+Live database deployment and execution is strictly blocked by project instructions.
+
+### Remaining risks/limitations
+
+Application remains administrator-only in Phase 1; Phase G (multi-user activation) is deferred.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+Migration files to be generated; NONE applied to live database.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-11-02 (Phase 1.5 Database Security Hardening + OLD Legacy Manifest Archive System)
+
+### Date/time
+
+2026-11-02 ~22:45 UTC
+
+### Agent/model if known
+
+Antigravity 2.0 / Gemini (DeepMind Advanced Agentic Coding)
+
+### Task summary
+
+Completed Phase 1.5 encompassing two major workstreams:
+1. **Workstream A — Database & Storage Security Hardening (A1–A6):**
+   - **A1:** Trigger on `storage_manifest_parts` (`trg_nullify_manifest_part_references`) to atomically nullify `generation_id`, `manifest_part_id`, `item_position` across referencing rows in `saved_items_index`, `research_queue_items`, and `saved_references` before deletion, completely eliminating `chk_*_manifest_provenance_all_or_none` constraint violations.
+   - **A2:** Two partial unique indexes (`uq_storage_generations_single_root` and `uq_storage_generations_linear_successor`) guaranteeing exactly one committed root generation per dataset (`parent_generation_id IS NULL`) and linear non-forking succession (`parent_generation_id IS NOT NULL`), plus self-parenting check constraint `chk_storage_generations_no_self_parent`.
+   - **A3:** Database-level immutability triggers (`trg_prevent_committed_generation_mutation` on `storage_generations` and `trg_prevent_committed_manifest_part_mutation` on `storage_manifest_parts`) blocking any `UPDATE` or `DELETE` on committed generations or their constituent parts, with an explicit `app.privileged_maintenance = 'on'` session override for authorized administrative operations.
+   - **A4:** Direct relational FK from `storage_generations` to `save_sync_batches` via composite key `(owner_id, dataset_id, source_batch_id)` referencing `save_sync_batches(owner_id, dataset_id, id)` and unique index `uq_storage_generations_source_batch` ensuring at most one generation per sync batch.
+   - **A5:** Comprehensive Supabase Storage RLS policies on `storage.objects` for bucket `youtube-discovery` authorizing owner partition and logical archive root `ASDY/OLD/<storage_owner_uuid>/...`, with `UPDATE` and `DELETE` strictly restricted to the `/temp/%` partition (permanent manifests and archives are completely immutable).
+   - **A6:** All `SECURITY DEFINER` functions hardened with `SET search_path = ''` and schema-qualified table references to prevent search path hijacking.
+2. **Workstream B — OLD Legacy Manifest Archive System:**
+   - Established logical Storage root: `ASDY/OLD/<storage_owner_uuid>/<category>/<manifest_id>/manifest.json` in private bucket `youtube-discovery`.
+   - Added dedicated registry table `archived_manifests` (bringing total database models from 18 to 19).
+   - Defined canonical archive format `ArchivedManifestEnvelope` (`schema_version: "1.0.0"`, `manifest_metadata`, `payload: { items: [] }`).
+   - Implemented authentic historical timestamp preservation (`source_created_at`, `source_exported_at`, `imported_at`) without synthetic fabrication.
+   - Built universal parser supporting JSON, ZIP (with pure Node.js Zip-Slip and Zip-Bomb guards), and NDJSON.
+   - Built 7 frontend workspaces: `/old` (Dashboard), `/old/saved-items` (with 4 classification filters), `/old/saved-titles`, `/old/saved-playlists`, `/old/search-history`, `/old/other`, and `/old/import` (drag & drop upload with preview and conflict detection).
+   - Saved Items and OLD Archive equipped with 4 explicit classification filters: `VIDEO` (standard videos), `SHORTS` (`isShortsLike: true` or `itemType === 'shorts_like'`), `CHANNELS`, and `PLAYLISTS`, plus one-click Raw JSON inspection modal.
+   - Total isolation: Archive data is completely isolated from active application tables.
+
+### Reason/root cause
+
+User instruction for Phase 1.5 required resolving 6 critical database and storage integrity items (A1–A6) and building a complete, isolated legacy archive system to ingest, preview, and inspect historical manifests from other installations and Supabase accounts into `ASDY/OLD/`.
+
+### Files changed
+
+- `prisma/schema.prisma`
+- `prisma/migrations/20261102220000_phase1_5_security_and_old_archive/migration.sql`
+- `prisma.config.ts`
+- `package.json`
+- `src/lib/old/archive-envelope.ts`
+- `src/lib/old/archive-store.ts`
+- `src/app/api/old/preview/route.ts`
+- `src/app/api/old/import/route.ts`
+- `src/app/api/old/list/route.ts`
+- `src/app/api/old/[archiveId]/route.ts`
+- `src/app/api/old/[archiveId]/download/route.ts`
+- `src/components/saved/raw-json-inspector-dialog.tsx`
+- `src/components/saved/saved-items-workspace.tsx`
+- `src/components/old/old-dashboard-workspace.tsx`
+- `src/components/old/old-saved-items-workspace.tsx`
+- `src/components/old/old-category-workspace.tsx`
+- `src/components/old/old-import-preview-workspace.tsx`
+- `src/components/layout/navigation.tsx`
+- `src/components/layout/save-center.tsx`
+- `src/app/old/page.tsx`
+- `src/app/old/saved-items/page.tsx`
+- `src/app/old/saved-titles/page.tsx`
+- `src/app/old/saved-playlists/page.tsx`
+- `src/app/old/search-history/page.tsx`
+- `src/app/old/other/page.tsx`
+- `src/app/old/import/page.tsx`
+- `scripts/test-phase1-5-database-security.mjs`
+- `scripts/test-phase1-5-old-archive.mjs`
+- `scripts/test-manifest-serializer.mjs`
+- `youtube_discovery_ledger.md`
+- `implementation-guide.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Authored migration `20261102220000_phase1_5_security_and_old_archive` with PostgreSQL DDL, triggers, partial unique indexes, storage RLS, and `archived_manifests` table definition.
+- Designed `classifyItemType` algorithm supporting canonical video vs shorts separation based on `isShortsLike` and `shorts_like` item types.
+- Pure Node.js ZIP parser verifies CRC-32 and enforces file size limits (50 MiB uncompressed entry, 250 MiB total payload, 500 maximum files) and path traversal checks.
+- Zero live migration execution: migrations were generated locally and validated via `prisma validate`, `prisma generate`, and `npm run db:migrations:local`.
+
+### Architecture impact
+
+The database schema now contains 19 models (18 core canonical models + 1 archive extension model `ArchivedManifest`). Historical imported manifests reside in an isolated storage namespace (`ASDY/OLD/`) and dedicated table, preventing any contamination of active application state while enabling full metadata search, inspection, and preview.
+
+### Environment impact
+
+None. Zero secrets printed, exposed, or modified.
+
+### Database/migration impact
+
+Migration `20261102220000_phase1_5_security_and_old_archive` authored in source control. Strict read-only migration policy maintained; ZERO migrations applied or pushed to live database.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed. All archive browsing, previews, imports, and item inspections operate entirely offline and locally on stored JSON payloads.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors).
+- `npm run typecheck`: passed (0 errors across 19 Prisma models and Next.js routes).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:blob`: passed (118/118 assertions pass).
+- `npm run test:search`: passed (77/77 assertions pass).
+- `node scripts/test-manifest-serializer.mjs`: passed (27/27 assertions pass).
+- `npm run db:migrations:local`: passed (2 local migrations recognized in read-only mode).
+- Production `next build`: passed (all static and dynamic routes compiled).
+
+### Blocked checks, if any
+
+Live database deployment and execution is strictly prohibited by project owner instructions.
+
+### Remaining risks/limitations
+
+Application operates as single-administrator; multi-user database architecture is fully prepared for future activation.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+Migration file created (`prisma/migrations/20261102220000_phase1_5_security_and_old_archive/migration.sql`); NONE applied to live database.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-11-02 (Phase 1.6 — Legacy Vercel Data Recovery, Complete Manifest Download Center & Media Card Readability)
+
+### Date/time
+
+2026-11-02 ~22:00 UTC
+
+### Agent/model if known
+
+Antigravity (Google DeepMind)
+
+### Task summary
+
+Executed Phase 1.6 delivering three interconnected product capabilities while enforcing a strict zero-deletion safety mandate across all storage systems:
+
+1. **Workstream 1 — Legacy Vercel Data Recovery & Verifiable Offline Backup:**
+   - Designed and built a non-destructive multi-source legacy recovery engine (`src/lib/recovery/legacy-scanner.ts`).
+   - Implemented paginated cursor traversal across Vercel Blob via direct REST API (`https://blob.vercel-storage.com?limit=1000`) with safe classification across all 8 canonical categories (`SAVED_ITEMS`, `SAVED_TITLES`, `SAVED_PLAYLISTS`, `SAVED_SEARCH_HISTORY`, `RESEARCH_QUEUE`, `SAVED_REFERENCES`, `SEARCH_PRESETS`, `OTHER`), ignoring administrative credentials (`admin/account.json`) and gracefully reporting missing tokens as `ACCESS UNAVAILABLE`.
+   - Scanned local disk caches (`data/playlists/`, `data/search-storage/`, `data/storage/`).
+   - Documented exact evaluation rationale for runtime and compiler caches (Next.js Data Cache, Turbopack `.next/cache`, Vercel Runtime Cache, CDN/ISR) proving why they contain no recoverable user manifest envelopes.
+   - Built client-side browser storage scanner (`src/lib/recovery/client-browser-scanner.ts`) capturing IndexedDB (`youtube_discovery_local_v1` across all 11 object stores) and application-scoped localStorage (`youtube-discovery-workspace`, `youtube-discovery-user-playlists`).
+   - Built offline verifiable backup package generator (`src/lib/recovery/legacy-backup-builder.ts`) producing a structured, verified ZIP package (`YouTube-Discovery-Legacy-Backup/...`) containing `backup-manifest.json`, `inventory/source-inventory.json`, `inventory/recovery-report.json`, `inventory/integrity-report.json`, `ASDY/OLD/`, `ASDY/NEW/`, `LEGACY_VERCEL_BLOB/Original-Files/`, `LEGACY_APPLICATION_DATA/Browser-Storage/`, and `checksums/SHA256SUMS.txt`.
+   - Preserved authentic historical timestamps (`sourceCreatedAt`, `sourceExportedAt`, `importedAt`) without synthesizing fake creation dates.
+   - Created dedicated workspace `/download-center/legacy-recovery` (`src/components/download-center/legacy-recovery-workspace.tsx` and `src/app/download-center/legacy-recovery/page.tsx`).
+
+2. **Workstream 2 — Complete Manifest Download Center (مركز التحميل):**
+   - Built unified download center service (`src/lib/download-center/download-center-service.ts`) querying both NEW live domain tables (PostgreSQL) and OLD historical archives (`archived_manifests` and `ASDY/OLD/`).
+   - Implemented self-describing canonical manifest envelope serialization (`format: "youtube-discovery-manifest"`, `schema_version: "1.0.0"`, `checksum_sha256`, `record_count`, `item_type_breakdown`).
+   - Built multi-manifest export engine assembling ZIP packages structured with `ASDY/NEW/<category>/...` and `ASDY/OLD/<category>/...`, accompanied by `ASDY/SHA256SUMS.txt` and `ASDY/export-manifest.json`.
+   - Built unified workspace `/download-center` (`src/components/download-center/download-center-workspace.tsx` and `src/app/download-center/page.tsx`) with origin filters (ALL, NEW, OLD), 8-category pills, multi-manifest selection, single-click and batch ZIP export, and detailed metadata inspector.
+   - Added Download Center (مركز التحميل) with cloud-download iconography to main navigation (`src/components/layout/navigation.tsx`).
+
+3. **Workstream 3 — Media Card Readability & Thumbnail Improvements:**
+   - Overhauled card layout in Saved Items (`src/components/saved/saved-items-workspace.tsx`) from a cramped 4-column layout to a spacious 3-column responsive grid (`grid gap-5 sm:grid-cols-2 lg:grid-cols-3`).
+   - Enforced crisp 16:9 widescreen ratio (`aspect-video`) with high-resolution image rendering and centered circular avatars for channels (`rounded-full max-h-36 mx-auto my-auto`).
+   - Upgraded title typography from 1-line truncation to 2-line wrapped presentation (`line-clamp-2 text-base font-bold text-foreground leading-snug tracking-tight`).
+   - Upgraded OLD Saved Items workspace (`src/components/old/old-saved-items-workspace.tsx`) with the same spacious 3-column grid and typography while strictly preserving the 4 classification filters (`VIDEO`, `SHORTS`, `CHANNELS`, `PLAYLISTS`).
+   - Upgraded Playlist Detail workspace (`src/components/library/playlist-detail-workspace.tsx`) with enlarged thumbnails (`h-20 w-36 sm:h-22 sm:w-40`) and 2-line wrapped bold titles.
+   - Upgraded Playlist Manager workspace (`src/components/library/playlist-manager-workspace.tsx`), Saved Searches (`src/components/saved/saved-searches-workspace.tsx`), and OLD Category workspaces (`src/components/old/old-category-workspace.tsx`) with clear multi-line typography.
+
+### Reason/root cause
+
+User requested Phase 1.6 to ensure total preservation of historical data prior to legacy storage phaseout, provide an administrator-facing Download Center to export active and archived manifests, and resolve visual readability and thumbnail sizing issues across all media cards.
+
+### Files changed
+
+- `package.json`
+- `src/lib/recovery/legacy-scanner.ts`
+- `src/lib/recovery/legacy-backup-builder.ts`
+- `src/lib/recovery/client-browser-scanner.ts`
+- `src/lib/download-center/download-center-service.ts`
+- `src/components/download-center/download-center-workspace.tsx`
+- `src/components/download-center/legacy-recovery-workspace.tsx`
+- `src/components/saved/saved-items-workspace.tsx`
+- `src/components/old/old-saved-items-workspace.tsx`
+- `src/components/library/playlist-detail-workspace.tsx`
+- `src/components/library/playlist-manager-workspace.tsx`
+- `src/components/saved/saved-searches-workspace.tsx`
+- `src/components/old/old-category-workspace.tsx`
+- `src/components/layout/navigation.tsx`
+- `src/app/download-center/page.tsx`
+- `src/app/download-center/legacy-recovery/page.tsx`
+- `src/app/api/download-center/inventory/route.ts`
+- `src/app/api/download-center/export/route.ts`
+- `src/app/api/download-center/legacy-recovery/scan/route.ts`
+- `src/app/api/download-center/legacy-recovery/backup/route.ts`
+- `scripts/recovery-tests/tsconfig.json`
+- `scripts/recovery-tests/suites.ts`
+- `scripts/test-phase1-6-recovery-and-download.mjs`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Vercel Blob enumeration uses native cursor pagination (`https://blob.vercel-storage.com?limit=1000&cursor=...`) with Bearer token authentication and handles missing credentials with zero crashes.
+- All ZIP generation utilizes pure Node.js in-memory buffers with streaming HTTP chunked responses (`application/zip`), avoiding disk temp file leaks.
+- Every export package computes and verifies SHA-256 digests on raw bytes before and after ZIP assembly.
+- Unit test suite (`scripts/test-phase1-6-recovery-and-download.mjs`) executes 93 assertions in isolated mock environments without requiring network access or a live database.
+
+### Architecture impact
+
+Enhanced data accessibility and portability by connecting active PostgreSQL domain data and historical `ASDY/OLD/` archive records to a centralized export engine and verifiable offline backup system. The database schema and storage boundaries remain strictly isolated and unmutated.
+
+### Environment impact
+
+None. Zero environment variables added or modified. Zero secrets printed or logged.
+
+### Database/migration impact
+
+Zero schema changes and zero database migrations in this phase. Existing 19 canonical models remain untouched. Strict read-only migration policy preserved.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed. All recovery, scanning, inventory aggregation, ZIP export, and UI rendering operations run entirely offline or against existing storage records.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Zero deletions proof
+
+- No Vercel Blob deletion API or HTTP `DELETE` method was executed or referenced in recovery code.
+- No local disk files were unlinked, truncated, or removed.
+- No database records were deleted or modified.
+- All recovery and export procedures enforce read-only semantics. Verified by 48 automated assertions in `test:recovery`.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors).
+- `npm run typecheck`: passed (0 errors; Prisma Client v7.10.1 generated + strict tsc check).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (93/93 assertions pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:blob`: passed (118/118 assertions pass).
+- `npm run test:search`: passed (77/77 assertions pass).
+- Production `next build`: passed (all 40 routes generated cleanly with Turbopack).
+- Full `npm run verify`: passed end-to-end (exit code 0).
+
+### Blocked checks, if any
+
+None. All Phase 1.6 tasks verified locally and passing.
+
+### Remaining risks/limitations
+
+- The live Vercel Blob scan requires `BLOB_READ_WRITE_TOKEN` in the execution environment; when absent, the system safely reports `ACCESS UNAVAILABLE` without failing.
+- Client browser storage recovery requires administrator interaction on the client device where legacy data was stored.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No new migrations created; no migrations applied.
+
+### Whether `db:apply` was run
+
+No.

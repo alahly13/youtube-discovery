@@ -8,7 +8,7 @@ Professional Next.js 16 SaaS workspace for discovering, filtering, saving, expor
 - React `19.2.4`
 - TypeScript strict mode
 - Tailwind CSS 4 CSS-first tokens
-- Prisma 7 schema and migration for Supabase PostgreSQL
+- Supabase Auth & Supabase PostgreSQL foundation (under redesign)
 - Zod route validation
 - lucide-react icons
 - Framer Motion, Zustand, TanStack Query, FlexSearch installed for richer follow-on UX/state/search work
@@ -64,19 +64,10 @@ Never create `NEXT_PUBLIC_YOUTUBE_API_KEY` or `NEXT_PUBLIC_GEMINI_API_KEY`.
 ## Verification
 
 ```powershell
-npm run db:validate
 npm run lint
 npm run typecheck
 npm run build
 ```
-
-`npm run db:apply` is guarded and refuses to run unless `CONFIRM_DB_APPLY=true` and a real `DATABASE_URL` are present:
-
-```powershell
-$env:CONFIRM_DB_APPLY="true"; npm run db:apply
-```
-
-Do not run destructive database commands such as `prisma migrate reset`.
 
 ## Implemented Surface
 
@@ -89,6 +80,6 @@ Do not run destructive database commands such as `prisma migrate reset`.
 - Server-only YouTube adapter modules for search/details/channel uploads/playlist flows
 - API routes for YouTube search/details/link/channel/playlist/manifests
 - AI routes for scoped Gemini assistants
-- Prisma 7 schema and initial migration for durable manifest/search/fetch/quota/AI concepts
+- Data architecture ready for upcoming database schema and Supabase Auth integration
 
 Live YouTube calls require `YOUTUBE_API_KEY`. Live Gemini calls require `GEMINI_API_KEY`. Missing keys return honest unavailable states instead of crashing the app.

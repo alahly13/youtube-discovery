@@ -1194,18 +1194,18 @@ function ItemRow({ item, flat, ...shared }: { item: LibraryPlaylistItem; flat?: 
         aria-label={`Select ${title}`}
         className="mt-1.5 h-4 w-4 shrink-0 accent-[var(--primary)]"
       />
-      <div className="relative h-14 w-24 shrink-0 overflow-hidden rounded-md bg-surface-muted">
+      <div className="relative h-20 w-36 sm:h-22 sm:w-40 shrink-0 overflow-hidden rounded-lg bg-surface-muted shadow-xs">
         {thumb ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
         ) : (
           <div className="flex h-full items-center justify-center">
-            <StickyNote className="h-4 w-4 text-muted" />
+            <StickyNote className="h-5 w-5 text-muted" />
           </div>
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground" title={title}>
+        <p className="line-clamp-2 text-base font-bold text-foreground leading-snug tracking-tight" title={title}>
           {title}
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">

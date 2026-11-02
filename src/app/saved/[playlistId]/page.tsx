@@ -27,11 +27,15 @@ export default async function SavedPlaylistPage({
         title="Playlist Workspace"
         description="Search, filter, order, group, annotate, and export this personal playlist. Everything here is local — no YouTube requests."
       >
-        <p className="mb-4 text-xs text-muted">
-          <Link href="/saved" className="text-primary hover:underline">
-            ← Back to Saved Library
+        <div className="mb-4 flex items-center gap-3 text-xs text-muted">
+          <Link href="/playlist-manager" className="text-primary hover:underline font-medium">
+            ← Back to Playlist Manager
           </Link>
-        </p>
+          <span>•</span>
+          <Link href="/saved" className="hover:underline">
+            Saved Items
+          </Link>
+        </div>
         <PlaylistDetailWorkspace playlistId={playlistId} />
       </WorkspacePage>
     </AppShell>

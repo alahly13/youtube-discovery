@@ -24,24 +24,30 @@ export interface BlobRuntimeConfig {
   /** Store id hint for OIDC resolution. */
   storeId?: string;
   /** How auth was resolved (label only — never a secret). */
-  authMode: "read-write-token" | "oidc";
+  authMode: "read-write-token" | "oidc" | "supabase" | "disk-fallback";
 }
 
 export function getBlobRuntimeConfig(): BlobRuntimeConfig {
+  // Check Supabase Storage credentials first
+  const hasSupabase =
+    Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+    Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
+  if (hasSupabase) {
+    return { authMode: "supabase" };
+  }
+
   const token = process.env.BLOB_READ_WRITE_TOKEN?.trim() || undefined;
   const storeId = process.env.BLOB_STORE_ID?.trim() || undefined;
   if (token) {
     return { token, storeId, authMode: "read-write-token" };
   }
-  // OIDC path: valid on Vercel when project + store are connected. The SDK
-  // picks up VERCEL_OIDC_TOKEN automatically; BLOB_STORE_ID selects the store.
+  // OIDC path: valid on Vercel when project + store are connected.
   if (process.env.VERCEL === "1" || process.env.VERCEL_OIDC_TOKEN) {
     return { token: undefined, storeId, authMode: "oidc" };
   }
-  throw new BlobConfigError(
-    "Blob storage is not configured. Set BLOB_READ_WRITE_TOKEN (and BLOB_STORE_ID) " +
-      "in .env.local and Vercel Project Settings. Local-only storage is not used as a substitute.",
-  );
+
+  // Local development / disk fallback
+  return { authMode: "disk-fallback" };
 }
 
 /** Non-throwing probe for status UIs (returns labels only). */

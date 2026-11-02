@@ -133,13 +133,24 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         })),
       toggleItemSaved: (item) =>
         set((state) => {
-          const isSaved = state.savedItems.some((i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType);
+          const isSaved = state.savedItems.some(
+            (i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType
+          );
           if (isSaved) {
-            return { savedItems: state.savedItems.filter((i) => !(i.platformItemId === item.platformItemId && i.itemType === item.itemType)) };
+            return {
+              savedItems: state.savedItems.filter(
+                (i) => !(i.platformItemId === item.platformItemId && i.itemType === item.itemType)
+              ),
+            };
           }
-          // Exclude rawJson to save space in localStorage
-          const itemToSave = { ...item, rawJson: undefined };
-          return { savedItems: [...state.savedItems, itemToSave] };
+          // Attach exact timestamp of when user saved this item
+          const nowIso = new Date().toISOString();
+          const itemToSave = {
+            ...item,
+            savedAt: item.savedAt || item.collectedAt || nowIso,
+            rawJson: undefined,
+          };
+          return { savedItems: [itemToSave, ...state.savedItems] };
         }),
       saveSearch: (searchData) => {
         const id = `search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

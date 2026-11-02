@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-02 (Phase 1.6 Legacy Vercel Data Recovery, Complete Manifest Download Center & Media Card Readability; Phase 1.5 Database Security Hardening + OLD Legacy Manifest Archive System, 19 Canonical Tables, Supabase Storage RLS, ASDY/OLD/ Archive Root, and Strict Owner Isolation)
+Last updated: 2026-11-03 (Supabase Auth Integration, Admin "asdy" Resolution, Route-Handler Cookie Binding, and Configurable 1-Week Session TTL; Phase 1.6 Legacy Vercel Recovery, Complete Manifest Download Center & Media Card Readability; Phase 1.5 Database Security Hardening + OLD Archive)
 
 ## Project Identity And Mission
 
@@ -213,20 +213,22 @@ Blob/auth/quota persistence (server-only, never `NEXT_PUBLIC_*`):
 - `BLOB_STORE_ID` — expected store id; validated + compared with observed Blob URL host.
 - `BLOB_READ_WRITE_TOKEN` — private SDK token for all Blob I/O. No local-only fallback when missing.
 - `BLOB_WEBHOOK_PUBLIC_KEY` — webhook signature verification ONLY. No webhook endpoint exists, so NOT required for reads/writes/auth.
-- `ADMIN_DEFAULT_USERNAME` (default `admin`), `ADMIN_INITIAL_PASSWORD` (required, ≥12 chars, no default) — bootstrap-only; persisted account wins afterwards.
+- `ADMIN_DEFAULT_USERNAME` (default `asdy`), `ADMIN_INITIAL_PASSWORD` (required, ≥12 chars, no default) — bootstrap-only; persisted account wins afterwards.
 - `ADMIN_SESSION_SECRET` — session/rate-limit salt (independent secret).
-- `ADMIN_SESSION_TTL_SECONDS` (default `604800` = 7d; clamped 300s–30d).
+- `SESSION_TTL_SECONDS` / `ADMIN_SESSION_TTL_SECONDS` / `SUPABASE_SESSION_TTL_SECONDS` (default `604800` = 7d = 1 week; accepts raw seconds or human units `7d`, `1w`, `24h`; clamped 300s–30d). Controls both Supabase Auth cookie max-age and local session cookie max-age.
 - `API_KEYS_ENCRYPTION_KEY` — 32-byte AES-256-GCM key (base64/hex/raw-32). Saves refused without it. Back up securely.
 
 Public:
 
 - `NEXT_PUBLIC_APP_URL`
-- `NEXT_PUBLIC_SUPABASE_URL` only if client Supabase auth is added
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` only if client Supabase auth is added
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project API URL (e.g. `https://<ref>.supabase.co`).
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — Supabase publishable key / anon key for client and server auth.
 
 Server-only:
 
-- `DATABASE_URL`
+- `DATABASE_URL` — Supabase PostgreSQL pooled connection string (port 6543/5432 with pgbouncer=true).
+- `DIRECT_URL` — Supabase PostgreSQL direct connection string (port 5432).
+- `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY` — Server-only secret keys for bypassing RLS, admin auth, user discovery, and background tasks. NEVER expose to the browser.
 - `YOUTUBE_API_KEY`
 - `YOUTUBE_API_BASE_URL`
 - `YOUTUBE_DEFAULT_REGION`
@@ -400,11 +402,26 @@ Forbidden public secrets:
 - `npm run test:security`: 15-assertion automated suite verifying Phase 1.5 database triggers, single root uniqueness, linear lineage, composite batch FK, storage RLS, and security definer search_path hardening.
 - `npm run test:old`: 15-assertion automated suite verifying OLD legacy manifest archive envelope parsing, 4-filter classification, pure Node.js ZIP extraction, and archive store operations.
 - `npm run test:recovery`: 93-assertion automated suite verifying Phase 1.6 legacy storage discovery, 8-category classification, cache evaluation, verifiable backup ZIP packaging, download center multi-manifest export, and 48 zero-deletion proof checks.
+- `npm run test:auth`: Automated test suite verifying Supabase Auth connection, admin user "asdy" resolution, route-handler cookie integration, and configurable 1-week session TTL.
 - `npm run lint`: ESLint validation (0 errors).
 - `npm run typecheck`: strict TypeScript check (`tsc --noEmit --incremental false`).
 - `npm run test:blob`: 118 assertions unit test suite for storage.
 - `npm run test:search`: 77 assertions unit test suite for search query transforms.
-- `npm run verify`: One-step end-to-end verification (`npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run build`).
+- `npm run verify`: One-step end-to-end verification (`npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run test:auth && npm run build`).
+
+Latest verification results on 2026-11-03 (Supabase Auth Connection, Admin "asdy" & 1-Week Session TTL):
+
+- `npm run lint`: passed (0 errors, 9 non-blocking disable directive warnings).
+- `npm run typecheck`: passed (0 errors; Prisma Client v7.10.1 generated + strict tsc check).
+- `npm run test:auth`: passed (all 6 test suites passed: session TTL 604800s, human units parsing, admin client with service role / secret key, route-handler cookie binding, admin user "asdy" resolution, proxy cookie detection).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (93/93 assertions pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:blob`: passed (118/118 assertions pass).
+- `npm run test:search`: passed (77/77 assertions pass).
+- Production `next build`: passed (all 40 routes compiled cleanly with Turbopack).
+- Full `npm run verify`: passed end-to-end (exit code 0).
 
 Latest verification results on 2026-11-02 (Phase 1.6 Legacy Vercel Recovery, Complete Download Center & Media Card Readability):
 

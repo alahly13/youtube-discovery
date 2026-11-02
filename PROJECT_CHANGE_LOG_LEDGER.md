@@ -2206,3 +2206,108 @@ No new migrations created; no migrations applied.
 ### Whether `db:apply` was run
 
 No.
+
+---
+
+## 2026-11-03 (Supabase Auth Connection, Admin "asdy" Resolution & Configurable 1-Week Session TTL)
+
+### Date/time
+
+2026-11-03 ~01:15 UTC
+
+### Agent/model if known
+
+Antigravity (Google DeepMind)
+
+### Task summary
+
+Completed the Supabase Auth connection and session management architecture to support the administrator account "asdy":
+1. **Supabase Auth Sign-In Integration:** Implemented primary authentication via Supabase Auth in `POST /api/auth/login`, supporting both direct email login and admin username resolution (matching "asdy" via email equality, email prefix `asdy@...`, or metadata username/name via the Supabase Admin Client).
+2. **Route-Handler Cookie Binding:** Implemented `createRouteHandlerSupabaseClient(request, response)` in `src/lib/supabase/server.ts` to directly attach Supabase HTTP-only authentication cookies (`sb-<project-ref>-auth-token`) to the outgoing `NextResponse`.
+3. **Configurable 1-Week Default Session Duration:** Enforced a default session TTL of 604,800 seconds (7 days / 1 week), controllable via `SESSION_TTL_SECONDS`, `ADMIN_SESSION_TTL_SECONDS`, or `SUPABASE_SESSION_TTL_SECONDS`. Supports both integer seconds and human units (e.g. `7d`, `1w`, `24h`), automatically applied to both Supabase Auth cookie options and the synchronized `yd_admin_session` cookie.
+4. **Dual-Cookie Presence in Proxy:** Updated `src/proxy.ts` to recognize both `SESSION_COOKIE_NAME` (`yd_admin_session`) and Supabase Auth token cookies (`sb-*-auth-token`).
+5. **Clean Logout Flow:** Updated `POST /api/auth/logout` to sign out of Supabase Auth (`supabase.auth.signOut()`), purge all Supabase cookies, delete the local session cookie, and revoke the server session record in storage.
+6. **Admin Username Pre-Fill:** Updated `GET /api/auth/username` to discover and pre-fill "asdy" from Supabase Auth or `ADMIN_DEFAULT_USERNAME`.
+
+### Reason/root cause
+
+User requested completion of the Supabase Auth connection utilizing environment variables `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `DATABASE_URL`, `SUPABASE_SECRET_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`, with the admin user "asdy" created in Supabase Auth, and a default 1-week session duration controllable via environment variable.
+
+### Files changed
+
+- `src/lib/auth/session.ts`
+- `src/lib/supabase/server.ts`
+- `src/lib/auth/require-auth.ts`
+- `src/app/api/auth/login/route.ts`
+- `src/app/api/auth/logout/route.ts`
+- `src/app/api/auth/username/route.ts`
+- `src/proxy.ts`
+- `scripts/app-validate-env.mjs`
+- `scripts/supabase-auth-tests/tsconfig.json`
+- `scripts/supabase-auth-tests/suites.ts`
+- `scripts/test-supabase-auth.mjs`
+- `package.json`
+- `.env.example`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- `getSessionTtlSeconds()` evaluates `SESSION_TTL_SECONDS`, `ADMIN_SESSION_TTL_SECONDS`, `SUPABASE_SESSION_TTL_SECONDS`, and `SESSION_DURATION` with unit parsing (`s`, `m`, `h`, `d`, `w`), clamped safely to `[300, 2592000]` and defaulting to `604800` (1 week).
+- `createRouteHandlerSupabaseClient` intercepts Supabase cookie sets and writes them directly to the mutable `NextResponse` with `maxAge: ttl`, `sameSite: "lax"`, and `httpOnly: true`.
+- On login, the system queries Supabase Admin API (`supabase.auth.admin.listUsers()`) using `SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY` to map the username "asdy" to the corresponding user email before calling `signInWithPassword`.
+- Dual-session synchronization sets both Supabase tokens and `yd_admin_session`, maintaining backwards compatibility with legacy session checks.
+
+### Architecture impact
+
+Seamless transition of identity authority to Supabase Auth while preserving zero-downtime backwards compatibility with local session checks and existing API route guards.
+
+### Environment impact
+
+Documented `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_SECRET_KEY`, `SESSION_TTL_SECONDS`, `ADMIN_SESSION_TTL_SECONDS`, and `ADMIN_DEFAULT_USERNAME="asdy"` in `.env.example`. Zero secret values printed or exposed.
+
+### Database/migration impact
+
+Zero schema changes and zero database migrations in this task.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors).
+- `npm run typecheck`: passed (0 errors).
+- `npm run test:auth`: passed (all 6 test suites passed: session TTL 604800s, human units parsing, admin client with service role / secret key, route-handler cookie binding, admin user "asdy" resolution, proxy cookie detection).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (93/93 assertions pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:blob`: passed (118/118 assertions pass).
+- `npm run test:search`: passed (77/77 assertions pass).
+- Production `next build`: passed (all 40 routes generated cleanly with Turbopack).
+- Full `npm run verify`: passed end-to-end (exit code 0).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

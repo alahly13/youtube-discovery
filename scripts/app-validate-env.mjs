@@ -71,14 +71,22 @@ if (missingOptional.length > 0) {
   );
 }
 
-const missingBlobAuth = blobAuthKeys.filter((key) => !process.env[key]);
-if (missingBlobAuth.length > 0) {
-  console.warn(
-    `[env] Blob/auth persistence is not fully configured (missing: ${missingBlobAuth.join(", ")}). ` +
-      `Protected routes will return clear errors until BLOB_STORE_ID, BLOB_READ_WRITE_TOKEN, ` +
-      `ADMIN_INITIAL_PASSWORD, ADMIN_SESSION_SECRET, and API_KEYS_ENCRYPTION_KEY are set. ` +
-      `See .env.example. Local-only storage is never used as a substitute.`,
-  );
+const hasSupabase =
+  Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+  Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+if (hasSupabase) {
+  console.log("[env] Supabase Auth & Storage persistence is active.");
+} else {
+  const missingBlobAuth = blobAuthKeys.filter((key) => !process.env[key]);
+  if (missingBlobAuth.length > 0) {
+    console.warn(
+      `[env] Blob/auth persistence is not fully configured (missing: ${missingBlobAuth.join(", ")}). ` +
+        `Protected routes will return clear errors until BLOB_STORE_ID, BLOB_READ_WRITE_TOKEN, ` +
+        `ADMIN_INITIAL_PASSWORD, ADMIN_SESSION_SECRET, and API_KEYS_ENCRYPTION_KEY are set. ` +
+        `See .env.example. Local-only storage is never used as a substitute.`,
+    );
+  }
 }
 
 console.log("[env] Application environment preflight completed without printing secret values.");

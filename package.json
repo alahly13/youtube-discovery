@@ -24,8 +24,9 @@
     "test:security": "node scripts/test-phase1-5-database-security.mjs",
     "test:old": "node scripts/test-phase1-5-old-archive.mjs",
     "test:recovery": "node scripts/test-phase1-6-recovery-and-download.mjs",
+    "test:auth": "node scripts/test-supabase-auth.mjs",
     "test:blob:integration": "node --env-file=.env.local scripts/run-blob-tests.mjs --integration",
-    "verify": "npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run test:auth && npm run build"
   },
   "dependencies": {
     "@google/genai": "^2.0.0",

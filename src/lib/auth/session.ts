@@ -35,15 +35,55 @@ export interface AdminSession {
   authVersion: number;
 }
 
-/** Parse + clamp the configured TTL. Invalid → default (documented). */
-export function getSessionTtlSeconds(): number {
-  const raw = process.env.ADMIN_SESSION_TTL_SECONDS?.trim();
-  if (!raw) return DEFAULT_SESSION_TTL_SECONDS;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < MIN_SESSION_TTL_SECONDS || parsed > MAX_SESSION_TTL_SECONDS) {
-    return DEFAULT_SESSION_TTL_SECONDS;
+/**
+ * Parse a raw duration string into seconds.
+ * Supports integer seconds (e.g. "604800") or human units (e.g. "7d", "1w", "24h", "60m").
+ * Returns null if invalid or out of allowed bounds [300, 2592000].
+ */
+export function parseSessionDuration(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Support human suffixes: e.g. "7d", "1w", "24h", "60m", "604800s"
+  const humanMatch = /^(\d+)\s*([smhdw]?)$/i.exec(trimmed);
+  if (humanMatch) {
+    const val = parseInt(humanMatch[1], 10);
+    const unit = (humanMatch[2] || "s").toLowerCase();
+    let sec = val;
+    if (unit === "m") sec = val * 60;
+    else if (unit === "h") sec = val * 3600;
+    else if (unit === "d") sec = val * 86400;
+    else if (unit === "w") sec = val * 604800;
+    if (sec >= MIN_SESSION_TTL_SECONDS && sec <= MAX_SESSION_TTL_SECONDS) {
+      return sec;
+    }
   }
-  return parsed;
+
+  const parsed = Number(trimmed);
+  if (Number.isInteger(parsed) && parsed >= MIN_SESSION_TTL_SECONDS && parsed <= MAX_SESSION_TTL_SECONDS) {
+    return parsed;
+  }
+  return null;
+}
+
+/**
+ * Parse + clamp the configured session TTL.
+ * Checks SESSION_TTL_SECONDS, ADMIN_SESSION_TTL_SECONDS, SUPABASE_SESSION_TTL_SECONDS, or SESSION_DURATION.
+ * Defaults to 604800 seconds (1 week / 7 days).
+ */
+export function getSessionTtlSeconds(): number {
+  const envVal =
+    process.env.SESSION_TTL_SECONDS ||
+    process.env.ADMIN_SESSION_TTL_SECONDS ||
+    process.env.SUPABASE_SESSION_TTL_SECONDS ||
+    process.env.SESSION_DURATION;
+
+  const parsed = parseSessionDuration(envVal);
+  if (parsed !== null) {
+    return parsed;
+  }
+  return DEFAULT_SESSION_TTL_SECONDS;
 }
 
 export function isSecureCookie(): boolean {

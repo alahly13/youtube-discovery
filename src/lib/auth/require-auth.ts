@@ -37,10 +37,18 @@ export async function requireAdmin(
       } = await supabase.auth.getUser();
 
       if (!error && user) {
+        const username =
+          (user.user_metadata?.username as string) ||
+          (user.user_metadata?.name as string) ||
+          (user.app_metadata?.username as string) ||
+          (user.email ? user.email.split("@")[0] : null) ||
+          user.email ||
+          "asdy";
+
         return {
           ok: true,
           admin: {
-            username: user.email || user.user_metadata?.username || "admin",
+            username,
             authVersion: 1,
             userId: user.id,
           },

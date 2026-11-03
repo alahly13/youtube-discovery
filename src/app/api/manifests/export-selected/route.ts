@@ -2,8 +2,11 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
 import { prisma } from "@/lib/db/prisma";
-import { getStorageBackendForBucket } from "@/lib/storage/supabase-storage-backend";
-import { OLD_STORAGE_BUCKET, NEW_STORAGE_BUCKET } from "@/lib/supabase/storage";
+import {
+  getStorageBackendForBucket,
+  OLD_R2_BUCKET,
+  NEW_R2_BUCKET,
+} from "@/lib/storage/r2-blob-backend";
 import { createZipArchive, type ZipFileEntry } from "@/lib/storage/zip-builder";
 
 /**
@@ -61,7 +64,7 @@ export async function POST(request: Request) {
       // If single file requested in ORIGINAL format
       if (records.length === 1 && (format === "ORIGINAL" || format === "NORMALIZED_JSON")) {
         const rec = records[0];
-        const backend = getStorageBackendForBucket(rec.bucket_id || OLD_STORAGE_BUCKET);
+        const backend = getStorageBackendForBucket(rec.bucket_id || OLD_R2_BUCKET);
         const bytes = await backend.getBytes(rec.storage_path);
 
         const outFilename = (rec.original_filename || `manifest-${rec.manifest_id}.json`).replace(
@@ -85,7 +88,7 @@ export async function POST(request: Request) {
       const checksumLines: string[] = [];
 
       for (const rec of records) {
-        const backend = getStorageBackendForBucket(rec.bucket_id || OLD_STORAGE_BUCKET);
+        const backend = getStorageBackendForBucket(rec.bucket_id || OLD_R2_BUCKET);
         const bytes = await backend.getBytes(rec.storage_path);
         const fileSha = crypto.createHash("sha256").update(bytes).digest("hex").toLowerCase();
 
@@ -111,7 +114,7 @@ export async function POST(request: Request) {
       const exportSummary = {
         exported_at: new Date().toISOString(),
         source: "OLD_ARCHIVE",
-        bucket: OLD_STORAGE_BUCKET,
+        bucket: OLD_R2_BUCKET,
         total_manifests: records.length,
         manifests: records.map((r) => ({
           manifest_id: r.manifest_id,
@@ -174,7 +177,7 @@ export async function POST(request: Request) {
       const checksumLines: string[] = [];
 
       for (const part of parts) {
-        const backend = getStorageBackendForBucket(part.bucket_id || NEW_STORAGE_BUCKET);
+        const backend = getStorageBackendForBucket(part.bucket_id || NEW_R2_BUCKET);
         const bytes = await backend.getBytes(part.storage_path);
         const fileSha = crypto.createHash("sha256").update(bytes).digest("hex").toLowerCase();
 

@@ -4,8 +4,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { prisma } from "@/lib/db/prisma";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { CANONICAL_STORAGE_BUCKET } from "@/lib/supabase/storage";
+import { getR2WorkerStorageClient } from "@/lib/storage/r2-worker-storage-client";
+import { OLD_R2_BUCKET, NEW_R2_BUCKET } from "@/lib/storage/r2-blob-backend";
+import { DiskStorageBackend } from "@/lib/storage/disk-storage-backend";
 import { createZipArchive, type ZipFileEntry } from "@/lib/storage/zip-builder";
 
 export const CANONICAL_TABLE_ORDER = [
@@ -143,7 +144,7 @@ export async function createFullProjectBackup(): Promise<FullBackupPackage> {
     }
   }
 
-  // 3. Export Storage Objects
+  // 3. Export Storage Objects (Cloudflare R2 via Workers + Disk Fallback)
   let totalObjects = 0;
   let totalStorageBytes = 0;
   const objectInventory: Array<{
@@ -153,72 +154,92 @@ export async function createFullProjectBackup(): Promise<FullBackupPackage> {
     sha256: string;
   }> = [];
 
-  const supabase = createAdminClient();
-  const targetBuckets = [CANONICAL_STORAGE_BUCKET, "youtube-discovery"];
+  const r2Client = getR2WorkerStorageClient();
+  const bucketConfigs: Array<{ kind: "NEW" | "OLD"; bucketName: string }> = [
+    { kind: "NEW", bucketName: NEW_R2_BUCKET },
+    { kind: "OLD", bucketName: OLD_R2_BUCKET },
+  ];
 
-  if (supabase) {
-    for (const bucket of targetBuckets) {
-      try {
-        const { data: bucketObjects, error: listError } = await supabase.storage.from(bucket).list("", {
-          limit: 1000,
-        });
-
-        if (!listError && bucketObjects) {
-          // Recursive or subfolder enumeration
-          const toProcess: string[] = bucketObjects.map((o) => o.name);
-
-          while (toProcess.length > 0) {
-            const currentItem = toProcess.shift()!;
-            // Check if currentItem is folder (has no metadata or id in some storage representations)
-            const { data: subItems, error: subError } = await supabase.storage.from(bucket).list(currentItem, {
-              limit: 500,
-            });
-
-            if (!subError && subItems && subItems.length > 0) {
-              // It's a folder, push children
-              for (const sub of subItems) {
-                toProcess.push(`${currentItem}/${sub.name}`);
-              }
-            } else {
-              // It's an object or empty folder, attempt download
-              try {
-                const { data: fileData, error: dlError } = await supabase.storage.from(bucket).download(currentItem);
-                if (!dlError && fileData) {
-                  const arrBuf = await fileData.arrayBuffer();
-                  const buf = Buffer.from(arrBuf);
-                  const sha = computeSha256(buf);
-                  totalObjects++;
-                  totalStorageBytes += buf.length;
-                  objectInventory.push({
-                    bucket,
-                    path: currentItem,
-                    size: buf.length,
-                    sha256: sha,
-                  });
-                  addEntry(`storage/objects/${bucket}/${currentItem}`, buf);
-                }
-              } catch {
-                // Leaf was directory or download skipped
-              }
-            }
-          }
+  for (const { kind, bucketName } of bucketConfigs) {
+    try {
+      const listRes = await r2Client.listObjects(kind, "", { limit: 1000 });
+      for (const obj of listRes.objects || []) {
+        try {
+          const { data, sha256 } = await r2Client.getObject(kind, obj.key);
+          totalObjects++;
+          totalStorageBytes += data.length;
+          objectInventory.push({
+            bucket: bucketName,
+            path: obj.key,
+            size: data.length,
+            sha256,
+          });
+          addEntry(`storage/objects/${bucketName}/${obj.key}`, data);
+        } catch (dlErr) {
+          warnings.push(
+            `Failed to download R2 object ${bucketName}/${obj.key}: ${
+              dlErr instanceof Error ? dlErr.message : String(dlErr)
+            }`
+          );
         }
-      } catch (stErr) {
-        warnings.push(`Storage export warning for bucket ${bucket}: ${stErr instanceof Error ? stErr.message : String(stErr)}`);
       }
+    } catch (listErr) {
+      warnings.push(
+        `Cloudflare R2 Worker list skipped for ${bucketName} (running in local or offline mode): ${
+          listErr instanceof Error ? listErr.message : String(listErr)
+        }`
+      );
     }
-  } else {
-    warnings.push("Supabase Admin client unavailable; Storage object export skipped.");
   }
 
-  addEntry("storage/bucket-config.json", JSON.stringify({
-    canonical_bucket: CANONICAL_STORAGE_BUCKET,
-    legacy_bucket: "youtube-discovery",
-    file_size_limit: 52428800,
-    public: false,
-  }, null, 2));
+  // Also include any local disk storage objects from data/storage/
+  try {
+    const disk = new DiskStorageBackend();
+    const diskObjs = await disk.list("");
+    for (const d of diskObjs) {
+      const alreadyExported = objectInventory.some(
+        (o) => o.path === d.pathname
+      );
+      if (!alreadyExported) {
+        try {
+          const buf = await disk.getBytes(d.pathname);
+          const sha = computeSha256(buf);
+          totalObjects++;
+          totalStorageBytes += buf.length;
+          objectInventory.push({
+            bucket: "disk-storage",
+            path: d.pathname,
+            size: buf.length,
+            sha256: sha,
+          });
+          addEntry(`storage/objects/disk-storage/${d.pathname}`, buf);
+        } catch {
+          // ignore unreadable disk files
+        }
+      }
+    }
+  } catch {
+    // Disk fallback list skipped
+  }
 
-  addEntry("storage/object-inventory.json", JSON.stringify(objectInventory, null, 2));
+  addEntry(
+    "storage/bucket-config.json",
+    JSON.stringify(
+      {
+        provider: "CLOUDFLARE_R2_WORKERS",
+        new_bucket: NEW_R2_BUCKET,
+        old_bucket: OLD_R2_BUCKET,
+        public: false,
+      },
+      null,
+      2
+    )
+  );
+
+  addEntry(
+    "storage/object-inventory.json",
+    JSON.stringify(objectInventory, null, 2)
+  );
 
   // 4. Restore Documentation and Scripts
   const restoreGuide = `# YouTube Discovery — Project Restore & Migration Guide
@@ -357,7 +378,8 @@ runRestore().catch(console.error);
     schema_version: "1.4.0",
     application: "youtube-discovery",
     export_timestamp_utc: timestamp,
-    canonical_bucket: CANONICAL_STORAGE_BUCKET,
+    canonical_bucket: NEW_R2_BUCKET,
+    old_bucket: OLD_R2_BUCKET,
     status,
     summary: {
       tables_count: Object.keys(tableInventory).length,
@@ -367,7 +389,8 @@ runRestore().catch(console.error);
     },
     tables: tableInventory,
     storage: {
-      canonical_bucket: CANONICAL_STORAGE_BUCKET,
+      canonical_bucket: NEW_R2_BUCKET,
+    old_bucket: OLD_R2_BUCKET,
       objects_count: objectInventory.length,
       total_bytes: totalStorageBytes,
     },

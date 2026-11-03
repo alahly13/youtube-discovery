@@ -1,13 +1,10 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * Blob Configuration — token resolution + validation (no secrets in errors).
+ * Storage Configuration — Cloud / Supabase / Cloudflare / Disk resolution.
  * ──────────────────────────────────────────────────────────────────────────
- * Auth resolution (supported by @vercel/blob):
- *  1. Explicit BLOB_READ_WRITE_TOKEN (local dev AND Vercel when set).
- *  2. Vercel OIDC (automatic when the project/store are connected and no
- *     token is set — the SDK resolves VERCEL_OIDC_TOKEN itself).
- * Validation failures throw BlobConfigError with SAFE messages (never the
- * token value). Nothing here is imported by client components.
+ * - Vercel Blob has been fully decommissioned.
+ * - Resolves Supabase Storage when configured, or local DiskStorageBackend.
+ * - Ready for Cloudflare R2 adapter.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -19,12 +16,9 @@ export class BlobConfigError extends Error {
 }
 
 export interface BlobRuntimeConfig {
-  /** Explicit read/write token when configured (otherwise SDK uses OIDC). */
   token?: string;
-  /** Store id hint for OIDC resolution. */
   storeId?: string;
-  /** How auth was resolved (label only — never a secret). */
-  authMode: "read-write-token" | "oidc" | "supabase" | "disk-fallback";
+  authMode: "supabase" | "cloudflare" | "disk-fallback";
 }
 
 export function getBlobRuntimeConfig(): BlobRuntimeConfig {
@@ -36,14 +30,12 @@ export function getBlobRuntimeConfig(): BlobRuntimeConfig {
     return { authMode: "supabase" };
   }
 
-  const token = process.env.BLOB_READ_WRITE_TOKEN?.trim() || undefined;
-  const storeId = process.env.BLOB_STORE_ID?.trim() || undefined;
-  if (token) {
-    return { token, storeId, authMode: "read-write-token" };
-  }
-  // OIDC path: valid on Vercel when project + store are connected.
-  if (process.env.VERCEL === "1" || process.env.VERCEL_OIDC_TOKEN) {
-    return { token: undefined, storeId, authMode: "oidc" };
+  // Cloudflare R2 support (future/configured)
+  const hasCloudflare =
+    Boolean(process.env.CLOUDFLARE_R2_BUCKET) &&
+    Boolean(process.env.CLOUDFLARE_R2_ACCESS_KEY_ID);
+  if (hasCloudflare) {
+    return { authMode: "cloudflare" };
   }
 
   // Local development / disk fallback
@@ -58,8 +50,8 @@ export function describeBlobConfig(): {
 } {
   try {
     const cfg = getBlobRuntimeConfig();
-    return { configured: true, authMode: cfg.authMode, storeIdSet: Boolean(cfg.storeId) };
+    return { configured: true, authMode: cfg.authMode, storeIdSet: false };
   } catch {
-    return { configured: false, authMode: null, storeIdSet: Boolean(process.env.BLOB_STORE_ID?.trim()) };
+    return { configured: false, authMode: null, storeIdSet: false };
   }
 }

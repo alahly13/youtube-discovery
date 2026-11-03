@@ -33,13 +33,14 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
   2. `20261102220000_phase1_5_security_and_old_archive`
   3. `20261103150000_canonical_private_bucket`
   4. `20261103173000_old_and_new_buckets_separation`
-- Supabase Auth and Supabase Storage (`@supabase/supabase-js@2.118.0`, `@supabase/ssr@0.12.7`) with server/browser/admin client singletons (`src/lib/supabase/*`).
-- Dedicated Private Supabase Storage Buckets:
-  1. `old-youtube-discovery-private`: Dedicated private bucket for historical manifests and browser archives (`asdy/old/...`).
-  2. `new-youtube-discovery-private`: Dedicated private bucket for active generations and temp data (`<owner_uuid>/persistence/datasets/...`).
-  3. `youtube-discovery-private` & `youtube-discovery`: Preserved canonical/legacy buckets (no non-empty buckets are ever deleted).
-- Full Portability & Backup Engine: Complete project backup exporter (`src/lib/backup/project-backup-service.ts`, `/api/download-center/full-backup`, `scripts/backup-cli.mjs`) and dedicated OLD Browser Data Backup Builder (`src/lib/recovery/old-browser-backup-builder.ts`, `/api/old/browser-backup`, `DownloadOldDataModal`) exporting Chrome IndexedDB + LocalStorage into PKZIP 2.0 with authentic timestamps, 4-category layout, `UNCLASSIFIED/`, and SHA256 checksums with strict secret redaction.
-- `@vercel/blob` runtime dependency completely uninstalled and removed; all storage routes delegate to `SupabaseStorageBackend` (`getOldStorageBackend()`, `getNewStorageBackend()`, `getStorageBackendForBucket()`) with local `DiskStorageBackend` fallback, and `blob-inventory.ts` preserves native fetch read access to remote Blob objects without deleting them.
+- Supabase Auth exclusively for user authentication, session cookies, and administrator authorization (`@supabase/ssr@0.12.7`, `@supabase/supabase-js@2.118.0`).
+- Supabase PostgreSQL with Prisma 7 (`7.10.1`, pinned) exclusively for application relational data, models, and metadata.
+- Cloudflare R2 accessed exclusively through Two Dedicated Cloudflare Workers for all authoritative object storage:
+  1. `new-youtube-discovery-api` (bound to `NEW_BUCKET` -> `new-youtube-discovery-private`): active application manifests, dataset generations, and temp data.
+  2. `old-youtube-discovery-api` (bound to `OLD_BUCKET` -> `old-youtube-discovery-private`): historical archive manifests across the 4 canonical OLD categories (`asdy/old/...`).
+  Zero S3 SDKs, zero AWS credentials. Access is mediated via HMAC-SHA256 capability tokens (`src/lib/storage/r2-capability-token.ts`, `src/lib/storage/r2-worker-storage-client.ts`, `src/lib/storage/r2-blob-backend.ts`).
+- Full Portability & Backup Engine: Complete project backup exporter (`src/lib/backup/project-backup-service.ts`, `/api/download-center/full-backup`, `scripts/backup-cli.mjs`) exporting database records, migrations, and Cloudflare R2 objects with SHA-256 checksums and restore CLI script.
+- `@vercel/blob` runtime dependency completely removed; Supabase Storage completely retired for object persistence; all storage routes delegate to `R2StorageBackend` (`getOldStorageBackend()`, `getNewStorageBackend()`, `getStorageBackendForBucket()`) with local `DiskStorageBackend` fallback.
 - `@next/env` for standalone script env loading from root `.env.local`.
 - Google GenAI SDK through server-only Gemini helpers.
 - FlexSearch (used): shared local-search service in `src/lib/search/local-search.ts` (Document index, title-weighted, with a weighted fallback matcher) powers Saved Library, playlist contents, and History — strictly local, zero YouTube quota. Zustand, TanStack Query, and Framer Motion remain installed for state/UX expansion.
@@ -57,11 +58,11 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 The app is manifest-first. Every provider fetch returns a `YouTubeManifest` with provenance, settings snapshot, pages fetched, quota estimate, status, duplicate count, warnings/errors, and normalized items.
 
-Authoritative persistence uses Supabase Storage via `src/lib/storage/supabase-storage-backend.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development.
-- OLD archives route strictly to `old-youtube-discovery-private` under `asdy/old/<category>/<manifestId>/manifest.json`.
-- NEW dataset generations route strictly to `new-youtube-discovery-private` under `<owner_uuid>/persistence/datasets/...`.
+Authoritative persistence uses Cloudflare R2 via `src/lib/storage/r2-blob-backend.ts` and `src/lib/storage/r2-worker-storage-client.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development.
+- OLD archives route strictly to `old-youtube-discovery-private` via `old-youtube-discovery-api` under `asdy/old/<category>/<manifestId>/manifest.json`.
+- NEW dataset generations route strictly to `new-youtube-discovery-private` via `new-youtube-discovery-api` under `<owner_uuid>/persistence/datasets/...`.
 - Structured data persistence is fully connected to Prisma 7 / Supabase PostgreSQL across all 19 canonical models.
-- File and archive storage routes through dedicated private Supabase Storage buckets.
+- Object storage routes through dedicated Cloudflare Workers using short-lived cryptographic capability tokens.
 - Manifests, playlists, and search histories are permanently stored without TTL data loss.
 - Complete Project Backup & Restore Engine allows full offline portability (database JSON + SQL dump + migrations + storage objects + restore CLI script).
 - Browser Data Recovery Engine ingests Chrome storage without mutation and produces compliant ZIP archives.
@@ -301,7 +302,14 @@ Forbidden public secrets:
 - `src/lib/blob/blob-paths.ts`: versioned private-Blob pathname layout (`youtube-discovery/v1/...`).
 - `src/lib/blob/blob-config.ts`: token/OIDC resolution + validation (no secrets in errors).
 - `src/lib/blob/blob-backend.ts`: swappable byte adapter interface + in-memory mock for tests.
-- `src/lib/blob/vercel-blob-backend.ts`: production SDK adapter (private objects, ETag CAS, URL-host capability).
+- `src/lib/blob/vercel-blob-backend.ts`: production storage adapter delegating to R2StorageBackend (`new-youtube-discovery-private`).
+- `src/lib/storage/r2-capability-token.ts`: cryptographic capability token engine; signs short-lived (120s) HMAC-SHA256 JWTs with operation, key scope, and audience validation.
+- `src/lib/storage/r2-worker-storage-client.ts`: centralized HTTPS client for the two Cloudflare Workers (`new-youtube-discovery-api` and `old-youtube-discovery-api`).
+- `src/lib/storage/r2-blob-backend.ts`: authoritative BlobBackend adapter connecting the app to Cloudflare R2 through the two Workers with local Disk fallback.
+- `src/lib/storage/supabase-storage-backend.ts`: backward-compatibility bridge re-exporting R2StorageBackend (Supabase Storage retired).
+- `cloudflare/workers/new-youtube-discovery-api/*`: Cloudflare Worker handling active application datasets, manifests, and temp files (`new-youtube-discovery-private`).
+- `cloudflare/workers/old-youtube-discovery-api/*`: Cloudflare Worker handling historical archive manifests across the 4 canonical OLD categories (`old-youtube-discovery-private`).
+- `scripts/test-cloudflare-r2-workers.mjs`: automated test suite validating capability tokens, worker isolation, and SHA-256 integrity.
 - `src/lib/blob/record-format.ts`: deterministic serialization, UTF-8 sizing, chunk math, SHA-256 manifests.
 - `src/lib/blob/record-store.ts`: one-logical-record store (single/chunked, CAS indexes, read-back verification).
 - `src/lib/blob/chunked-upload.ts`: staged init/chunk/commit/abort for oversized browser payloads.
@@ -409,6 +417,12 @@ Forbidden public secrets:
 - `prisma/schema.prisma`: canonical DB schema foundation with all 19 domain models and `@prisma/adapter-pg` driver adapter.
 - `prisma/migrations/*`: append-only migration history with 3 applied and synchronized migrations (`20261102000000_canonical_v1_4_foundation`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_storage_bucket`).
 - `scripts/*`: env and DB guardrails using root `.env.local`.
+- `vercel-blob-backup/`: Local mirror directory containing all 86 blobs (16.15 MB) downloaded from Vercel Blob before decommissioning, preserving full directory structure (`youtube-discovery/v1/...`).
+- `src/lib/recovery/local-data-center-service.ts`: Unified client-side browser storage inventory & management engine. Discovers localStorage, IndexedDB (`youtube_discovery_local_v1`), Cache Storage, and OPFS across 5 canonical dataset categories (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`) with strict secret redaction and safe deletion safeguards.
+- `src/app/api/local-data/backup/route.ts`: Authenticated backup export endpoint structuring client storage into standard directories (`Saved-Items/`, `Playlists/`, etc.) with `backup-manifest.json` and `SHA256SUMS.txt` inside PKZIP 2.0.
+- `src/components/local-data/local-data-center-workspace.tsx`: Primary workspace for the dedicated Local Data Center page (`/dashboard/local-data` & `/local-data`), providing 7-card Storage Overview metrics, live Browser Data Explorer with multi-mechanism filtering and safe JSON preview, read-only Backup & Export, and permanent Deletion review.
+- `src/components/local-data/local-data-deletion-modal.tsx`: Destructive deletion confirmation dialog requiring exact Arabic confirmation phrase ("احذف بياناتي المحلية"), category filtering, and protected token exclusion.
+- `src/app/dashboard/local-data/page.tsx` & `src/app/local-data/page.tsx`: Dedicated page routes wrapped in `AppShell` with full sidebar navigation integration.
 - `.env.example`: tracked safe environment template.
 - `.github/workflows/ci.yml`: validation workflow.
 

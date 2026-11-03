@@ -1,8 +1,11 @@
 import "server-only";
 
 import { Prisma } from "@prisma/client";
-import { getOldStorageBackend, getStorageBackendForBucket } from "@/lib/storage/supabase-storage-backend";
-import { OLD_STORAGE_BUCKET } from "@/lib/supabase/storage";
+import {
+  getOldStorageBackend,
+  getStorageBackendForBucket,
+  OLD_R2_BUCKET,
+} from "@/lib/storage/r2-blob-backend";
 import { prisma } from "@/lib/db/prisma";
 import {
   type ArchivedManifestEnvelope,
@@ -133,7 +136,7 @@ export async function importArchivedManifest(
         category: meta.category,
         source_format: meta.source_format,
         storage_path: storagePath,
-        bucket_id: OLD_STORAGE_BUCKET,
+        bucket_id: OLD_R2_BUCKET,
         original_filename: meta.provenance?.original_filename || "manifest.json",
         mime_type: "application/json",
         status: "COMMITTED",
@@ -159,7 +162,7 @@ export async function importArchivedManifest(
     category: meta.category,
     source_format: meta.source_format,
     storage_path: storagePath,
-    bucket_id: OLD_STORAGE_BUCKET,
+    bucket_id: OLD_R2_BUCKET,
     original_filename: meta.provenance?.original_filename || "manifest.json",
     mime_type: "application/json",
     status: "COMMITTED",
@@ -253,7 +256,7 @@ export async function listArchivedManifests(
               category: m.category,
               source_format: m.source_format,
               storage_path: obj.pathname,
-              bucket_id: OLD_STORAGE_BUCKET,
+              bucket_id: OLD_R2_BUCKET,
               byte_count: m.byte_count || obj.size,
               record_count: m.record_count,
               content_sha256: m.content_sha256,
@@ -321,7 +324,7 @@ export async function getArchivedManifestById(
     // Fall back to storage lookup
   }
 
-  const backend = getStorageBackendForBucket(record?.bucket_id || OLD_STORAGE_BUCKET);
+  const backend = getStorageBackendForBucket(record?.bucket_id || OLD_R2_BUCKET);
 
   if (record) {
     const bytes = await backend.getBytes(record.storage_path);
@@ -337,7 +340,7 @@ export async function getArchivedManifestById(
     throw new Error(`Archived manifest not found for ID: "${archiveId}".`);
   }
 
-  const fallbackBackend = getStorageBackendForBucket(matched.bucket_id || OLD_STORAGE_BUCKET);
+  const fallbackBackend = getStorageBackendForBucket(matched.bucket_id || OLD_R2_BUCKET);
   const bytes = await fallbackBackend.getBytes(matched.storage_path);
   const envelope = JSON.parse(bytes.toString("utf8")) as ArchivedManifestEnvelope;
   return { record: matched, envelope };

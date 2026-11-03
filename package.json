@@ -29,6 +29,11 @@
     "test:features": "node scripts/test-phase-a-g-features.mjs",
     "test:recovery": "node scripts/test-phase1-6-recovery-and-download.mjs",
     "test:auth": "node scripts/test-supabase-auth.mjs",
+    "test:r2": "node scripts/test-cloudflare-r2-workers.mjs",
+    "worker:new:deploy": "wrangler deploy --config cloudflare/workers/new-youtube-discovery-api/wrangler.jsonc",
+    "worker:old:deploy": "wrangler deploy --config cloudflare/workers/old-youtube-discovery-api/wrangler.jsonc",
+    "worker:new:tail": "wrangler tail new-youtube-discovery-api",
+    "worker:old:tail": "wrangler tail old-youtube-discovery-api",
     "test:blob:integration": "node --env-file=.env.local scripts/run-blob-tests.mjs --integration",
     "verify": "npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run test:auth && npm run build"
   },
@@ -66,7 +71,8 @@
     "eslint-config-next": "16.2.6",
     "prisma": "^7.10.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wrangler": "^4.157.0"
   },
   "allowScripts": {
     "@google/genai@2.0.0": true,

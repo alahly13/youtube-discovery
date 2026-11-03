@@ -156,19 +156,19 @@ export function Dashboard() {
       </section>
 
       {/* ── Quick Discovery Launch Hub ──────────────────────────────── */}
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Link href="/search" className="group block">
-          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40">
+          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40 h-full">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
                 <Search className="h-5 w-5" />
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
-                  YouTube Search Workspace
+                  YouTube Search
                 </h3>
                 <p className="mt-0.5 text-xs text-muted">
-                  Query videos, channels, playlists with SafeSearch &quot;none&quot; & 18+ filters
+                  Query videos, channels, playlists with mature content discovery
                 </p>
               </div>
             </div>
@@ -176,7 +176,7 @@ export function Dashboard() {
         </Link>
 
         <Link href="/channel-explorer" className="group block">
-          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40">
+          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40 h-full">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-foreground">
                 <Compass className="h-5 w-5" />
@@ -186,7 +186,7 @@ export function Dashboard() {
                   Channel Explorer
                 </h3>
                 <p className="mt-0.5 text-xs text-muted">
-                  Resolve any handle or ID to discover complete upload manifests
+                  Resolve any handle or ID to discover upload manifests
                 </p>
               </div>
             </div>
@@ -194,7 +194,7 @@ export function Dashboard() {
         </Link>
 
         <Link href="/playlist-explorer" className="group block">
-          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40">
+          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40 h-full">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-foreground">
                 <ListVideo className="h-5 w-5" />
@@ -205,6 +205,27 @@ export function Dashboard() {
                 </h3>
                 <p className="mt-0.5 text-xs text-muted">
                   Explore full public playlist manifests in original order
+                </p>
+              </div>
+            </div>
+          </Card>
+        </Link>
+
+        <Link href="/dashboard/local-data" className="group block">
+          <Card className="p-5 transition hover:-translate-y-0.5 hover:border-primary/40 h-full border-primary/20 bg-primary/5">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
+                <Database className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">
+                    Local Data Center
+                  </h3>
+                  <Badge tone="primary" className="text-[9px] px-1 py-0">Core</Badge>
+                </div>
+                <p className="mt-0.5 text-xs text-muted">
+                  Browser storage exploration, verified backups &amp; cleanup
                 </p>
               </div>
             </div>

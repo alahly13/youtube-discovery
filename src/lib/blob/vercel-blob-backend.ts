@@ -1,18 +1,17 @@
 import "server-only";
 
 import type { BlobBackend, BlobObjectMeta } from "./blob-backend";
-import { SupabaseStorageBackend } from "../storage/supabase-storage-backend";
-import { DiskStorageBackend } from "../storage/disk-storage-backend";
+import { R2StorageBackend, NEW_R2_BUCKET } from "../storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * Unified Storage Adapter (Supabase Storage + Local Disk Fallback)
+ * Unified Storage Adapter (Cloudflare R2 via Workers + Local Disk Fallback)
  * ──────────────────────────────────────────────────────────────────────────
- * - Replaces @vercel/blob completely at runtime.
- * - Routes storage operations to private Supabase Storage buckets when
- *   NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY are set.
+ * - Replaces @vercel/blob and Supabase Storage completely at runtime.
+ * - Routes storage operations exclusively to Cloudflare R2 via dedicated
+ *   Cloudflare Workers with short-lived capability tokens.
  * - Gracefully falls back to DiskStorageBackend (`data/storage/`) when running
- *   offline or in local dev without cloud storage credentials.
+ *   offline or in local dev without worker credentials.
  * - Preserves exact BlobBackend contract for all existing callers.
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -23,15 +22,7 @@ export class VercelBlobBackend implements BlobBackend {
   private delegate: BlobBackend;
 
   constructor() {
-    const hasSupabase =
-      Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
-      Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
-
-    if (hasSupabase) {
-      this.delegate = new SupabaseStorageBackend();
-    } else {
-      this.delegate = new DiskStorageBackend();
-    }
+    this.delegate = new R2StorageBackend(NEW_R2_BUCKET);
   }
 
   async getBytes(pathname: string): Promise<Buffer> {

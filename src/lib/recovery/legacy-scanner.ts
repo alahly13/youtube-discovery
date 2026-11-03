@@ -172,7 +172,7 @@ export async function scanVercelBlob(): Promise<SourceScanSummary> {
     source: "vercel_blob",
     sourceName: "Vercel Blob Storage",
     recoveryCapability: "FULL",
-    status: token ? "AVAILABLE" : "ACCESS_UNAVAILABLE",
+    status: token ? "AVAILABLE" : "NOT_CONFIGURED",
     discoveredCount: 0,
     readableCount: 0,
     unreadableCount: 0,
@@ -180,7 +180,8 @@ export async function scanVercelBlob(): Promise<SourceScanSummary> {
     totalRecoverableBytes: 0,
     items: [],
     exclusions: [],
-    accessRequirements: token ? undefined : "Requires server environment variable BLOB_READ_WRITE_TOKEN.",
+    accessRequirements: token ? undefined : "Vercel Blob decommissioned in favor of Cloudflare R2 and Supabase Storage.",
+    notes: "Historical objects backed up locally to vercel-blob-backup/.",
   };
 
   if (!token) {

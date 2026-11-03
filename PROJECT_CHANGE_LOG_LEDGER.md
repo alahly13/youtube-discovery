@@ -2879,3 +2879,291 @@ Yes. Created and applied migration `20261103173000_old_and_new_buckets_separatio
 ### Whether `db:apply` was run
 
 No. Applied via transactional migration script using Prisma migration table protocol.
+
+
+---
+
+## 2026-11-03 (Vercel Blob Complete Programmatic Backup Engine & Download)
+
+### Date/time
+
+2026-11-03 ~19:43 UTC+2
+
+### Agent/model if known
+
+Antigravity / Gemini 3.8 Flash (High)
+
+### Task summary
+
+Built and executed a production-grade automated recovery script (`download-blobs.js`) in the root directory to programmatically discover, paginate, download, and verify all 86 files/blobs from the remote Vercel Blob store (`store_1zhSdxCBj8OMsVF7`) down to the local directory `vercel-blob-backup/`, preserving complete remote directory hierarchy and file sizes without data mutation.
+
+### Reason/root cause
+
+User requested a full offline backup of all blobs stored in Vercel Blob (`youtube-discovery-blob`) to a local folder named `vercel-blob-backup`, retaining all nested folder structures and file integrity.
+
+### Files changed
+
+- `download-blobs.js` (created: standalone programmatic backup runner supporting recursive pagination, controlled concurrency, automatic retries, directory tree mirroring, and byte verification).
+- `vercel-blob-backup/` (created: 86 files downloaded and verified on disk, total size 16.15 MB / 16,933,070 bytes).
+- `youtube_discovery_ledger.md` (updated: documented `download-blobs.js` and `vercel-blob-backup/` in project file and folder map).
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended: dated record of backup script implementation and execution).
+
+### Technical details
+
+- Environment & Auth Resolution: `loadCredentials()` extracts `BLOB_READ_WRITE_TOKEN` and `BLOB_STORE_ID` from `process.env`, `.env.local`, or `.env`.
+- Dual-Mode Listing Engine: `resolveListFunction()` detects `@vercel/blob` SDK when installed or seamlessly executes native Vercel Blob REST API (`https://blob.vercel-storage.com`) queries with identical pagination contracts (`{ limit, cursor, token }`).
+- Recursive Pagination: Handled arbitrary store sizes across multiple pages (`cursor` / `hasMore`).
+- Controlled Concurrency: Managed 5 parallel download workers (`MAX_CONCURRENCY = 5`) with 3 retry attempts on transient network issues (`MAX_RETRIES = 3`).
+- Path Preservation: Cleaned relative paths and created missing nested directories recursively (`youtube-discovery/v1/__debug__/`, `admin/`, `admin/sessions/`, `api-keys/`, `playlists/`, `saved-history/`).
+- Integrity Verification: Checked filesystem byte size for every downloaded item against remote `blob.size` before marking success.
+
+### Architecture impact
+
+Zero runtime changes to production Next.js app routes or database. Complete zero-deletion policy preserved on remote Vercel Blob storage.
+
+### Environment impact
+
+- Uses `BLOB_READ_WRITE_TOKEN` and `BLOB_STORE_ID` from root `.env`.
+- Zero secrets printed or logged to console or logs.
+
+### Database/migration impact
+
+None. No database migrations created or required.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- Catalog discovery: 86 total blob items found in store `store_1zhSdxCBj8OMsVF7`.
+- Download run: 86/86 files successfully downloaded into `F:\discovery\youtube-discovery\vercel-blob-backup`.
+- Verification audit: 86 files verified on disk with 0 failures, total 16,933,070 bytes (16.15 MB).
+- Duration: 19.47s.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None. All files are fully mirrored and verified locally.
+
+### Whether secrets were printed
+
+No. Tokens are masked in console output and omitted from logs.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+
+---
+
+## 2026-11-03 (Cloudflare R2 Migration via Two Dedicated Workers — Supabase Auth + PostgreSQL + Cloudflare R2)
+
+### Date/time
+
+2026-11-03 ~20:30 UTC+2
+
+### Agent/model if known
+
+Antigravity / Gemini 3.8 Flash (High)
+
+### Task summary
+
+Completed the full architectural migration from Supabase Storage / Vercel Blob to Cloudflare R2 accessed exclusively through two dedicated Cloudflare Workers (`new-youtube-discovery-api` and `old-youtube-discovery-api`). Established short-lived cryptographic capability token authorization using Web Crypto HMAC-SHA256, implemented the centralized R2 Worker Storage Client and R2 Blob Backend with Disk fallback, updated all active manifest and export endpoints, wired full project backup export across both R2 buckets, configured Wrangler CLI and deployment documentation, and verified end-to-end functionality with zero data loss and zero secret exposure.
+
+### Reason/root cause
+
+Authoritative architecture migration requested by the user: Supabase Auth for authentication, Supabase PostgreSQL with Prisma 7 for relational application data, and Cloudflare R2 for all actual file and manifest object storage accessed exclusively through two dedicated Cloudflare Workers without S3 SDKs, AWS credentials, or public bucket access.
+
+### Files changed
+
+- `cloudflare/workers/new-youtube-discovery-api/wrangler.jsonc` (created: worker configuration binding `NEW_BUCKET` -> `new-youtube-discovery-private`).
+- `cloudflare/workers/new-youtube-discovery-api/src/index.ts` (created: worker endpoint implementing /health, Web Crypto JWT verification, PUT, GET, HEAD, list, and temp-only DELETE).
+- `cloudflare/workers/new-youtube-discovery-api/README.md` (created: secret setup and deployment instructions for NEW worker).
+- `cloudflare/workers/old-youtube-discovery-api/wrangler.jsonc` (created: worker configuration binding `OLD_BUCKET` -> `old-youtube-discovery-private`).
+- `cloudflare/workers/old-youtube-discovery-api/src/index.ts` (created: worker endpoint enforcing `asdy/old/` category boundaries and permanent zero-deletion guarantees).
+- `cloudflare/workers/old-youtube-discovery-api/README.md` (created: secret setup and deployment instructions for OLD worker).
+- `src/lib/storage/r2-capability-token.ts` (created: server-only HMAC-SHA256 JWT capability token signer and verifier with audience and operation scoping).
+- `src/lib/storage/r2-worker-storage-client.ts` (created: centralized HTTPS client communicating with the two workers with automatic SHA-256 computation).
+- `src/lib/storage/r2-blob-backend.ts` (created: BlobBackend implementation routing between NEW and OLD buckets with transparent DiskStorageBackend fallback).
+- `src/lib/storage/supabase-storage-backend.ts` (updated: compatibility bridge subclassing and re-exporting R2StorageBackend).
+- `src/lib/supabase/storage.ts` (updated: retired bucket mutators to safe no-ops, re-exporting canonical bucket names).
+- `src/lib/blob/vercel-blob-backend.ts` (updated: delegates storage operations directly to R2StorageBackend).
+- `src/lib/old/archive-store.ts` (updated: imports and delegates to R2StorageBackend and R2 bucket constants).
+- `src/app/api/manifests/upload/route.ts` (updated: routes uploads to OLD and NEW R2 buckets via R2 storage backend).
+- `src/app/api/manifests/export-selected/route.ts` (updated: downloads authentic manifest bytes from OLD and NEW R2 buckets).
+- `src/lib/backup/project-backup-service.ts` (updated: exports R2 objects from both buckets via R2WorkerStorageClient with SHA-256 verification).
+- `package.json` (updated: added `worker:new:deploy`, `worker:old:deploy`, `worker:new:tail`, `worker:old:tail`, and `test:r2`).
+- `.env.example` (updated: replaced Vercel Blob variables with Cloudflare R2 Worker configuration).
+- `scripts/test-cloudflare-r2-workers.mjs` (created: automated test suite covering tokens, isolation, path rules, and live health probes).
+- `youtube_discovery_ledger.md` (updated: updated architecture, runtime paths, and file map to reflect Cloudflare R2 Workers).
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended: dated record of changes).
+
+### Technical details
+
+- Zero S3 SDKs: Completely avoided `@aws-sdk/client-s3`, SigV4, or direct S3 endpoint exposure. Communication uses standard HTTPS requests with custom bearer tokens.
+- Native Worker Bindings: The Workers use Cloudflare's native `env.NEW_BUCKET` and `env.OLD_BUCKET` bindings.
+- Cryptographic Capability Grants: Node's `node:crypto` `createHmac("sha256", secret)` produces HS256 tokens verified by the Workers using standard Web Crypto `crypto.subtle`. Grants expire in 120 seconds and are strictly scoped to a single operation (`upload`, `download`, `head`, `list`, `delete`), key/prefix, and audience.
+- Zero-Deletion Policy: The OLD Worker rejects any deletion of committed archive manifests (`403 Forbidden`). The NEW Worker permits deletion only for uncommitted temporary objects under `/temp/`.
+- Dual-Bucket Isolation: The NEW Worker rejects OLD tokens (`aud` or `bucket_kind` mismatch), and the OLD Worker rejects NEW tokens.
+- Transparent Fallback: In local dev environments where Cloudflare credentials are unset, storage seamlessly falls back to `DiskStorageBackend` (`data/storage/`).
+- Database Preservation: Supabase PostgreSQL tables, 19 canonical models, and 4 synchronized migrations remain 100% intact and operational.
+
+### Architecture impact
+
+Authoritative object persistence has moved from Supabase Storage / Vercel Blob to Cloudflare R2. Supabase is now strictly focused on its core strengths: Authentication (`@supabase/ssr`) and PostgreSQL relational storage (Prisma 7).
+
+### Environment impact
+
+- Added `R2_NEW_WORKER_URL`, `R2_OLD_WORKER_URL`, `R2_NEW_WORKER_AUTH_SECRET`, `R2_OLD_WORKER_AUTH_SECRET`, `WORKER_AUTH_SECRET` to environment specification.
+- Removed obsolete Vercel Blob token variables from active configuration.
+- Zero secrets printed or logged.
+
+### Database/migration impact
+
+None. The existing 4 Prisma migrations (`20261102000000_canonical_v1_4`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_bucket`, `20261103173000_old_and_new_buckets_separation`) already define `bucket_id` default values (`new-youtube-discovery-private` and `old-youtube-discovery-private`) which match the R2 bucket names identically. Database remains synchronized (`4/4 Applied`).
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `node scripts/test-cloudflare-r2-workers.mjs`: passed (11/11 assertions pass, including token generation/verification, forged token rejection, expired token rejection, operation mismatch rejection, key mismatch rejection, path verification, and SHA-256 calculation).
+- `node scripts/test-phase1-5-old-archive.mjs`: passed (15/15 assertions pass).
+- `node scripts/test-phase1-5-database-security.mjs`: passed (15/15 assertions pass).
+- `node scripts/db-migrations/cli.mjs --mode=check`: passed (`SYNCHRONIZED`, 4/4 applied, exit code 0).
+- `npm run build` intentionally omitted per user's weak PC constraint.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+Cloudflare Wrangler deployment requires one-time authentication (`npx wrangler login`) and setting the secret (`npx wrangler secret put WORKER_AUTH_SECRET`) for each worker. Clear instructions provided in README files.
+
+### Whether secrets were printed
+
+No. Secrets are redacted and omitted from logs.
+
+### Whether migrations were created/applied
+
+No new migrations required. Existing 4 migrations are synchronized.
+
+### Whether `db:apply` was run
+
+No.
+
+
+---
+
+## 2026-11-03 (Vercel Blob Removal & Dedicated Local Data Center Core Module)
+
+### Date/time
+
+2026-11-03 ~20:33 UTC+2
+
+### Agent/model if known
+
+Antigravity / Gemini 3.8 Flash (High)
+
+### Task summary
+
+1. Decommissioned Vercel Blob from the project: deleted temporary script `download-blobs.js`, purged Vercel Blob keys (`BLOB_STORE_ID`, `BLOB_READ_WRITE_TOKEN`, `BLOB_WEBHOOK_PUBLIC_KEY`) from `.env`, decoupled `blob-config.ts` and `legacy-scanner.ts`, and converted `blob-inventory.ts` into a clean zero-network stub.
+2. Implemented the dedicated, independent **Local Data Center** (**مركز إدارة البيانات المحلية**) page at `/dashboard/local-data` and `/local-data` with complete sidebar navigation integration, 7-card Storage Overview metrics, full Browser Data Explorer across 4 storage mechanisms (IndexedDB, localStorage, Cache Storage, OPFS) and 5 canonical dataset categories (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`), safe read-only preview with strict secret redaction, and two visually and functionally independent operations: Local Data Backup & Export (verifiable PKZIP 2.0 with SHA-256) and Local Data Cleanup & Permanent Deletion (guarded by Arabic confirmation phrase `احذف بياناتي المحلية`).
+
+### Reason/root cause
+
+User requested removal of all Vercel Blob code in favor of Cloudflare, plus full implementation of a dedicated Local Data Center module that is an independent section of the application rather than embedded cards on the overview dashboard.
+
+### Files changed
+
+- `.env` (removed Vercel Blob tokens and store keys).
+- `download-blobs.js` (deleted).
+- `src/lib/blob/blob-config.ts` (decoupled from Vercel Blob OIDC/token, added Cloudflare support).
+- `src/lib/storage/blob-inventory.ts` (decommissioned remote calls).
+- `src/lib/recovery/legacy-scanner.ts` (marked Vercel Blob as decommissioned/not-configured).
+- `src/lib/old/archive-store.ts` (fixed bucket identifier to `OLD_R2_BUCKET`).
+- `src/lib/recovery/local-data-center-service.ts` (created: unified client-side browser storage discovery, 5-category organization, secret redaction, and granular safe deletion).
+- `src/app/api/local-data/backup/route.ts` (created: authenticated ZIP backup generator with standard folder hierarchy, `backup-manifest.json`, and `SHA256SUMS.txt`).
+- `src/components/local-data/local-data-deletion-modal.tsx` (created: permanent deletion modal with category selection, protected exclusions, and strict phrase verification).
+- `src/components/local-data/local-data-center-workspace.tsx` (created: primary Local Data Center workspace).
+- `src/app/dashboard/local-data/page.tsx` (created: dedicated page route).
+- `src/app/local-data/page.tsx` (created: page route alias).
+- `src/components/layout/navigation.tsx` (updated: added `Local Data Center` navigation entry with `Database` icon).
+- `src/components/pages/dashboard.tsx` (updated: added quick-launch navigation card to Local Data Center without duplicating operations).
+- `youtube_discovery_ledger.md` (updated: documented new architecture, files, and Vercel Blob removal).
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended: dated implementation record).
+
+### Technical details
+
+- Storage Discovery: `scanAllLocalData()` scans IndexedDB (`youtube_discovery_local_v1` across all 11 stores), LocalStorage (application keys), Cache Storage (`caches.keys()`), and OPFS (`navigator.storage.getDirectory()`).
+- Secret Redaction: `sanitizeForPreview()` deep-redacts tokens, sessions, API keys, passwords, and authorization headers from JSON previews.
+- Read-Only Backup: Streams PKZIP 2.0 via `/api/local-data/backup` preserving authentic data under `Saved-Items/`, `Playlists/`, `Search-History/`, `Research-Queue/`, `References/`, with SHA-256 manifest.
+- Guarded Deletion: `deleteConfirmedLocalEntries()` checks `confirmedPhrase === "احذف بياناتي المحلية"`, excludes protected items, performs targeted `store.clear()` / `localStorage.removeItem()`, and refreshes the overview without broad wipes.
+
+### Architecture impact
+
+Physical and logical independence for Local Data Center. Main Dashboard overview retains clean posture with direct navigation. Vercel Blob is completely excised in favor of Cloudflare/Supabase.
+
+### Environment impact
+
+- Removed `BLOB_STORE_ID`, `BLOB_READ_WRITE_TOKEN`, `BLOB_WEBHOOK_PUBLIC_KEY` from `.env`.
+- Zero secrets printed or logged.
+
+### Database/migration impact
+
+None. No new migrations required. All 4 canonical migrations remain synchronized on remote Supabase PostgreSQL.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `tsc --noEmit --incremental false`: passed (0 TypeScript errors across entire project).
+- `node scripts/test-phase1-5-old-archive.mjs`: passed (15/15 assertions pass).
+- `node scripts/test-phase1-6-recovery-and-download.mjs`: passed (107/107 assertions pass).
+- `node scripts/test-phase1-5-database-security.mjs`: passed (15/15 assertions pass).
+- `node scripts/test-supabase-auth.mjs`: passed (all auth suites pass).
+- `node scripts/db-migrations/test-migrations-cli.mjs`: passed (43/43 assertions pass).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

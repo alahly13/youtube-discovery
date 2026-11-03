@@ -40,6 +40,7 @@ yarn-error.log*
 # local file archives (search records, user playlist manifests, api keys)
 # These are durable server-side JSON stores, never committed.
 /data
+/vercel-blob-backup
 
 # typescript
 *.tsbuildinfo

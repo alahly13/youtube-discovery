@@ -2,8 +2,12 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
 import { prisma } from "@/lib/db/prisma";
-import { getOldStorageBackend, getNewStorageBackend } from "@/lib/storage/supabase-storage-backend";
-import { OLD_STORAGE_BUCKET, NEW_STORAGE_BUCKET } from "@/lib/supabase/storage";
+import {
+  getOldStorageBackend,
+  getNewStorageBackend,
+  OLD_R2_BUCKET,
+  NEW_R2_BUCKET,
+} from "@/lib/storage/r2-blob-backend";
 import {
   parseRawBufferToEnvelope,
   getArchivedManifestStoragePath,
@@ -115,7 +119,7 @@ export async function POST(request: Request) {
           category,
           source_format: envelope.manifest_metadata.source_format,
           storage_path: storagePath,
-          bucket_id: OLD_STORAGE_BUCKET,
+          bucket_id: OLD_R2_BUCKET,
           original_filename: filename,
           mime_type: "application/json",
           status: "COMMITTED",
@@ -137,7 +141,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         destination: "OLD",
-        bucket: OLD_STORAGE_BUCKET,
+        bucket: OLD_R2_BUCKET,
         storagePath,
         recordId: record.id,
         manifestId,
@@ -237,7 +241,7 @@ export async function POST(request: Request) {
             generation_id: generationId,
             part_number: 1,
             storage_path: storagePath,
-            bucket_id: NEW_STORAGE_BUCKET,
+            bucket_id: NEW_R2_BUCKET,
             byte_count: BigInt(partBuffer.length),
             record_count: parsedItems.length,
             sha256: partSha256,
@@ -257,7 +261,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         destination: "NEW",
-        bucket: NEW_STORAGE_BUCKET,
+        bucket: NEW_R2_BUCKET,
         datasetId: dataset.id,
         datasetType,
         generationId,

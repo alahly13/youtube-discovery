@@ -1,84 +1,39 @@
 import "server-only";
 
-import { createAdminClient } from "./admin";
+import { OLD_R2_BUCKET, NEW_R2_BUCKET } from "../storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * YouTube Discovery — Supabase Storage Bucket Configuration
+ * YouTube Discovery — Storage Bucket Constants (Cloudflare R2 Migration)
  * ──────────────────────────────────────────────────────────────────────────
- * Scope: Separation of OLD and NEW Dedicated Private Buckets
+ * Scope: Retained for backward-compatibility aliases.
  *
- * 1. Dedicated OLD Bucket: 'old-youtube-discovery-private'
- *    Used for historical imported manifests and browser archives.
- *    Logical prefixes:
- *      - asdy/old/saved-items/
- *      - asdy/old/saved-playlists/
- *      - asdy/old/saved-titles-links/
- *      - asdy/old/saved-search-history/
- *
- * 2. Dedicated NEW Bucket: 'new-youtube-discovery-private'
- *    Used for active application manifests, datasets, and generation parts:
- *      - <storage_owner_uuid>/persistence/datasets/...
- *      - <storage_owner_uuid>/temp/...
+ * All object storage is now routed to Cloudflare R2 via dedicated Workers:
+ *   1. OLD: 'old-youtube-discovery-private'
+ *   2. NEW: 'new-youtube-discovery-private'
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-export const OLD_STORAGE_BUCKET =
-  process.env.SUPABASE_OLD_STORAGE_BUCKET || "old-youtube-discovery-private";
+export const OLD_STORAGE_BUCKET = OLD_R2_BUCKET;
+export const NEW_STORAGE_BUCKET = NEW_R2_BUCKET;
+export const LEGACY_STORAGE_BUCKET = "youtube-discovery-private";
 
-export const NEW_STORAGE_BUCKET =
-  process.env.SUPABASE_NEW_STORAGE_BUCKET || "new-youtube-discovery-private";
-
-export const LEGACY_STORAGE_BUCKET =
-  process.env.SUPABASE_STORAGE_BUCKET || "youtube-discovery-private";
-
-// Canonical default for new persistence operations
 export const CANONICAL_STORAGE_BUCKET = NEW_STORAGE_BUCKET;
 export const DEFAULT_SUPABASE_BUCKET = NEW_STORAGE_BUCKET;
 
 /**
- * Ensures a private Supabase Storage bucket exists.
- * Does not overwrite or delete existing bucket items.
+ * @deprecated Supabase Storage is retired in favor of Cloudflare R2 via Workers.
  */
-export async function ensurePrivateBucket(bucketName = NEW_STORAGE_BUCKET): Promise<boolean> {
-  const supabase = createAdminClient();
-  if (!supabase) return false;
-
-  try {
-    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-    if (listError) {
-      console.warn("[supabase-storage] Failed to list buckets:", listError.message);
-      return false;
-    }
-
-    const exists = buckets?.some((b) => b.name === bucketName);
-    if (!exists) {
-      const { error: createError } = await supabase.storage.createBucket(bucketName, {
-        public: false, // Private bucket strictly
-        fileSizeLimit: 52428800, // 50MB / 52,428,800 bytes
-      });
-      if (createError) {
-        console.warn(`[supabase-storage] Failed to create bucket ${bucketName}:`, createError.message);
-        return false;
-      }
-    }
-    return true;
-  } catch (err) {
-    console.warn("[supabase-storage] Error ensuring private bucket:", err);
-    return false;
-  }
+export async function ensurePrivateBucket(_bucketName = NEW_STORAGE_BUCKET): Promise<boolean> {
+  return true;
 }
 
 /**
- * Ensures both dedicated OLD and NEW application buckets are initialized.
+ * @deprecated Supabase Storage is retired in favor of Cloudflare R2 via Workers.
  */
 export async function ensureAllApplicationBuckets(): Promise<{
   oldBucketOk: boolean;
   newBucketOk: boolean;
 }> {
-  const [oldBucketOk, newBucketOk] = await Promise.all([
-    ensurePrivateBucket(OLD_STORAGE_BUCKET),
-    ensurePrivateBucket(NEW_STORAGE_BUCKET),
-  ]);
-  return { oldBucketOk, newBucketOk };
+  return { oldBucketOk: true, newBucketOk: true };
 }

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400" fill="none">
+  <!-- Magnifying Glass Handle & Connector (Bottom-Left) -->
+  <g transform="rotate(135 225 175)" stroke="#315C7C" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Neck Connector -->
+    <rect x="328" y="161" width="28" height="28" fill="#FFFFFF" />
+    <!-- Outer Handle -->
+    <rect x="352" y="152" width="110" height="46" rx="22" fill="#FFFFFF" />
+  </g>
+
+  <!-- Magnifying Glass Rim -->
+  <circle cx="225" cy="175" r="115" fill="#FFFFFF" stroke="#315C7C" stroke-width="5.5" />
+  <circle cx="225" cy="175" r="95" fill="#FFFFFF" stroke="#315C7C" stroke-width="5.5" />
+
+  <!-- Rounded Red Triangle (Centered inside the new lens position) -->
+  <path d="M 210.3 110.4 
+           C 216.8 99.1 233.2 99.1 239.7 110.4 
+           L 288.5 195.0 
+           C 295.0 206.3 286.9 220.5 273.8 220.5 
+           L 176.2 220.5 
+           C 163.1 220.5 155.0 206.3 161.5 195.0 
+           Z" fill="#E1322A" />
+</svg>

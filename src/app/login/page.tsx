@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertCircle, KeyRound, Loader2, Lock } from "lucide-react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -87,8 +88,15 @@ function LoginForm() {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <div className="mb-5 flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary">
-            <Lock className="h-5 w-5" />
+          <div className="flex shrink-0 h-11 w-11 items-center justify-center rounded-xl border border-border/70 bg-surface-raised/80 p-1.5 shadow-xs overflow-hidden">
+            <Image
+              src="/app-icon.svg"
+              alt="YouTube Discovery"
+              width={32}
+              height={32}
+              className="h-8 w-8 object-contain"
+              priority
+            />
           </div>
           <div>
             <h1 className="text-lg font-semibold text-foreground">Administrator Sign In</h1>

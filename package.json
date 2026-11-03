@@ -7,6 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
+    "icons:generate": "node scripts/generate-brand-icons.mjs",
     "env:validate": "node scripts/app-validate-env.mjs",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
@@ -15,6 +16,7 @@
     "db:migrations:check": "node scripts/db-migrations/cli.mjs --mode=check",
     "db:migrations:json": "node scripts/db-migrations/cli.mjs --mode=json",
     "db:backup": "node scripts/backup-cli.mjs",
+    "recovery:local": "node scripts/recovery/local-filesystem-scanner.mjs",
     "typecheck": "npm run db:generate && tsc --noEmit --incremental false",
     "build": "npm run env:validate && npm run db:generate && next build",
     "start": "next start",
@@ -24,6 +26,7 @@
     "test:migrations": "node scripts/db-migrations/test-migrations-cli.mjs",
     "test:security": "node scripts/test-phase1-5-database-security.mjs",
     "test:old": "node scripts/test-phase1-5-old-archive.mjs",
+    "test:features": "node scripts/test-phase-a-g-features.mjs",
     "test:recovery": "node scripts/test-phase1-6-recovery-and-download.mjs",
     "test:auth": "node scripts/test-supabase-auth.mjs",
     "test:blob:integration": "node --env-file=.env.local scripts/run-blob-tests.mjs --integration",

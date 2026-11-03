@@ -15,6 +15,7 @@ import {
   Tv,
 } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { useSyncExternalStore } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
@@ -70,13 +71,25 @@ export function Dashboard() {
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <Card className="p-6">
           <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone="primary">Official YouTube Data API only</Badge>
-              {isUnrestricted && (
-                <Badge tone="success" className="unrestricted-glow font-medium">
-                  🔞 18+/35+ Sensitive Content Mode Active
-                </Badge>
-              )}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-surface-raised/80 p-1.5 shadow-xs">
+                <Image
+                  src="/app-icon.svg"
+                  alt="YouTube Discovery"
+                  width={32}
+                  height={32}
+                  className="h-8 w-8 object-contain"
+                  priority
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="primary">Official YouTube Data API only</Badge>
+                {isUnrestricted && (
+                  <Badge tone="success" className="unrestricted-glow font-medium">
+                    🔞 18+/35+ Sensitive Content Mode Active
+                  </Badge>
+                )}
+              </div>
             </div>
             <h1 className="mt-4 text-3xl font-semibold text-foreground md:text-4xl">
               Public YouTube metadata discovery, organized as reusable manifests.

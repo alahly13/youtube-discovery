@@ -2742,3 +2742,140 @@ Yes. Created migration `20261103150000_canonical_private_storage_bucket` and app
 ### Whether `db:apply` was run
 
 No. Applied via standard Prisma migration engine (`prisma migrate deploy`).
+
+---
+
+## 2026-11-03 (Four OLD Categories, Dedicated Private Buckets Separation, Manifest Management Pages & Download OLD Data ZIP)
+
+### Date/time
+
+2026-11-03 ~18:15 UTC
+
+### Agent/model if known
+
+Antigravity
+
+### Task summary
+
+Executed the Mandatory Clarification & Implementation Addendum across Phases A through G:
+1. Established exactly four primary OLD category routes (`/old/saved-items`, `/old/saved-playlists`, `/old/saved-titles-links`, `/old/saved-search-history`) with collapsible sidebar navigation and `/old` overview, with transparent redirects for legacy paths.
+2. Separated storage into dedicated private buckets: `old-youtube-discovery-private` (OLD historical archives) and `new-youtube-discovery-private` (NEW active generations).
+3. Enforced exact organizational prefixes:
+   - OLD: `asdy/old/saved-items/`, `asdy/old/saved-playlists/`, `asdy/old/saved-titles-links/`, `asdy/old/saved-search-history/`, `asdy/old/unclassified/` under unique subdirectories `asdy/old/<category>/<manifestId>/manifest.json`.
+   - NEW: `<storage_owner_uuid>/persistence/datasets/<dataset-id>/generations/<generation-id>/parts/part-000001.json`.
+4. Applied migration `20261103173000_old_and_new_buckets_separation` to remote Supabase PostgreSQL, adding columns (`bucket_id`, `original_filename`, `mime_type`, `status`) and check constraints to `archived_manifests`, `storage_manifest_parts`, and `storage_temp_objects`, and registering both private buckets in `storage.buckets`.
+5. Created dedicated Manifest Upload page (`/manifests/upload`) with OLD/NEW destination selector, real-time path preview, and conflict detection.
+6. Created dedicated 100% Read-Only Manifest Viewer (`/manifests/viewer`) with type filters and raw JSON inspector.
+7. Created dedicated Manifest Export page (`/manifests/export`) and API (`/api/manifests/export-selected`) serving authentic bytes and multi-manifest ZIP archives with `SHA256SUMS.txt`.
+8. Built and embedded the `Download OLD Data` modal on `/old` and `/download-center`, powered by pure Node.js PKZIP engine (`old-browser-backup-builder.ts` and `/api/old/browser-backup`) ingesting Chrome IndexedDB (`youtube_discovery_local_v1`) + LocalStorage with strict secret redaction and 0 storage mutation.
+
+### Reason/root cause
+
+User requirement to cleanly isolate legacy imported archives from active application data, structure the OLD archive into exactly 4 canonical categories without clutter, provide dedicated manifest upload/inspection/export workflows, and offer a visible, one-click button to download an independent, offline verifiable ZIP copy of their browser data before decommissioning any legacy environment.
+
+### Files changed
+
+- `prisma/schema.prisma`
+- `prisma/migrations/20261103173000_old_and_new_buckets_separation/migration.sql`
+- `scripts/db-migrations/apply-migration.mjs`
+- `scripts/db-migrations/core.mjs`
+- `src/lib/supabase/storage.ts`
+- `src/lib/storage/supabase-storage-backend.ts`
+- `src/lib/old/archive-envelope.ts`
+- `src/lib/old/archive-store.ts`
+- `src/app/api/old/list/route.ts`
+- `src/app/api/old/import/route.ts`
+- `src/app/api/old/[archiveId]/route.ts`
+- `src/app/api/old/[archiveId]/download/route.ts`
+- `src/app/old/saved-titles-links/page.tsx`
+- `src/app/old/saved-search-history/page.tsx`
+- `src/app/old/saved-titles/page.tsx`
+- `src/app/old/search-history/page.tsx`
+- `src/app/old/other/page.tsx`
+- `src/components/layout/navigation.tsx`
+- `src/components/old/old-dashboard-workspace.tsx`
+- `src/app/api/manifests/upload/route.ts`
+- `src/app/manifests/upload/page.tsx`
+- `src/components/manifests/manifest-upload-workspace.tsx`
+- `src/app/manifests/viewer/page.tsx`
+- `src/components/manifests/manifest-viewer-workspace.tsx`
+- `src/app/api/manifests/export-selected/route.ts`
+- `src/app/manifests/export/page.tsx`
+- `src/components/manifests/manifest-export-workspace.tsx`
+- `src/lib/recovery/old-browser-backup-builder.ts`
+- `src/app/api/old/browser-backup/route.ts`
+- `src/components/old/download-old-data-modal.tsx`
+- `src/components/download-center/legacy-recovery-workspace.tsx`
+- `scripts/test-phase-a-g-features.mjs`
+- `package.json`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Dedicated Bucket Storage Backend: Added `getOldStorageBackend()`, `getNewStorageBackend()`, and `getStorageBackendForBucket()` singletons targeting `old-youtube-discovery-private` and `new-youtube-discovery-private`.
+- Archive Store Routing: Updated `src/lib/old/archive-store.ts` to write committed manifests to `old-youtube-discovery-private` under `asdy/old/<category>/<manifestId>/manifest.json`, storing `bucket_id: 'old-youtube-discovery-private'`, `original_filename`, and status in PostgreSQL table `archived_manifests`.
+- Navigation: Updated `Navigation` component to render a collapsible `OLD ARCHIVE` navigation group containing exactly the 4 primary categories (`/old/saved-items`, `/old/saved-playlists`, `/old/saved-titles-links`, `/old/saved-search-history`) plus overview (`/old`), and added manifest navigation links (`Upload Manifest`, `Manifest Viewer`, `Manifest Export`).
+- Manifest Upload Route (`/api/manifests/upload`): Validates manifest JSON/NDJSON payloads, resolves destination bucket (OLD vs NEW), validates categories, enforces collision prevention, uploads to dedicated private bucket, and atomically registers records in PostgreSQL.
+- Manifest Export Route (`/api/manifests/export-selected`): Retrieves authentic, unmutated bytes from the appropriate bucket, packages multi-file selection into PKZIP 2.0 with authentic `SHA256SUMS.txt`, and serves streams with `Content-Disposition: attachment`.
+- Browser Backup Engine (`old-browser-backup-builder.ts`): Implemented safe client-data ingester sorting Chrome IndexedDB `youtube_discovery_local_v1` into `OLD-Saved-Items/`, `OLD-Saved-Playlists/`, `OLD-Saved-Titles-and-Links/`, `OLD-Saved-Search-History/`, and `UNCLASSIFIED/`. Added strict regex redaction stripping tokens, passwords, cookies, and secret keys. Embedded modal in `/old` and `/download-center`.
+
+### Architecture impact
+
+Physical and logical storage boundaries are completely decoupled between historical archives (`old-youtube-discovery-private`) and active dataset generations (`new-youtube-discovery-private`). Existing canonical buckets (`youtube-discovery-private`, `youtube-discovery`) are preserved intact.
+
+### Environment impact
+
+- Default bucket configuration:
+  - `SUPABASE_OLD_STORAGE_BUCKET`: `old-youtube-discovery-private`
+  - `SUPABASE_NEW_STORAGE_BUCKET`: `new-youtube-discovery-private`
+- Zero secrets printed or logged.
+
+### Database/migration impact
+
+Applied migration `20261103173000_old_and_new_buckets_separation`:
+- Added `bucket_id`, `original_filename`, `mime_type`, `status` columns to `archived_manifests` with check constraints `chk_archived_manifests_bucket` and `chk_archived_manifests_status`.
+- Added `bucket_id` to `storage_manifest_parts` and `storage_temp_objects` with check constraints.
+- Registered `old-youtube-discovery-private` and `new-youtube-discovery-private` with `public: false` in `storage.buckets`.
+- Configured RLS policies on `storage.objects` for both buckets.
+- All 4 migrations synchronized on remote Supabase PostgreSQL.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run db:migrations:check`: passed (`SYNCHRONIZED`, 4/4 applied, exit code 0).
+- `node scripts/test-phase-a-g-features.mjs`: passed (13/13 assertions pass, including live Supabase storage bucket verification and upload/download/SHA-256/deletion roundtrip in both OLD and NEW buckets).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (107/107 assertions pass).
+- `npm run test:auth`: passed (all test suites pass).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:security`: passed (15/15 assertions pass).
+- `npm run typecheck`: passed (0 TypeScript errors across entire project, Prisma Client v7.10.1 generated).
+- `npm run build` intentionally omitted per user's weak PC constraint.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+Yes. Created and applied migration `20261103173000_old_and_new_buckets_separation`.
+
+### Whether `db:apply` was run
+
+No. Applied via transactional migration script using Prisma migration table protocol.

@@ -14,12 +14,50 @@ import zlib from "node:zlib";
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
+export const OLD_PRIMARY_CATEGORIES = [
+  "saved-items",
+  "saved-playlists",
+  "saved-titles-links",
+  "saved-search-history",
+] as const;
+
+export type OldPrimaryCategory = (typeof OLD_PRIMARY_CATEGORIES)[number];
+
 export type OldArchiveCategory =
   | "saved-items"
-  | "saved-titles"
   | "saved-playlists"
+  | "saved-titles-links"
+  | "saved-search-history"
+  | "saved-titles"
   | "search-history"
+  | "unclassified"
   | "other";
+
+export const OLD_CATEGORY_PREFIXES = {
+  "saved-items": "asdy/old/saved-items/",
+  "saved-playlists": "asdy/old/saved-playlists/",
+  "saved-titles-links": "asdy/old/saved-titles-links/",
+  "saved-search-history": "asdy/old/saved-search-history/",
+} as const;
+
+export function normalizeOldCategory(
+  cat: string
+): "saved-items" | "saved-playlists" | "saved-titles-links" | "saved-search-history" | "unclassified" {
+  const c = String(cat || "").toLowerCase().trim();
+  if (c === "saved-items" || c === "saved_items" || c === "items") return "saved-items";
+  if (c === "saved-playlists" || c === "saved_playlists" || c === "playlists") return "saved-playlists";
+  if (c === "saved-titles-links" || c === "saved-titles" || c === "saved_titles" || c === "titles") return "saved-titles-links";
+  if (c === "saved-search-history" || c === "search-history" || c === "search_history" || c === "history") return "saved-search-history";
+  return "unclassified";
+}
+
+export function getOldCategoryLogicalPrefix(category: string): string {
+  const norm = normalizeOldCategory(category);
+  if (norm === "unclassified") {
+    return "asdy/old/unclassified/";
+  }
+  return OLD_CATEGORY_PREFIXES[norm];
+}
 
 export type OldSourceFormat =
   | "canonical_manifest"
@@ -73,16 +111,52 @@ export interface ArchivedManifestEnvelope {
 }
 
 /**
- * Generates canonical physical storage path for an archived manifest.
- * Pattern: ASDY/OLD/<storage_owner_uuid>/<category>/<manifest_id>/manifest.json
+ * Generates canonical logical storage path for an archived manifest in the OLD bucket.
+ * Pattern: asdy/old/<category>/<manifest_id>/<filename>
+ */
+export function getOldManifestStoragePath(
+  category: string,
+  manifestId: string,
+  filename = "manifest.json"
+): string {
+  const normCategory = normalizeOldCategory(category);
+  const safeManifestId = manifestId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return `asdy/old/${normCategory}/${safeManifestId}/${safeFilename}`;
+}
+
+/**
+ * Generates physical or logical storage path for an archived manifest.
+ * - When called with storageOwnerUuid (3+ args with UUID): returns ASDY/OLD/<uuid>/<category>/<manifestId>/manifest.json
+ * - When called with category (2-3 args): returns asdy/old/<category>/<manifestId>/<filename>
  */
 export function getArchivedManifestStoragePath(
-  storageOwnerUuid: string,
-  category: string,
-  manifestId: string
+  storageOwnerUuidOrCategory: string,
+  categoryOrManifestId: string,
+  manifestIdOrFilename?: string,
+  optionalFilename?: string
 ): string {
+  if (
+    storageOwnerUuidOrCategory.includes("-") &&
+    storageOwnerUuidOrCategory.length >= 32 &&
+    manifestIdOrFilename !== undefined
+  ) {
+    const storageOwnerUuid = storageOwnerUuidOrCategory;
+    const category = categoryOrManifestId;
+    const manifestId = manifestIdOrFilename;
+    const filename = optionalFilename || "manifest.json";
+    const safeManifestId = manifestId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+    return `ASDY/OLD/${storageOwnerUuid}/${category}/${safeManifestId}/${safeFilename}`;
+  }
+
+  const category = storageOwnerUuidOrCategory;
+  const manifestId = categoryOrManifestId;
+  const filename = manifestIdOrFilename || "manifest.json";
+  const normCategory = normalizeOldCategory(category);
   const safeManifestId = manifestId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return `ASDY/OLD/${storageOwnerUuid}/${category}/${safeManifestId}/manifest.json`;
+  const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return `asdy/old/${normCategory}/${safeManifestId}/${safeFilename}`;
 }
 
 /**

@@ -1,7 +1,12 @@
 import "server-only";
 
 import { createAdminClient } from "../supabase/admin";
-import { ensurePrivateBucket, DEFAULT_SUPABASE_BUCKET } from "../supabase/storage";
+import {
+  ensurePrivateBucket,
+  DEFAULT_SUPABASE_BUCKET,
+  OLD_STORAGE_BUCKET,
+  NEW_STORAGE_BUCKET,
+} from "../supabase/storage";
 import type { BlobBackend, BlobObjectMeta } from "../blob/blob-backend";
 import { BlobConflictError, BlobNotFoundError, BlobUnavailableError } from "../blob/blob-backend";
 
@@ -153,4 +158,27 @@ export class SupabaseStorageBackend implements BlobBackend {
       return [];
     }
   }
+}
+
+let oldBackendInstance: SupabaseStorageBackend | null = null;
+let newBackendInstance: SupabaseStorageBackend | null = null;
+
+export function getOldStorageBackend(): SupabaseStorageBackend {
+  if (!oldBackendInstance) {
+    oldBackendInstance = new SupabaseStorageBackend(OLD_STORAGE_BUCKET);
+  }
+  return oldBackendInstance;
+}
+
+export function getNewStorageBackend(): SupabaseStorageBackend {
+  if (!newBackendInstance) {
+    newBackendInstance = new SupabaseStorageBackend(NEW_STORAGE_BUCKET);
+  }
+  return newBackendInstance;
+}
+
+export function getStorageBackendForBucket(bucketId?: string): SupabaseStorageBackend {
+  if (bucketId === OLD_STORAGE_BUCKET) return getOldStorageBackend();
+  if (bucketId === NEW_STORAGE_BUCKET) return getNewStorageBackend();
+  return new SupabaseStorageBackend(bucketId || DEFAULT_SUPABASE_BUCKET);
 }

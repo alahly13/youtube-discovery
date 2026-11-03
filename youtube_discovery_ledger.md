@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-03 (Complete Supabase Database & Storage Remote Setup: Applied Migrations, Canonical Private Storage Bucket 'youtube-discovery-private', Authoritative Profile Mapping for Admin 'asdy', Full Project Backup & Restore Engine, 41/41 Remote Integration Audit; Supabase Auth End-to-End Resolution; Phase 1.6 Legacy Vercel Recovery; Phase 1.5 Database Hardening)
+Last updated: 2026-11-03 (Four Canonical OLD Categories, Dedicated OLD & NEW Private Storage Buckets 'old-youtube-discovery-private' & 'new-youtube-discovery-private', Migration 20261103173000, Manifest Upload / Viewer / Export Routes, Collapsible OLD Archive Navigation, Download OLD Data Engine Packaging Browser IndexedDB + LocalStorage into Verifiable ZIP with Secret Redaction and Zero Storage Mutation)
 
 ## Project Identity And Mission
 
@@ -28,11 +28,18 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Tailwind CSS 4 with centralized CSS variables in `src/app/globals.css`.
 - lucide-react for iconography.
 - Zod for server route validation.
-- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections. All 3 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active).
+- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections. All 4 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active):
+  1. `20261102000000_canonical_v1_4`
+  2. `20261102220000_phase1_5_security_and_old_archive`
+  3. `20261103150000_canonical_private_bucket`
+  4. `20261103173000_old_and_new_buckets_separation`
 - Supabase Auth and Supabase Storage (`@supabase/supabase-js@2.118.0`, `@supabase/ssr@0.12.7`) with server/browser/admin client singletons (`src/lib/supabase/*`).
-- Canonical Supabase Storage bucket: `youtube-discovery-private` (50 MiB / 52,428,800 bytes size limit, private, RLS enforced on `storage.objects`).
-- Full Portability & Backup Engine: Complete project backup exporter (`src/lib/backup/project-backup-service.ts`, `/api/download-center/full-backup`, `scripts/backup-cli.mjs`) exporting all 19 database tables (application JSON, schema, migrations, logical SQL dump), storage objects, checksums, and executable self-contained Node.js restore runner.
-- `@vercel/blob` runtime dependency completely uninstalled and removed; all storage routes delegate to `SupabaseStorageBackend` with local `DiskStorageBackend` fallback, and `blob-inventory.ts` preserves native fetch read access to remote Blob objects without deleting them.
+- Dedicated Private Supabase Storage Buckets:
+  1. `old-youtube-discovery-private`: Dedicated private bucket for historical manifests and browser archives (`asdy/old/...`).
+  2. `new-youtube-discovery-private`: Dedicated private bucket for active generations and temp data (`<owner_uuid>/persistence/datasets/...`).
+  3. `youtube-discovery-private` & `youtube-discovery`: Preserved canonical/legacy buckets (no non-empty buckets are ever deleted).
+- Full Portability & Backup Engine: Complete project backup exporter (`src/lib/backup/project-backup-service.ts`, `/api/download-center/full-backup`, `scripts/backup-cli.mjs`) and dedicated OLD Browser Data Backup Builder (`src/lib/recovery/old-browser-backup-builder.ts`, `/api/old/browser-backup`, `DownloadOldDataModal`) exporting Chrome IndexedDB + LocalStorage into PKZIP 2.0 with authentic timestamps, 4-category layout, `UNCLASSIFIED/`, and SHA256 checksums with strict secret redaction.
+- `@vercel/blob` runtime dependency completely uninstalled and removed; all storage routes delegate to `SupabaseStorageBackend` (`getOldStorageBackend()`, `getNewStorageBackend()`, `getStorageBackendForBucket()`) with local `DiskStorageBackend` fallback, and `blob-inventory.ts` preserves native fetch read access to remote Blob objects without deleting them.
 - `@next/env` for standalone script env loading from root `.env.local`.
 - Google GenAI SDK through server-only Gemini helpers.
 - FlexSearch (used): shared local-search service in `src/lib/search/local-search.ts` (Document index, title-weighted, with a weighted fallback matcher) powers Saved Library, playlist contents, and History — strictly local, zero YouTube quota. Zustand, TanStack Query, and Framer Motion remain installed for state/UX expansion.
@@ -41,8 +48,8 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 - Local Windows/PowerShell: run from `F:\discovery\youtube-discovery`; keep local secrets in root `.env.local`; use `vercel env pull .env.local --yes` when linked to Vercel.
 - Vercel production/preview: configure server-only variables in Vercel Project Settings; do not run database migrations during normal build.
-- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 3 applied migrations and 19 canonical domain tables.
-- Supabase Storage: private bucket `youtube-discovery-private` configured for archives, manifests, and exports (with `youtube-discovery` legacy alias supported).
+- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 4 applied migrations and 19 canonical domain tables.
+- Supabase Storage: dedicated private buckets `old-youtube-discovery-private` and `new-youtube-discovery-private` configured for archives, active manifests, and exports.
 - GitHub Actions: `.github/workflows/ci.yml` runs npm install, lint, typecheck, and build on Node 24.
 - Codex/online environment: provider keys and DB may be missing; live provider/DB checks must be reported honestly.
 
@@ -50,11 +57,14 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 The app is manifest-first. Every provider fetch returns a `YouTubeManifest` with provenance, settings snapshot, pages fetched, quota estimate, status, duplicate count, warnings/errors, and normalized items.
 
-Authoritative persistence uses Supabase Storage (canonical private bucket `youtube-discovery-private`) via `src/lib/storage/supabase-storage-backend.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development. The legacy `@vercel/blob` runtime dependency has been removed, but existing remote Blob objects are preserved and accessible via native read-only fetch in `blob-inventory.ts`.
+Authoritative persistence uses Supabase Storage via `src/lib/storage/supabase-storage-backend.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development.
+- OLD archives route strictly to `old-youtube-discovery-private` under `asdy/old/<category>/<manifestId>/manifest.json`.
+- NEW dataset generations route strictly to `new-youtube-discovery-private` under `<owner_uuid>/persistence/datasets/...`.
 - Structured data persistence is fully connected to Prisma 7 / Supabase PostgreSQL across all 19 canonical models.
-- File and archive storage routes through Supabase Storage bucket `youtube-discovery-private`.
+- File and archive storage routes through dedicated private Supabase Storage buckets.
 - Manifests, playlists, and search histories are permanently stored without TTL data loss.
 - Complete Project Backup & Restore Engine allows full offline portability (database JSON + SQL dump + migrations + storage objects + restore CLI script).
+- Browser Data Recovery Engine ingests Chrome storage without mutation and produces compliant ZIP archives.
 
 Access is gated by a single-admin session system with Supabase Auth (`@supabase/ssr`) prioritized alongside legacy scrypt password session fallback. Every data API route enforces `requireAdmin()` itself; middleware redirects are UX only. `/login` and the username prefill endpoint are the only public surfaces.
 
@@ -89,17 +99,20 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/playlist-explorer`: playlist workflow scaffold.
 - `/playlists/[playlistId]`: **FULL** playlist explorer with order-preserving list/grid view, play-next navigation, local filters/sort/search-inside-playlist, export, and scoped AI panel.
 - `/manifests`: **FULL** Manifest Storage Explorer workspace with real-time PostgreSQL registry reconciliation, Supabase Storage browser, 6 canonical reconciliation states, individual part download stream, and generation ZIP exports.
+- `/manifests/upload`: **FULL DEDICATED** Manifest Upload workspace with dual-destination selector (OLD historical archive vs NEW active dataset generation), 4-category selector for OLD with real-time derived storage path preview, dataset generation batch upload for NEW, collision detection, and verified persistence.
+- `/manifests/viewer`: **FULL DEDICATED** 100% Read-Only Manifest Viewer & Inspector, allowing side-by-side inspection of registered or local manifest files with item type filters (ALL, VIDEO, SHORTS, CHANNELS, PLAYLISTS), raw JSON modal, and zero storage mutation.
+- `/manifests/export`: **FULL DEDICATED** Manifest Export workspace for downloading authentic, unaltered manifest files directly from Supabase Storage or assembling multi-manifest ZIP archives with authentic `SHA256SUMS.txt`.
 - `/manifests/[manifestId]`: **FULL** manifest detail workspace with local search/filter/sort, export, and scoped AI analysis.
 - `/collections`: DEPRECATED and REMOVED in Phase 1.4 in favor of dedicated Saved Items (`/saved`), Playlist Manager (`/playlist-manager`), and Saved Searches (`/saved-searches`).
 - `/history`: **FULL** chronological history workspace with shared FlexSearch `Search history...` filter across title/query/metadata without calling YouTube API, unified client + server archive listing, "View Results" action loading full search data from the archive with zero quota consumption, and Back-to-Top control.
-- `/old`: **FULL DEDICATED** OLD Legacy Manifest Archive Dashboard with overview statistics, 5 category cards, recent imported archives table, and quick import CTA.
-- `/old/saved-items`: Dedicated archive browser for legacy saved items featuring 4 explicit classification filters (`VIDEO`, `SHORTS`, `CHANNELS`, `PLAYLISTS`), upgraded spacious 3-column thumbnail grid (`grid gap-5 sm:grid-cols-2 lg:grid-cols-3`), 2-line title wrapping (`line-clamp-2 text-base font-bold`), engagement counters, and one-click Raw JSON inspection modal.
-- `/old/saved-titles`: Dedicated archive browser for legacy saved titles and query presets.
-- `/old/saved-playlists`: Dedicated archive browser for legacy playlists.
-- `/old/search-history`: Dedicated archive browser for legacy search history records.
-- `/old/other`: Dedicated archive browser for miscellaneous legacy manifests and unstructured exports.
-- `/old/import`: Dedicated drag & drop and local file upload workspace with client-side preview, category selector, SHA-256 conflict detection, and import into `ASDY/OLD/`.
-- `/download-center`: **FULL DEDICATED** Manifest Download Center (مركز التحميل) with multi-origin filtering (ALL, NEW active domain manifests, OLD historical archives), 8-category filter pills, multi-manifest batch selection, bulk export engine assembling canonical ZIPs (`ASDY/NEW/<category>/...`, `ASDY/OLD/<category>/...`, `ASDY/SHA256SUMS.txt`, `ASDY/export-manifest.json`), and individual manifest metadata inspector.
+- `/old`: **FULL DEDICATED** OLD Legacy Manifest Archive Dashboard with overview statistics, dedicated bucket `old-youtube-discovery-private` monitor, 4 category cards with exact `asdy/old/...` prefixes, UNCLASSIFIED records section, embedded `Download OLD Data` modal CTA, recent imported archives table, and quick import CTA.
+- `/old/saved-items`: **Category 1** Dedicated archive browser for legacy saved items (`asdy/old/saved-items/`) featuring 4 explicit classification filters (`VIDEO`, `SHORTS`, `CHANNELS`, `PLAYLISTS`), upgraded spacious 3-column thumbnail grid (`grid gap-5 sm:grid-cols-2 lg:grid-cols-3`), 2-line title wrapping (`line-clamp-2 text-base font-bold`), engagement counters, and one-click Raw JSON inspection modal.
+- `/old/saved-playlists`: **Category 2** Dedicated archive browser for legacy saved playlists (`asdy/old/saved-playlists/`).
+- `/old/saved-titles-links`: **Category 3** Dedicated archive browser for legacy saved titles and links (`asdy/old/saved-titles-links/`).
+- `/old/saved-search-history`: **Category 4** Dedicated archive browser for legacy saved search history (`asdy/old/saved-search-history/`).
+- `/old/saved-titles`, `/old/search-history`, `/old/other`: Transparent redirect fallbacks routing legacy bookmarks safely to the 4 canonical categories without 404s.
+- `/old/import`: Dedicated drag & drop and local file upload workspace with client-side preview, 4-category selector, SHA-256 conflict detection, and import into `old-youtube-discovery-private`.
+- `/download-center`: **FULL DEDICATED** Manifest Download Center (مركز التحميل) with multi-origin filtering (ALL, NEW active domain manifests, OLD historical archives), category filter pills, multi-manifest batch selection, bulk export engine assembling canonical ZIPs, individual manifest metadata inspector, and embedded `Download OLD Data` button.
 - `/download-center/legacy-recovery`: **FULL DEDICATED** Legacy Data Recovery Center with read-only discovery matrix across Vercel Blob (cursor-paginated REST scanner), disk cache, application runtime caches, and browser storage (IndexedDB `youtube_discovery_local_v1` + localStorage), category classification across 8 canonical categories, zero-deletion safety guarantees, and offline verifiable backup ZIP generation (`YouTube-Discovery-Legacy-Backup/...`).
 - `/watch/[videoId]`: embedded playback with manifest-first suggested videos sidebar, Zustand-backed watch settings, and graceful error handling.
 - `/settings`: **FULL** Settings page with environment status, Default SafeSearch & Sensitivity Policy, persistent YouTube Fetch Controls, YouTube API Key Management (multi-key rotation, safe masked strings, active key switching, custom key deletion, per-key Gmail/project metadata editing), Quota Pools & Usage dashboard (per-project buckets, local-estimate confidence, per-key stats, last-request attribution), Private Storage & Migration card, Account Security card (username/password change, logout).

@@ -5,8 +5,19 @@ export const metadata: Metadata = {
   title: "YouTube Discovery Research Terminal",
   description: "Manifest-first YouTube public metadata discovery, filtering, saving, exporting, and scoped AI analysis.",
   icons: {
-    icon: "/browser_tab_icon.png",
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icons/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/icons/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/favicon-48x48.png", sizes: "48x48", type: "image/png" },
+      { url: "/app-icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [
+      { url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+    shortcut: "/favicon.ico",
   },
+  manifest: "/manifest.webmanifest",
 };
 
 export default function RootLayout({

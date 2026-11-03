@@ -16,15 +16,18 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RawJsonInspectorDialog } from "@/components/saved/raw-json-inspector-dialog";
+import { DownloadOldDataModal } from "@/components/old/download-old-data-modal";
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatBytes, formatDate } from "@/lib/utils/format";
 import type { ArchivedManifestRecord } from "@/lib/old/archive-store";
+import { normalizeOldCategory } from "@/lib/old/archive-envelope";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -70,18 +73,18 @@ export function OldDashboardWorkspace() {
     let totalBytes = 0;
     const catCounts: Record<string, { archives: number; records: number }> = {
       "saved-items": { archives: 0, records: 0 },
-      "saved-titles": { archives: 0, records: 0 },
       "saved-playlists": { archives: 0, records: 0 },
-      "search-history": { archives: 0, records: 0 },
-      other: { archives: 0, records: 0 },
+      "saved-titles-links": { archives: 0, records: 0 },
+      "saved-search-history": { archives: 0, records: 0 },
+      unclassified: { archives: 0, records: 0 },
     };
 
     for (const m of manifests) {
       totalRecords += m.record_count;
       totalBytes += m.byte_count;
-      const cat = m.category in catCounts ? m.category : "other";
-      catCounts[cat].archives++;
-      catCounts[cat].records += m.record_count;
+      const norm = normalizeOldCategory(m.category);
+      catCounts[norm].archives++;
+      catCounts[norm].records += m.record_count;
     }
 
     return { totalRecords, totalBytes, catCounts };
@@ -98,56 +101,51 @@ export function OldDashboardWorkspace() {
     );
   }, [manifests, searchFilter]);
 
+  // Exactly Four Primary Category Cards (Phase A requirement)
   const categoryCards = [
     {
       id: "saved-items",
-      title: "Saved Items",
+      title: "OLD Saved Items",
       description: "Historical saved videos, shorts, channels, and playlists.",
       href: "/old/saved-items",
       icon: BookmarkCheck,
       color: "text-primary",
       bg: "bg-primary-soft",
+      prefix: "asdy/old/saved-items/",
       stats: metrics.catCounts["saved-items"],
     },
     {
-      id: "saved-titles",
-      title: "Saved Search Titles",
-      description: "Historical query titles, presets, and research phrases.",
-      href: "/old/saved-titles",
-      icon: Bookmark,
-      color: "text-amber-500",
-      bg: "bg-amber-500/10",
-      stats: metrics.catCounts["saved-titles"],
-    },
-    {
       id: "saved-playlists",
-      title: "Saved Playlists",
+      title: "OLD Saved Playlists",
       description: "Historical user playlists, curated groups, and entries.",
       href: "/old/saved-playlists",
       icon: ListVideo,
       color: "text-indigo-500",
       bg: "bg-indigo-500/10",
+      prefix: "asdy/old/saved-playlists/",
       stats: metrics.catCounts["saved-playlists"],
     },
     {
-      id: "search-history",
-      title: "Search History",
+      id: "saved-titles-links",
+      title: "OLD Saved Titles & Links",
+      description: "Historical query titles, presets, search phrases, and links.",
+      href: "/old/saved-titles-links",
+      icon: Bookmark,
+      color: "text-amber-500",
+      bg: "bg-amber-500/10",
+      prefix: "asdy/old/saved-titles-links/",
+      stats: metrics.catCounts["saved-titles-links"],
+    },
+    {
+      id: "saved-search-history",
+      title: "OLD Saved Search History",
       description: "Historical executed queries, quota records, and result caches.",
-      href: "/old/search-history",
+      href: "/old/saved-search-history",
       icon: History,
       color: "text-emerald-500",
       bg: "bg-emerald-500/10",
-      stats: metrics.catCounts["search-history"],
-    },
-    {
-      id: "other",
-      title: "Other Metadata",
-      description: "Miscellaneous historical exports, diagnostics, and raw NDJSON.",
-      href: "/old/other",
-      icon: FolderArchive,
-      color: "text-rose-500",
-      bg: "bg-rose-500/10",
-      stats: metrics.catCounts.other,
+      prefix: "asdy/old/saved-search-history/",
+      stats: metrics.catCounts["saved-search-history"],
     },
   ];
 
@@ -158,7 +156,7 @@ export function OldDashboardWorkspace() {
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <Badge tone="ai" className="font-mono text-[10px] uppercase tracking-wider">
-              ASDY/OLD/ Archive Root
+              old-youtube-discovery-private
             </Badge>
             <Badge tone="success" className="text-[10px] font-semibold">
               <ShieldCheck className="h-3 w-3 mr-1 inline" />
@@ -169,9 +167,9 @@ export function OldDashboardWorkspace() {
             OLD Legacy Manifest Archive
           </h1>
           <p className="mt-1 text-xs text-muted max-w-2xl">
-            Import and inspect historical manifest files, generation ZIP exports, and NDJSON from
-            previous Supabase accounts or offline backups. Archived records are preserved under{" "}
-            <code className="text-primary font-mono text-[11px]">ASDY/OLD/</code> and never mutate active application tables.
+            Import, inspect, and export historical manifest files and browser data preserved under{" "}
+            <code className="text-primary font-mono text-[11px]">asdy/old/</code> in dedicated private bucket{" "}
+            <code className="text-primary font-mono text-[11px]">old-youtube-discovery-private</code>.
           </p>
         </div>
 
@@ -186,9 +184,13 @@ export function OldDashboardWorkspace() {
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
           </Button>
-          <ButtonLink href="/old/import" variant="primary" className="h-9 gap-1.5 px-3.5 text-xs">
-            <Plus className="h-4 w-4" />
-            <span>Import Manifest</span>
+
+          {/* Phase G Mandatory Visible Action */}
+          <DownloadOldDataModal buttonLabel="Download OLD Data" />
+
+          <ButtonLink href="/manifests/upload" variant="secondary" className="h-9 gap-1.5 px-3.5 text-xs">
+            <Upload className="h-4 w-4" />
+            <span>Upload Manifest</span>
           </ButtonLink>
         </div>
       </div>
@@ -226,22 +228,25 @@ export function OldDashboardWorkspace() {
 
         <Card className="p-5">
           <div className="flex items-center justify-between text-muted">
-            <span className="text-xs font-medium">Storage Root</span>
+            <span className="text-xs font-medium">Dedicated Bucket</span>
             <ShieldCheck className="h-4 w-4 text-amber-500" />
           </div>
-          <p className="mt-2 text-sm font-mono font-bold text-foreground truncate">
-            ASDY/OLD/
+          <p className="mt-2 text-xs font-mono font-bold text-foreground truncate" title="old-youtube-discovery-private">
+            old-youtube-discovery-private
           </p>
-          <span className="text-[11px] text-muted">Immutable storage partition</span>
+          <span className="text-[11px] text-muted">Private dedicated storage</span>
         </Card>
       </div>
 
-      {/* Category Explorer Grid */}
+      {/* Exactly Four Canonical Archive Categories (Phase A) */}
       <div className="space-y-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">
-          Archive Categories
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted">
+            Four Primary Archive Categories
+          </h2>
+          <span className="text-xs text-muted font-mono">asdy/old/</span>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {categoryCards.map((cat) => {
             const Icon = cat.icon;
             return (
@@ -259,6 +264,9 @@ export function OldDashboardWorkspace() {
                   <p className="mt-1 text-xs text-muted line-clamp-2 leading-relaxed">
                     {cat.description}
                   </p>
+                  <code className="mt-2 block font-mono text-[10px] text-primary/80 bg-primary-soft/40 px-2 py-0.5 rounded truncate">
+                    {cat.prefix}
+                  </code>
                 </div>
 
                 <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between text-xs">
@@ -282,6 +290,25 @@ export function OldDashboardWorkspace() {
             );
           })}
         </div>
+
+        {/* Phase A: UNCLASSIFIED Section (Explicitly reported, not discarded) */}
+        {metrics.catCounts.unclassified.archives > 0 && (
+          <div className="rounded-xl border border-border/80 bg-surface-muted/30 p-4 flex items-center justify-between text-xs mt-3">
+            <div className="flex items-center gap-3">
+              <FolderArchive className="h-5 w-5 text-muted" />
+              <div>
+                <span className="font-semibold text-foreground">UNCLASSIFIED Archive Records</span>
+                <p className="text-[11px] text-muted">
+                  {metrics.catCounts.unclassified.records.toLocaleString()} records across{" "}
+                  {metrics.catCounts.unclassified.archives} manifest(s) could not be reliably classified into the 4 primary categories and are safely preserved under <code className="font-mono text-primary">asdy/old/unclassified/</code>.
+                </p>
+              </div>
+            </div>
+            <Badge tone="neutral" className="font-mono text-xs">
+              {metrics.catCounts.unclassified.records} items
+            </Badge>
+          </div>
+        )}
       </div>
 
       {/* Recent Archived Manifests Section */}

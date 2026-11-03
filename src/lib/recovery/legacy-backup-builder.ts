@@ -1,7 +1,6 @@
 import "server-only";
 
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import { createZipArchive, type ZipFileEntry } from "@/lib/storage/zip-builder";
 import { getBlobBackend } from "@/lib/blob/backend-factory";
 import {
@@ -104,14 +103,6 @@ async function fetchItemBytes(item: DiscoveredLegacyItem): Promise<Buffer | null
     return await readRemoteBlobObject(item.downloadUrl);
   }
 
-  if (item.source === "disk_cache" && item.localFilePath) {
-    try {
-      return await fs.readFile(/*turbopackIgnore: true*/ item.localFilePath);
-    } catch {
-      return null;
-    }
-  }
-
   if (item.source === "supabase_database") {
     try {
       const backend = getBlobBackend();
@@ -119,6 +110,11 @@ async function fetchItemBytes(item: DiscoveredLegacyItem): Promise<Buffer | null
     } catch {
       return null;
     }
+  }
+
+  // Pre-loaded in-memory payloads (e.g. from injected local/browser snapshots)
+  if (item.rawMetadata?.contentUtf8 && typeof item.rawMetadata.contentUtf8 === "string") {
+    return Buffer.from(item.rawMetadata.contentUtf8, "utf8");
   }
 
   return null;

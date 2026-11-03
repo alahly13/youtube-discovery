@@ -1,5 +1,7 @@
 import assert from "node:assert";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
+import path from "node:path";
 import {
   classifyLegacyCategory,
   evaluateCaches,
@@ -46,14 +48,67 @@ export async function runAllSuites() {
   check("Next.js Data Cache marked non-enumerable", nextDataCache.recoveryCapability === "NOT_ENUMERABLE");
   check("Next.js Data Cache includes technical rationale in notes", Boolean(nextDataCache.notes));
 
-  console.log("\n[ 3. Local Application Disk Storage Discovery ]");
-  const diskSummary = await scanDiskCache();
-  check("Disk cache returns summary", diskSummary.source === "disk_cache");
-  check("Disk cache status is AVAILABLE", diskSummary.status === "AVAILABLE");
-  check("Disk cache items is array", Array.isArray(diskSummary.items));
-  for (const item of diskSummary.items) {
-    check(`Disk item ${item.originalPathname} has valid sha256`, Boolean(item.sha256 && item.sha256.length === 64));
+  console.log("\n[ 3. Local Application Disk Storage Discovery & Architectural Separation ]");
+  const serverDiskSummary = await scanDiskCache();
+  check("Server disk cache returns summary", serverDiskSummary.source === "disk_cache");
+  check("Server disk cache reports ACCESS_UNAVAILABLE in web runtime", serverDiskSummary.status === "ACCESS_UNAVAILABLE");
+  check("Server disk cache reports honest Vercel runtime rationale", Boolean(serverDiskSummary.notes?.includes("LOCAL_FILESYSTEM_NOT_AVAILABLE_ON_VERCEL")));
+  check("Server disk cache has zero discovered items in web runtime", serverDiskSummary.discoveredCount === 0);
+
+  // Verify caller injection support for pre-scanned items
+  const injectedSummary = await scanDiskCache([
+    {
+      id: "disk_injected_1",
+      source: "disk_cache",
+      category: "SAVED_ITEMS",
+      originalPathname: "data/storage/saved_items.json",
+      originalFilename: "saved_items.json",
+      byteLength: 120,
+      sourceCreatedAt: null,
+      sourceExportedAt: null,
+      isRecoverable: true,
+      isExcluded: false,
+    },
+  ]);
+  check("Injected disk cache returns AVAILABLE", injectedSummary.status === "AVAILABLE");
+  check("Injected disk cache contains injected item", injectedSummary.discoveredCount === 1);
+
+  // Verify standalone offline local filesystem recovery CLI scanner
+  const cliScript = path.resolve(process.cwd(), "scripts/recovery/local-filesystem-scanner.mjs");
+  const cliOutput = execFileSync(process.execPath, [cliScript, "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  const localScan = JSON.parse(cliOutput);
+  check("CLI local scan returns summary", localScan.source === "disk_cache");
+  check("CLI local scan status is AVAILABLE", localScan.status === "AVAILABLE");
+  check("CLI local scan items is array", Array.isArray(localScan.items));
+  for (const item of localScan.items) {
+    check(`CLI local item ${item.originalPathname} has valid sha256`, Boolean(item.sha256 && item.sha256.length === 64));
   }
+
+  // Verify security boundary against path traversal in local scanner
+  let securityViolationCaught = false;
+  try {
+    execFileSync(process.execPath, [cliScript, "--dir=../../etc"], {
+      cwd: process.cwd(),
+      stdio: "pipe",
+    });
+  } catch {
+    securityViolationCaught = true;
+  }
+  check("Local scanner rejects directory outside allowed root", securityViolationCaught);
+
+  let forbiddenDirCaught = false;
+  try {
+    execFileSync(process.execPath, [cliScript, "--dir=node_modules"], {
+      cwd: process.cwd(),
+      stdio: "pipe",
+    });
+  } catch {
+    forbiddenDirCaught = true;
+  }
+  check("Local scanner rejects forbidden directory (node_modules)", forbiddenDirCaught);
 
   console.log("\n[ 4. Canonical Self-Describing Manifest Envelope ]");
   const dummyOwnerId = "admin_owner_local_test";
@@ -124,6 +179,7 @@ export async function runAllSuites() {
     "src/app/api/download-center/legacy-recovery/scan/route.ts",
     "src/app/api/download-center/export/route.ts",
     "src/app/api/download-center/inventory/route.ts",
+    "scripts/recovery/local-filesystem-scanner.mjs",
   ];
   for (const f of filesToCheck) {
     const code = await fs.readFile(f, "utf8");

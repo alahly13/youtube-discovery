@@ -15,11 +15,16 @@ export default function proxy(request: NextRequest) {
   if (pathname.startsWith("/api/")) {
     return NextResponse.next();
   }
-  // Static assets / Next internals.
+  // Static assets / Next internals / Public branding assets.
   if (
     pathname.startsWith("/_next/") ||
     pathname.startsWith("/favicon") ||
-    pathname === "/icon.png" ||
+    pathname.startsWith("/icons/") ||
+    pathname.startsWith("/icon") ||
+    pathname.startsWith("/apple-icon") ||
+    pathname === "/app-icon.svg" ||
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/manifest.json" ||
     pathname.includes(".")
   ) {
     return NextResponse.next();
@@ -46,5 +51,5 @@ export default function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|app-icon\\.svg|icons/|manifest\\.webmanifest).*)"],
 };

@@ -5,7 +5,12 @@ import {
   BookOpen,
   Bookmark,
   BookmarkCheck,
+  ChevronDown,
+  ChevronRight,
   Download,
+  Eye,
+  FileText,
+  FolderOutput,
   HardDrive,
   History,
   Home,
@@ -16,23 +21,27 @@ import {
   Settings,
   Sparkles,
   Tv,
+  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/format";
 import { DailymotionIcon } from "@/components/layout/dailymotion-icon";
 
-interface NavSection {
-  title?: string;
-  items: Array<{
-    href: string;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-    external?: boolean;
-  }>;
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  external?: boolean;
 }
 
-const navSections: NavSection[] = [
+interface NavSection {
+  title?: string;
+  items: NavItem[];
+}
+
+const mainNavSections: NavSection[] = [
   {
     items: [
       { href: "/", label: "Dashboard", icon: Home },
@@ -59,14 +68,22 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    title: "SYSTEM",
+    title: "STORAGE & MANIFESTS",
     items: [
-      { href: "/download-center", label: "Download Center (مركز التحميل)", icon: Download },
-      { href: "/settings", label: "Settings", icon: Settings },
       { href: "/manifests", label: "Storage Explorer", icon: HardDrive },
-      { href: "/old", label: "OLD Archive", icon: Archive },
+      { href: "/manifests/upload", label: "Upload Manifest", icon: Upload },
+      { href: "/manifests/viewer", label: "Manifest Viewer", icon: Eye },
+      { href: "/manifests/export", label: "Manifest Export", icon: FolderOutput },
     ],
   },
+];
+
+const oldArchiveItems: NavItem[] = [
+  { href: "/old", label: "OLD Archive Overview", icon: Archive },
+  { href: "/old/saved-items", label: "OLD Saved Items", icon: BookmarkCheck },
+  { href: "/old/saved-playlists", label: "OLD Saved Playlists", icon: ListVideo },
+  { href: "/old/saved-titles-links", label: "OLD Saved Titles & Links", icon: Bookmark },
+  { href: "/old/saved-search-history", label: "OLD Saved Search History", icon: History },
 ];
 
 const mobileQuickNav = [
@@ -79,6 +96,14 @@ const mobileQuickNav = [
 
 export function Navigation({ mobile = false }: { mobile?: boolean }) {
   const pathname = usePathname();
+  const isOldRoute = pathname.startsWith("/old");
+  const [oldOpen, setOldOpen] = useState(true);
+
+  useEffect(() => {
+    if (isOldRoute) {
+      setOldOpen(true);
+    }
+  }, [isOldRoute]);
 
   // Bottom mobile navigation bar (compact 5 items)
   if (mobile) {
@@ -112,7 +137,7 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
   // Full sectioned sidebar navigation
   return (
     <nav className="flex flex-1 min-h-0 flex-col gap-5 overflow-y-auto pr-1 pb-4 text-xs" aria-label="Sidebar Navigation">
-      {navSections.map((section, idx) => (
+      {mainNavSections.map((section, idx) => (
         <div key={idx} className="flex flex-col gap-1">
           {section.title && (
             <div className="px-3 pb-1 pt-1 text-[10px] font-bold uppercase tracking-wider text-muted/70">
@@ -148,6 +173,91 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
         </div>
       ))}
 
+      {/* COLLAPSIBLE OLD ARCHIVE SECTION (Exactly 4 Categories + Overview) */}
+      <div className="flex flex-col gap-1 border-t border-border/50 pt-2">
+        <button
+          type="button"
+          onClick={() => setOldOpen((prev) => !prev)}
+          className="flex items-center justify-between px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-muted/70 hover:text-foreground transition-colors"
+          aria-expanded={oldOpen}
+          aria-label="Toggle OLD Archive navigation"
+        >
+          <span className="flex items-center gap-1.5">
+            <Archive className="h-3 w-3 text-primary/70" />
+            <span>OLD ARCHIVE</span>
+          </span>
+          {oldOpen ? (
+            <ChevronDown className="h-3.5 w-3.5 text-muted/60" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 text-muted/60" />
+          )}
+        </button>
+
+        {oldOpen && (
+          <div className="flex flex-col gap-1 pl-1">
+            {oldArchiveItems.map((item) => {
+              const Icon = item.icon;
+              const active =
+                item.href === "/old"
+                  ? pathname === "/old"
+                  : pathname === item.href || pathname.startsWith(item.href + "/");
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex min-h-9 items-center gap-2.5 rounded-lg px-3 py-1.5 text-xs transition-colors",
+                    active
+                      ? "bg-primary-soft text-primary font-semibold shadow-xs"
+                      : "text-muted hover:bg-surface-muted hover:text-foreground"
+                  )}
+                >
+                  <Icon
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0",
+                      active ? "text-primary" : "text-muted group-hover:text-foreground"
+                    )}
+                  />
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* SYSTEM Section */}
+      <div className="flex flex-col gap-1 border-t border-border/50 pt-2">
+        <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted/70">
+          SYSTEM
+        </div>
+        <Link
+          href="/download-center"
+          className={cn(
+            "flex min-h-9 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
+            pathname === "/download-center" || pathname.startsWith("/download-center/")
+              ? "bg-primary-soft text-primary font-semibold shadow-xs"
+              : "text-muted hover:bg-surface-muted hover:text-foreground"
+          )}
+        >
+          <Download className="h-4 w-4 shrink-0 text-muted" />
+          <span className="truncate">Download Center (مركز التحميل)</span>
+        </Link>
+        <Link
+          href="/settings"
+          className={cn(
+            "flex min-h-9 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors",
+            pathname === "/settings" || pathname.startsWith("/settings/")
+              ? "bg-primary-soft text-primary font-semibold shadow-xs"
+              : "text-muted hover:bg-surface-muted hover:text-foreground"
+          )}
+        >
+          <Settings className="h-4 w-4 shrink-0 text-muted" />
+          <span className="truncate">Settings</span>
+        </Link>
+      </div>
+
       {/* COMPANION Section */}
       <div className="flex flex-col gap-1 border-t border-border/50 pt-3">
         <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted/70">
@@ -169,7 +279,7 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
       {/* Architecture badge/note */}
       <div className="mt-2 rounded-lg border border-border/70 bg-surface-muted/60 p-2.5 text-[11px] leading-relaxed text-muted">
         <p className="font-semibold text-foreground/80">YouTube Discovery 2026</p>
-        <p className="mt-0.5 text-muted/80">Local-first library & manifest architecture with zero-quota search cache.</p>
+        <p className="mt-0.5 text-muted/80">Dedicated OLD & NEW Storage separation with zero-quota search cache.</p>
       </div>
     </nav>
   );

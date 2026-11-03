@@ -94,7 +94,7 @@ export function resolveDatabaseUrl(customUrl) {
  * @returns {Promise<object>} Database inspection report.
  */
 export async function inspectDatabaseMigrations(options = {}) {
-  const timeoutMs = options.timeoutMs ?? 5000;
+  const timeoutMs = options.timeoutMs ?? 20000;
   const rawUrl = resolveDatabaseUrl(options.connectionUrl);
   const connectionInfo = parseConnectionDetails(rawUrl);
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { Activity, Bell, Database, Menu, PanelLeftClose, PanelLeftOpen, Search, X } from "lucide-react";
+import Image from "next/image";
 import { useSyncExternalStore, useState } from "react";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Navigation } from "@/components/layout/navigation";
@@ -31,8 +32,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         }`}
       >
         <div className="mb-6 flex items-center gap-3 shrink-0">
-          <div className="flex shrink-0 h-10 w-10 items-center justify-center rounded-lg bg-primary-soft text-primary">
-            <Search className="h-5 w-5" />
+          <div className="flex shrink-0 h-10 w-10 items-center justify-center rounded-lg border border-border/70 bg-surface-raised/80 p-1.5 shadow-xs overflow-hidden">
+            <Image
+              src="/app-icon.svg"
+              alt="YouTube Discovery"
+              width={28}
+              height={28}
+              className="h-7 w-7 object-contain"
+              priority
+            />
           </div>
           <div className={`transition-opacity duration-200 delay-100 ${isOpen ? "opacity-100" : "opacity-0"}`}>
             <p className="text-base font-semibold whitespace-nowrap">YouTube Discovery</p>
@@ -56,8 +64,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="relative flex w-4/5 max-w-xs flex-col border-r border-border bg-surface p-4 shadow-xl z-10 animate-slide-in">
             <div className="mb-5 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                  <Search className="h-4 w-4" />
+                <div className="flex shrink-0 h-9 w-9 items-center justify-center rounded-lg border border-border/70 bg-surface-raised/80 p-1 shadow-xs overflow-hidden">
+                  <Image
+                    src="/app-icon.svg"
+                    alt="YouTube Discovery"
+                    width={24}
+                    height={24}
+                    className="h-6 w-6 object-contain"
+                    priority
+                  />
                 </div>
                 <div>
                   <p className="text-sm font-semibold">YouTube Discovery</p>

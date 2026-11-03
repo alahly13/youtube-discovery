@@ -205,6 +205,7 @@ model StorageManifestPart {
   generation_id String      @db.Uuid
   part_number   Int
   storage_path  String      @db.VarChar(512)
+  bucket_id     String      @default("new-youtube-discovery-private") @db.VarChar(64)
   byte_count    BigInt
   record_count  Int
   sha256        String      @db.Char(64)
@@ -223,6 +224,7 @@ model StorageTempObject {
   id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   owner_id     String           @db.Uuid
   storage_path String           @db.VarChar(512)
+  bucket_id    String           @default("new-youtube-discovery-private") @db.VarChar(64)
   byte_count   BigInt
   sha256       String           @db.Char(64)
   purpose      String           @db.VarChar(64)
@@ -489,6 +491,10 @@ model ArchivedManifest {
   category            String    @db.VarChar(64)
   source_format       String    @db.VarChar(32)
   storage_path        String    @db.VarChar(512)
+  bucket_id           String    @default("old-youtube-discovery-private") @db.VarChar(64)
+  original_filename   String?   @db.VarChar(255)
+  mime_type           String?   @db.VarChar(128)
+  status              String    @default("COMMITTED") @db.VarChar(32)
   byte_count          BigInt
   record_count        Int
   content_sha256      String    @db.Char(64)

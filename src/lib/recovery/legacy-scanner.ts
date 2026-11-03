@@ -1,7 +1,6 @@
 import "server-only";
 
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { prisma } from "@/lib/db/prisma";
 
@@ -277,14 +276,46 @@ export async function scanVercelBlob(): Promise<SourceScanSummary> {
 }
 
 /**
- * 2. Scan Application Local Disk Storage (`data/playlists/`, `data/storage/`).
+ * 2. Application Local Disk Storage.
+ *
+ * NOTE (Production & Vercel Tracing Architecture):
+ * Runtime server filesystem scanning has been decoupled from the Next.js production
+ * serverless bundle to prevent broad Turbopack dynamic filesystem tracing of the workspace.
+ *
+ * Serverless deployment runtimes (such as Vercel Functions) do not host local application
+ * disk archives. Local disk archives (`data/playlists`, `data/storage`) exist exclusively
+ * in local development or self-hosted offline environments and are scanned via the
+ * standalone CLI tool: `npm run recovery:local` (`scripts/recovery/local-filesystem-scanner.mjs`).
+ *
+ * @param injectedItems - Optional pre-scanned items supplied by offline callers or test suites.
  */
-export async function scanDiskCache(): Promise<SourceScanSummary> {
-  const summary: SourceScanSummary = {
+export async function scanDiskCache(injectedItems?: DiscoveredLegacyItem[]): Promise<SourceScanSummary> {
+  if (injectedItems && injectedItems.length > 0) {
+    let totalBytes = 0;
+    for (const item of injectedItems) {
+      totalBytes += item.byteLength;
+    }
+    return {
+      source: "disk_cache",
+      sourceName: "Local Disk Cache & File Archives",
+      recoveryCapability: "FULL",
+      status: "AVAILABLE",
+      discoveredCount: injectedItems.length,
+      readableCount: injectedItems.length,
+      unreadableCount: 0,
+      excludedCount: 0,
+      totalRecoverableBytes: totalBytes,
+      items: injectedItems,
+      exclusions: [],
+      notes: "Pre-scanned local disk archive items supplied via caller injection.",
+    };
+  }
+
+  return {
     source: "disk_cache",
     sourceName: "Local Disk Cache & File Archives",
-    recoveryCapability: "FULL",
-    status: "AVAILABLE",
+    recoveryCapability: "ACCESS_UNAVAILABLE",
+    status: "ACCESS_UNAVAILABLE",
     discoveredCount: 0,
     readableCount: 0,
     unreadableCount: 0,
@@ -292,68 +323,11 @@ export async function scanDiskCache(): Promise<SourceScanSummary> {
     totalRecoverableBytes: 0,
     items: [],
     exclusions: [],
+    accessRequirements:
+      "Local filesystem scanning is separated from the web bundle. Run the CLI tool locally: `npm run recovery:local`.",
+    notes:
+      "LOCAL_FILESYSTEM_NOT_AVAILABLE_ON_VERCEL: Serverless deployment runtimes do not host local application disk archives. Use the local CLI recovery tool (npm run recovery:local) for offline disk manifests.",
   };
-
-  const candidateDirs = [
-    path.join(process.cwd(), "data", "playlists"),
-    path.join(process.cwd(), "data", "storage"),
-    path.join(process.cwd(), "data", "search-storage"),
-  ];
-
-  for (const dir of candidateDirs) {
-    try {
-      const stats = await fs.stat(dir);
-      if (!stats.isDirectory()) continue;
-
-      const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isFile()) continue;
-
-        const fullPath = path.join(/*turbopackIgnore: true*/ entry.parentPath || dir, entry.name);
-        const relPath = path.relative(process.cwd(), fullPath).replace(/\\/g, "/");
-
-        // Skip non-data or hidden files
-        if (entry.name.startsWith(".") || (!entry.name.endsWith(".json") && !entry.name.endsWith(".bin"))) {
-          continue;
-        }
-
-        try {
-          const fileStats = await fs.stat(/*turbopackIgnore: true*/ fullPath);
-          const buf = await fs.readFile(/*turbopackIgnore: true*/ fullPath);
-          const fileSha256 = crypto.createHash("sha256").update(buf).digest("hex").toLowerCase();
-          const category = classifyLegacyCategory(relPath);
-
-          summary.discoveredCount++;
-          summary.readableCount++;
-          summary.totalRecoverableBytes += fileStats.size;
-          summary.items.push({
-            id: `disk_${fileSha256.slice(0, 16)}`,
-            source: "disk_cache",
-            category,
-            originalPathname: relPath,
-            originalFilename: entry.name,
-            byteLength: fileStats.size,
-            sha256: fileSha256,
-            sourceCreatedAt: fileStats.birthtime.toISOString(),
-            sourceExportedAt: fileStats.mtime.toISOString(),
-            isRecoverable: true,
-            isExcluded: false,
-            localFilePath: fullPath,
-          });
-        } catch (readErr) {
-          summary.unreadableCount++;
-          summary.exclusions.push({
-            pathname: relPath,
-            reason: `Unreadable file: ${readErr instanceof Error ? readErr.message : String(readErr)}`,
-          });
-        }
-      }
-    } catch {
-      // Directory does not exist on this environment; safely continue
-    }
-  }
-
-  return summary;
 }
 
 /**

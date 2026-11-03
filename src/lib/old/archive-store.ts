@@ -1,12 +1,14 @@
 import "server-only";
 
 import { Prisma } from "@prisma/client";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getOldStorageBackend, getStorageBackendForBucket } from "@/lib/storage/supabase-storage-backend";
+import { OLD_STORAGE_BUCKET } from "@/lib/supabase/storage";
 import { prisma } from "@/lib/db/prisma";
 import {
   type ArchivedManifestEnvelope,
   type OldArchiveCategory,
   getArchivedManifestStoragePath,
+  normalizeOldCategory,
 } from "./archive-envelope";
 
 export { getArchivedManifestStoragePath };
@@ -15,10 +17,14 @@ export { getArchivedManifestStoragePath };
  * ═══════════════════════════════════════════════════════════════════════════
  * OLD Legacy Manifest Archive Store Service
  * ──────────────────────────────────────────────────────────────────────────
- * Scope: Workstream B — Phase 1.5
- * - Logical storage root: ASDY/OLD/<storage_owner_uuid>/<category>/<manifest_id>/manifest.json
- * - Database registry: archived_manifests (19th table in schema)
- * - Transparent offline/local disk fallback to ensure operational continuity.
+ * Scope: Workstream B — Phase 1.5 & Phase A-D Addendum
+ * - Dedicated OLD bucket: 'old-youtube-discovery-private'
+ * - Exact logical prefixes:
+ *     asdy/old/saved-items/
+ *     asdy/old/saved-playlists/
+ *     asdy/old/saved-titles-links/
+ *     asdy/old/saved-search-history/
+ * - Database registry: archived_manifests (with bucket_id, status, filename)
  * - Deduplication by content SHA-256: rejects duplicate imports with clear error.
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -30,6 +36,10 @@ export interface ArchivedManifestRecord {
   category: OldArchiveCategory;
   source_format: string;
   storage_path: string;
+  bucket_id?: string;
+  original_filename?: string | null;
+  mime_type?: string | null;
+  status?: string;
   byte_count: number;
   record_count: number;
   content_sha256: string;
@@ -104,9 +114,9 @@ export async function importArchivedManifest(
     throw err;
   }
 
-  // 2. Upload JSON to Storage
-  const storagePath = getArchivedManifestStoragePath(storageOwnerUuid, meta.category, meta.manifest_id);
-  const backend = getBlobBackend();
+  // 2. Upload JSON to Dedicated OLD Storage Bucket
+  const storagePath = getArchivedManifestStoragePath(meta.category, meta.manifest_id);
+  const backend = getOldStorageBackend();
   const serialized = Buffer.from(JSON.stringify(envelope, null, 2), "utf8");
 
   await backend.putBytes(storagePath, serialized, {
@@ -123,6 +133,10 @@ export async function importArchivedManifest(
         category: meta.category,
         source_format: meta.source_format,
         storage_path: storagePath,
+        bucket_id: OLD_STORAGE_BUCKET,
+        original_filename: meta.provenance?.original_filename || "manifest.json",
+        mime_type: "application/json",
+        status: "COMMITTED",
         byte_count: BigInt(meta.byte_count),
         record_count: meta.record_count,
         content_sha256: meta.content_sha256,
@@ -145,6 +159,10 @@ export async function importArchivedManifest(
     category: meta.category,
     source_format: meta.source_format,
     storage_path: storagePath,
+    bucket_id: OLD_STORAGE_BUCKET,
+    original_filename: meta.provenance?.original_filename || "manifest.json",
+    mime_type: "application/json",
+    status: "COMMITTED",
     byte_count: meta.byte_count,
     record_count: meta.record_count,
     content_sha256: meta.content_sha256,
@@ -165,10 +183,18 @@ export async function listArchivedManifests(
   category?: OldArchiveCategory
 ): Promise<ArchivedManifestRecord[]> {
   try {
+    const categoryCondition = category
+      ? category === "saved-titles-links" || category === "saved-titles"
+        ? { in: ["saved-titles-links", "saved-titles"] }
+        : category === "saved-search-history" || category === "search-history"
+        ? { in: ["saved-search-history", "search-history"] }
+        : { equals: category }
+      : undefined;
+
     const records = await prisma.archivedManifest.findMany({
       where: {
         owner_id: ownerId,
-        ...(category ? { category } : {}),
+        ...(categoryCondition ? { category: categoryCondition } : {}),
       },
       orderBy: {
         imported_at: "desc",
@@ -183,6 +209,10 @@ export async function listArchivedManifests(
         category: r.category as OldArchiveCategory,
         source_format: r.source_format,
         storage_path: r.storage_path,
+        bucket_id: r.bucket_id,
+        original_filename: r.original_filename,
+        mime_type: r.mime_type,
+        status: r.status,
         byte_count: Number(r.byte_count),
         record_count: r.record_count,
         content_sha256: r.content_sha256,
@@ -198,41 +228,45 @@ export async function listArchivedManifests(
   }
 
   // Storage fallback scanner
-  const backend = getBlobBackend();
-  const prefix = category
-    ? `ASDY/OLD/${storageOwnerUuid}/${category}/`
-    : `ASDY/OLD/${storageOwnerUuid}/`;
+  const backend = getOldStorageBackend();
+  const prefixes = [
+    category ? `asdy/old/${category}/` : `asdy/old/`,
+    category ? `ASDY/OLD/${storageOwnerUuid}/${category}/` : `ASDY/OLD/${storageOwnerUuid}/`,
+  ];
 
   try {
-    const listResult = await backend.list(prefix);
     const manifests: ArchivedManifestRecord[] = [];
 
-    for (const obj of listResult) {
-      if (!obj.pathname.endsWith("/manifest.json")) continue;
-      try {
-        const bytes = await backend.getBytes(obj.pathname);
-        const parsed = JSON.parse(bytes.toString("utf8")) as ArchivedManifestEnvelope;
-        if (parsed.schema_version === "1.0.0" && parsed.manifest_metadata) {
-          const m = parsed.manifest_metadata;
-          manifests.push({
-            id: `storage_${m.content_sha256.slice(0, 16)}`,
-            owner_id: ownerId,
-            manifest_id: m.manifest_id,
-            category: m.category,
-            source_format: m.source_format,
-            storage_path: obj.pathname,
-            byte_count: m.byte_count || obj.size,
-            record_count: m.record_count,
-            content_sha256: m.content_sha256,
-            source_created_at: m.source_created_at,
-            source_exported_at: m.source_exported_at,
-            imported_at: m.imported_at,
-            provenance_metadata: (m.provenance ?? {}) as unknown as Prisma.JsonValue,
-            filter_summary: (m.filter_summary ?? {}) as unknown as Prisma.JsonValue,
-          });
+    for (const prefix of prefixes) {
+      const listResult = await backend.list(prefix);
+      for (const obj of listResult) {
+        if (!obj.pathname.endsWith("/manifest.json")) continue;
+        try {
+          const bytes = await backend.getBytes(obj.pathname);
+          const parsed = JSON.parse(bytes.toString("utf8")) as ArchivedManifestEnvelope;
+          if (parsed.schema_version === "1.0.0" && parsed.manifest_metadata) {
+            const m = parsed.manifest_metadata;
+            manifests.push({
+              id: `storage_${m.content_sha256.slice(0, 16)}`,
+              owner_id: ownerId,
+              manifest_id: m.manifest_id,
+              category: m.category,
+              source_format: m.source_format,
+              storage_path: obj.pathname,
+              bucket_id: OLD_STORAGE_BUCKET,
+              byte_count: m.byte_count || obj.size,
+              record_count: m.record_count,
+              content_sha256: m.content_sha256,
+              source_created_at: m.source_created_at,
+              source_exported_at: m.source_exported_at,
+              imported_at: m.imported_at,
+              provenance_metadata: (m.provenance ?? {}) as unknown as Prisma.JsonValue,
+              filter_summary: (m.filter_summary ?? {}) as unknown as Prisma.JsonValue,
+            });
+          }
+        } catch {
+          // Skip unreadable files
         }
-      } catch {
-        // Skip unreadable files
       }
     }
 
@@ -269,6 +303,10 @@ export async function getArchivedManifestById(
         category: found.category as OldArchiveCategory,
         source_format: found.source_format,
         storage_path: found.storage_path,
+        bucket_id: found.bucket_id,
+        original_filename: found.original_filename,
+        mime_type: found.mime_type,
+        status: found.status,
         byte_count: Number(found.byte_count),
         record_count: found.record_count,
         content_sha256: found.content_sha256,
@@ -283,7 +321,7 @@ export async function getArchivedManifestById(
     // Fall back to storage lookup
   }
 
-  const backend = getBlobBackend();
+  const backend = getStorageBackendForBucket(record?.bucket_id || OLD_STORAGE_BUCKET);
 
   if (record) {
     const bytes = await backend.getBytes(record.storage_path);
@@ -299,7 +337,8 @@ export async function getArchivedManifestById(
     throw new Error(`Archived manifest not found for ID: "${archiveId}".`);
   }
 
-  const bytes = await backend.getBytes(matched.storage_path);
+  const fallbackBackend = getStorageBackendForBucket(matched.bucket_id || OLD_STORAGE_BUCKET);
+  const bytes = await fallbackBackend.getBytes(matched.storage_path);
   const envelope = JSON.parse(bytes.toString("utf8")) as ArchivedManifestEnvelope;
   return { record: matched, envelope };
 }

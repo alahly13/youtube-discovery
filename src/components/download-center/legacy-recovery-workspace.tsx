@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { RawJsonInspectorDialog } from "@/components/saved/raw-json-inspector-dialog";
+import { DownloadOldDataModal } from "@/components/old/download-old-data-modal";
 import type { CompleteLegacyScanReport } from "@/lib/recovery/legacy-scanner";
 import { scanBrowserStorage, type BrowserScanResult } from "@/lib/recovery/client-browser-scanner";
 import { formatBytes } from "@/lib/utils/format";
@@ -135,6 +136,9 @@ export function LegacyRecoveryWorkspace() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Phase G Mandatory Visible Action: Download OLD Data from Chrome Browser Storage */}
+          <DownloadOldDataModal buttonLabel="Download OLD Data" variant="primary" />
+
           <Button
             variant="secondary"
             onClick={handleServerScan}
@@ -146,7 +150,7 @@ export function LegacyRecoveryWorkspace() {
           </Button>
 
           <Button
-            variant="primary"
+            variant="secondary"
             onClick={handleDownloadBackup}
             disabled={creatingBackup || scanning}
             className="h-9 gap-2 px-4 text-xs font-semibold"
@@ -307,10 +311,19 @@ export function LegacyRecoveryWorkspace() {
                   </div>
                   <div>
                     <h3 className="text-sm font-semibold text-foreground">Local Disk Cache & File Archives</h3>
-                    <p className="text-[11px] text-muted">`data/playlists/`, `data/storage/`</p>
+                    <p className="text-[11px] text-muted">Offline directory scan (`data/playlists/`, `data/storage/`)</p>
                   </div>
                 </div>
-                <Badge tone="success" className="text-[10px] uppercase font-bold">
+                <Badge
+                  tone={
+                    report.sources.disk_cache.status === "AVAILABLE"
+                      ? "success"
+                      : report.sources.disk_cache.status === "ACCESS_UNAVAILABLE"
+                      ? "neutral"
+                      : "warning"
+                  }
+                  className="text-[10px] uppercase font-bold"
+                >
                   {report.sources.disk_cache.status}
                 </Badge>
               </div>
@@ -332,9 +345,22 @@ export function LegacyRecoveryWorkspace() {
                 </div>
               </div>
 
-              <p className="text-[11px] text-muted">
-                Safe read-only access to historical local JSON manifests and playlist backups.
-              </p>
+              {report.sources.disk_cache.notes ? (
+                <p className="text-[11px] text-muted leading-relaxed">
+                  {report.sources.disk_cache.notes}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted">
+                  Safe read-only access to historical local JSON manifests and playlist backups.
+                </p>
+              )}
+
+              {report.sources.disk_cache.accessRequirements && (
+                <p className="text-xs text-amber-500 flex items-center gap-1.5">
+                  <Info className="h-3.5 w-3.5 shrink-0" />
+                  <span>{report.sources.disk_cache.accessRequirements}</span>
+                </p>
+              )}
             </Card>
 
             {/* Browser Storage (IndexedDB + LocalStorage) */}

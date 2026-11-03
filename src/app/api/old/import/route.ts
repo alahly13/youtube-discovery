@@ -16,8 +16,8 @@ export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const ownerId = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
-  const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  const ownerId = auth.admin.profileId || auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  const storageOwnerUuid = auth.admin.storageOwnerUuid || auth.admin.userId || "00000000-0000-0000-0000-000000000001";
 
   try {
     const contentType = request.headers.get("content-type") || "";

@@ -14,6 +14,7 @@
     "db:migrations:local": "node scripts/db-migrations/cli.mjs --mode=local",
     "db:migrations:check": "node scripts/db-migrations/cli.mjs --mode=check",
     "db:migrations:json": "node scripts/db-migrations/cli.mjs --mode=json",
+    "db:backup": "node scripts/backup-cli.mjs",
     "typecheck": "npm run db:generate && tsc --noEmit --incremental false",
     "build": "npm run env:validate && npm run db:generate && next build",
     "start": "next start",

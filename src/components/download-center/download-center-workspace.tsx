@@ -3,8 +3,10 @@
 import {
   Archive,
   ArrowDownToLine,
+  CheckCircle2,
   CheckSquare,
   Clock,
+  Database,
   Download,
   FileCode,
   HardDrive,
@@ -44,6 +46,8 @@ export function DownloadCenterWorkspace() {
   const [inventory, setInventory] = useState<DownloadCenterInventory | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [fullBackupLoading, setFullBackupLoading] = useState(false);
+  const [fullBackupSuccess, setFullBackupSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Filters & Selection
@@ -156,6 +160,48 @@ export function DownloadCenterWorkspace() {
     }
   };
 
+  // Full Project Backup action
+  const handleFullProjectBackup = async () => {
+    setFullBackupLoading(true);
+    setFullBackupSuccess(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/download-center/full-backup", {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json();
+        throw new Error(errJson.error || "Failed to generate full project backup.");
+      }
+
+      const blob = await res.blob();
+      const contentDisposition = res.headers.get("Content-Disposition") || "";
+      let filename = "YouTube-Discovery-Full-Backup.zip";
+      const match = contentDisposition.match(/filename="?([^"]+)"?/);
+      if (match && match[1]) filename = match[1];
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+      const tablesCount = res.headers.get("X-Backup-Tables") || "19";
+      const rowsCount = res.headers.get("X-Backup-Rows") || "0";
+      setFullBackupSuccess(
+        `Full backup successfully downloaded (${filename}). Exported ${tablesCount} canonical database tables (${rowsCount} rows) and storage objects.`
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate full project backup.");
+    } finally {
+      setFullBackupLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header & Navigation Switcher */}
@@ -173,14 +219,28 @@ export function DownloadCenterWorkspace() {
           </p>
         </div>
 
-        {/* Tab switch to Legacy Recovery */}
-        <div className="flex items-center gap-2">
+        {/* Tab switch to Legacy Recovery & Full Backup CTA */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            onClick={handleFullProjectBackup}
+            disabled={fullBackupLoading}
+            className="h-9 gap-2 px-4 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm border-emerald-600"
+          >
+            {fullBackupLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Database className="h-4 w-4" />
+            )}
+            <span>Export Complete Project Backup (نسخة احتياطية كاملة)</span>
+          </Button>
+
           <Link
             href="/download-center/legacy-recovery"
             className="flex items-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-3.5 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20"
           >
             <ShieldCheck className="h-4 w-4" />
-            <span>Legacy Data Recovery (إنقاذ البيانات القديمة)</span>
+            <span>Legacy Data Recovery</span>
           </Link>
           <Button
             variant="secondary"
@@ -194,6 +254,14 @@ export function DownloadCenterWorkspace() {
           </Button>
         </div>
       </div>
+
+      {/* Full Backup Success Alert */}
+      {fullBackupSuccess && (
+        <div className="flex items-center gap-2.5 rounded-xl border border-emerald-500/40 bg-emerald-50 p-4 text-xs text-emerald-900 dark:border-emerald-500/50 dark:bg-emerald-950/50 dark:text-emerald-200">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <span>{fullBackupSuccess}</span>
+        </div>
+      )}
 
       {/* Metric Cards */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

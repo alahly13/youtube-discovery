@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-03 (Supabase Auth End-to-End Resolution: Immediate Cookie Binding, Server-Side Identity Verification, Strict Fail-Closed RequireAdmin, Redirect to /search, Vercel Blob Dependency & Recovery Inventory; Phase 1.6 Legacy Vercel Recovery & Complete Download Center; Phase 1.5 Database Hardening)
+Last updated: 2026-11-03 (Complete Supabase Database & Storage Remote Setup: Applied Migrations, Canonical Private Storage Bucket 'youtube-discovery-private', Authoritative Profile Mapping for Admin 'asdy', Full Project Backup & Restore Engine, 41/41 Remote Integration Audit; Supabase Auth End-to-End Resolution; Phase 1.6 Legacy Vercel Recovery; Phase 1.5 Database Hardening)
 
 ## Project Identity And Mission
 
@@ -28,8 +28,10 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Tailwind CSS 4 with centralized CSS variables in `src/app/globals.css`.
 - lucide-react for iconography.
 - Zod for server route validation.
-- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections. Domain tables and migrations intentionally unpopulated awaiting user schema.
+- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections. All 3 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active).
 - Supabase Auth and Supabase Storage (`@supabase/supabase-js@2.118.0`, `@supabase/ssr@0.12.7`) with server/browser/admin client singletons (`src/lib/supabase/*`).
+- Canonical Supabase Storage bucket: `youtube-discovery-private` (50 MiB / 52,428,800 bytes size limit, private, RLS enforced on `storage.objects`).
+- Full Portability & Backup Engine: Complete project backup exporter (`src/lib/backup/project-backup-service.ts`, `/api/download-center/full-backup`, `scripts/backup-cli.mjs`) exporting all 19 database tables (application JSON, schema, migrations, logical SQL dump), storage objects, checksums, and executable self-contained Node.js restore runner.
 - `@vercel/blob` runtime dependency completely uninstalled and removed; all storage routes delegate to `SupabaseStorageBackend` with local `DiskStorageBackend` fallback, and `blob-inventory.ts` preserves native fetch read access to remote Blob objects without deleting them.
 - `@next/env` for standalone script env loading from root `.env.local`.
 - Google GenAI SDK through server-only Gemini helpers.
@@ -39,8 +41,8 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 - Local Windows/PowerShell: run from `F:\discovery\youtube-discovery`; keep local secrets in root `.env.local`; use `vercel env pull .env.local --yes` when linked to Vercel.
 - Vercel production/preview: configure server-only variables in Vercel Project Settings; do not run database migrations during normal build.
-- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; awaiting user's final domain schema.
-- Supabase Storage: private bucket `youtube-discovery` configured for archives, manifests, and exports.
+- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 3 applied migrations and 19 canonical domain tables.
+- Supabase Storage: private bucket `youtube-discovery-private` configured for archives, manifests, and exports (with `youtube-discovery` legacy alias supported).
 - GitHub Actions: `.github/workflows/ci.yml` runs npm install, lint, typecheck, and build on Node 24.
 - Codex/online environment: provider keys and DB may be missing; live provider/DB checks must be reported honestly.
 
@@ -48,10 +50,11 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 The app is manifest-first. Every provider fetch returns a `YouTubeManifest` with provenance, settings snapshot, pages fetched, quota estimate, status, duplicate count, warnings/errors, and normalized items.
 
-Authoritative persistence uses Supabase Storage (private bucket `youtube-discovery`) via `src/lib/storage/supabase-storage-backend.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development. The legacy `@vercel/blob` runtime dependency has been removed, but existing remote Blob objects are preserved and accessible via native read-only fetch in `blob-inventory.ts`.
-- Structured data persistence is prepared for Prisma 7 / Supabase PostgreSQL.
-- File and archive storage routes through Supabase Storage buckets.
+Authoritative persistence uses Supabase Storage (canonical private bucket `youtube-discovery-private`) via `src/lib/storage/supabase-storage-backend.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development. The legacy `@vercel/blob` runtime dependency has been removed, but existing remote Blob objects are preserved and accessible via native read-only fetch in `blob-inventory.ts`.
+- Structured data persistence is fully connected to Prisma 7 / Supabase PostgreSQL across all 19 canonical models.
+- File and archive storage routes through Supabase Storage bucket `youtube-discovery-private`.
 - Manifests, playlists, and search histories are permanently stored without TTL data loss.
+- Complete Project Backup & Restore Engine allows full offline portability (database JSON + SQL dump + migrations + storage objects + restore CLI script).
 
 Access is gated by a single-admin session system with Supabase Auth (`@supabase/ssr`) prioritized alongside legacy scrypt password session fallback. Every data API route enforces `requireAdmin()` itself; middleware redirects are UX only. `/login` and the username prefill endpoint are the only public surfaces.
 
@@ -156,6 +159,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `GET /api/old/[archiveId]/download`: download raw archived manifest JSON as attachment.
 - `GET /api/download-center/inventory`: unified manifest inventory combining live domain PostgreSQL records and historical `archived_manifests` / storage archives across all 8 canonical categories.
 - `POST /api/download-center/export`: multi-manifest ZIP packager building `ASDY/NEW/<category>/...` and `ASDY/OLD/<category>/...` layouts with `ASDY/SHA256SUMS.txt` and `ASDY/export-manifest.json`.
+- `POST /api/download-center/full-backup`: protected endpoint streaming complete project backup ZIP (all 19 database tables JSON, schema DDL, applied migrations, logical SQL dump, storage objects, SHA256SUMS, and self-contained restore runner) for total data portability.
 - `POST /api/download-center/legacy-recovery/scan`: protected legacy data discovery scanner with read-only safety guarantees across Vercel Blob, disk cache, and browser storage.
 - `POST /api/download-center/legacy-recovery/backup`: protected offline verifiable backup package generator streaming ZIP (`YouTube-Discovery-Legacy-Backup/...`) with `backup-manifest.json` and `checksums/SHA256SUMS.txt`.
 - `POST /api/ai/youtube-search-assistant`: scoped AI search helper.
@@ -166,13 +170,16 @@ Server-only modules import `server-only` where secrets/providers are involved. P
 
 ## Database And Schema Concepts
 
-Canonical schema: Approved Phase 1.5 schema foundation. All 19 models defined in `prisma/schema.prisma` and migrations authored in `prisma/migrations/20261102000000_canonical_v1_4_foundation` and `prisma/migrations/20261102220000_phase1_5_security_and_old_archive`.
+Canonical schema: Approved Phase 1.5 schema foundation with Canonical Private Storage Bucket extension. All 19 models defined in `prisma/schema.prisma` and migrations authored and deployed via Prisma migration engine:
+1. `prisma/migrations/20261102000000_canonical_v1_4_foundation`
+2. `prisma/migrations/20261102220000_phase1_5_security_and_old_archive`
+3. `prisma/migrations/20261103150000_canonical_private_storage_bucket`
 
-Migrations: Authored locally for verification and Prisma client generation (`prisma validate`, `prisma generate`, `npm run db:migrations:local`). STRICT RESTRICTION: Migrations are NEVER applied or pushed to the live database during development.
+Migrations: Applied to remote Supabase PostgreSQL 17 (`qrsjlyminkpfcqpsnrxj`). Status is `SYNCHRONIZED` (verified with `npm run db:migrations:check`). The `_prisma_migrations` table records all 3 migrations as successfully applied.
 
 Canonical 19 models (Phase 1.5 Architecture: 18 Core + 1 Archive Extension):
 
-- `user_profiles`: Authenticated profile 1:1 with `auth.users(id)` (via `ON DELETE SET NULL`), containing `storage_owner_uuid` for permanent physical storage paths, role: 'admin' | 'user', and security lockout flags.
+- `user_profiles`: Authenticated profile 1:1 with `auth.users(id)` (via `ON DELETE SET NULL`), containing `storage_owner_uuid` for permanent physical storage paths, role: 'admin' | 'user', and security lockout flags. Admin user 'asdy' mapped to authoritative profile with role 'admin'.
 - `user_preferences`: 1:1 user settings, theme, auto-save settings, and preferred timezone.
 - `storage_datasets`: Authoritative registry of manifest datasets scoped to `owner_id`, with `current_revision` and `current_generation_id` pointer guarded by `trg_dataset_current_generation_guard`.
 - `storage_generations`: Committed immutable generation snapshots with linear parent lineage enforced by `uq_storage_generations_linear`, deterministic binary aggregate SHA-256, and composite foreign key `(owner_id, dataset_id, source_batch_id)` to `save_sync_batches`.
@@ -197,14 +204,14 @@ Security Hardening (Phase 1.5):
 - **A2 — Linear Succession & Single Root Constraints:** Two partial unique indexes (`uq_storage_generations_single_root` and `uq_storage_generations_linear_successor`) ensure exactly one committed root generation per dataset and strictly linear non-forking chains, plus `chk_storage_generations_no_self_parent`.
 - **A3 — Database Immutability Triggers:** `trg_prevent_committed_generation_mutation` and `trg_prevent_committed_manifest_part_mutation` prevent any `UPDATE` or `DELETE` on committed generations or their parts, with a secure session escape hatch `app.privileged_maintenance = 'on'`.
 - **A4 — Direct Batch-Generation Relationship:** Composite FK `(owner_id, dataset_id, source_batch_id)` referencing `save_sync_batches(owner_id, dataset_id, id)` with unique index `uq_storage_generations_source_batch` ensuring at most one generation per sync batch.
-- **A5 — Supabase Storage RLS Policies:** Complete RLS on `storage.objects` for bucket `youtube-discovery` authorizing owner partition `<storage_owner_uuid>/...` and logical archive root `ASDY/OLD/<storage_owner_uuid>/...`. Strict enforcement that `UPDATE` and `DELETE` operations are ONLY permitted on temporary paths (`/temp/%`), with permanent manifests and archives immutable.
+- **A5 — Supabase Storage RLS Policies:** Complete RLS on `storage.objects` for canonical bucket `youtube-discovery-private` (and legacy alias `youtube-discovery`) authorizing owner partition `<storage_owner_uuid>/...` and logical archive root `ASDY/OLD/<storage_owner_uuid>/...`. Strict enforcement that `UPDATE` and `DELETE` operations are ONLY permitted on temporary paths (`/temp/%`), with permanent manifests and archives immutable.
 - **A6 — SECURITY DEFINER Function Hardening:** All security definer functions (`current_user_profile_id`, `audit_log_append_internal`, etc.) hardened with `SET search_path = ''` and schema-qualified references.
 
 Collections status: Completely removed in Phase 1.4.
 
 Owner scope is represented by `owner_id UUID NOT NULL REFERENCES user_profiles(id)`. Every user-owned record is strictly partitioned. Application access remains single-administrator (`role = 'admin'`) for now, while database architecture is natively multi-user-ready.
 
-Migration status: Migration `20261102000000_canonical_v1_4_foundation` authored locally with zero live application. Live database remains unmutated per strict execution instructions.
+Migration status: All 3 migrations deployed and synchronized on remote Supabase PostgreSQL. Verified via `npm run db:migrations:check` with exit code 0.
 
 ## Environment Variable Map
 
@@ -376,22 +383,27 @@ Forbidden public secrets:
 - `scripts/db-migrations/test-migrations-cli.mjs`: 43-assertion verification suite covering all 8 representative migration scenarios.
 - `docs/data-architecture/current-state.md`: Phase 0 repository, routes, data contracts, and persistence audit.
 - `docs/data-architecture/erd.md`: Phase 1 canonical Entity-Relationship Diagram (design proposal pending approval).
+- `src/lib/auth/user-profile.ts`: Authoritative administrator user profile resolver and bootstrap mapping Supabase Auth UUID to `user_profiles` (`username = 'asdy'`, `role = 'admin'`, `storage_owner_uuid`).
+- `src/lib/backup/project-backup-service.ts`: Full project backup and portability engine exporting all 19 PostgreSQL tables into structured JSON, capturing Prisma schema, all migration SQL, generating pg_dump-compatible logical SQL dump, packaging storage objects from `youtube-discovery-private`, creating `SHA256SUMS.txt`, manifest report, and generating a self-contained Node.js `restore.mjs` script.
+- `src/app/api/download-center/full-backup/route.ts`: Protected endpoint streaming the complete full project backup archive (`YouTube-Discovery-Full-Backup-<timestamp>.zip`).
+- `scripts/backup-cli.mjs`: Pure Node.js CLI backup runner (`npm run db:backup`) generating identical verifiable full project backups without requiring a running web server.
+- `scripts/test-remote-integration.mjs`: Real live integration test suite verifying 41 assertions against remote Supabase PostgreSQL 17 and private Storage bucket `youtube-discovery-private`.
+- `prisma/migrations/20261103150000_canonical_private_storage_bucket/migration.sql`: Canonical migration registering the private bucket `youtube-discovery-private` (50 MiB limit) and establishing owner-scoped RLS policies on `storage.objects`.
 - `docs/data-architecture/data-dictionary.md`: Phase 1 table-by-table column types, nullability, constraints, indexes.
 - `docs/data-architecture/manifest-format.md`: Phase 1 manifest dataset sizing (40/45 MiB), immutable parts, and generational chain.
 - `docs/data-architecture/sync-and-recovery.md`: Phase 1 local durability, atomic outbox, power-loss protection, and Save Center.
 - `docs/database/migration-management.md`: professional documentation for migration CLI tools, indicators, exit codes, and workflows.
-- `prisma/schema.prisma`: canonical DB schema foundation (awaiting user schema approval before model creation).
-- `prisma/migrations/*`: append-only migration history (clean/unpopulated).
+- `prisma/schema.prisma`: canonical DB schema foundation with all 19 domain models and `@prisma/adapter-pg` driver adapter.
+- `prisma/migrations/*`: append-only migration history with 3 applied and synchronized migrations (`20261102000000_canonical_v1_4_foundation`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_storage_bucket`).
 - `scripts/*`: env and DB guardrails using root `.env.local`.
 - `.env.example`: tracked safe environment template.
 - `.github/workflows/ci.yml`: validation workflow.
 
 ## Current Limitations And Known Risks
 
-- Application domain models and migrations remain intentionally unapplied pending user review and approval of the Phase 1 canonical schema proposal.
-- Live database connection to Supabase PostgreSQL is verified `CONNECTED` over TLS; `_prisma_migrations` table is not yet initialized (`REGCLASS: null`), which the migration CLI correctly flags without errors.
 - Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation).
-- Remote Vercel Blob objects remain safely in the remote store and can be imported to Supabase Storage once credentials are provided.
+- Remote Vercel Blob objects remain safely in the remote store and can be imported to Supabase Storage once credentials are provided; zero deletion policy preserved.
+- Database access is direct to Supabase PostgreSQL 17; all 19 canonical models are active and migrations are synchronized.
 
 ## Verification Commands And Expected Checks
 
@@ -399,6 +411,8 @@ Forbidden public secrets:
 - `npm run db:migrations:local`: Inspect local migration files without database access.
 - `npm run db:migrations:check`: Validate synchronization between local and database history (strict exit code).
 - `npm run db:migrations:json`: Machine-readable JSON export of migration status.
+- `npm run db:backup`: Generate complete standalone full project backup ZIP via CLI.
+- `node scripts/test-remote-integration.mjs`: Run real remote integration audit against Supabase database & storage (41 assertions).
 - `npm run test:migrations`: 43-assertion automated suite verifying all 8 mocked migration scenarios.
 - `npm run test:security`: 15-assertion automated suite verifying Phase 1.5 database triggers, single root uniqueness, linear lineage, composite batch FK, storage RLS, and security definer search_path hardening.
 - `npm run test:old`: 15-assertion automated suite verifying OLD legacy manifest archive envelope parsing, 4-filter classification, pure Node.js ZIP extraction, and archive store operations.
@@ -409,6 +423,17 @@ Forbidden public secrets:
 - `npm run test:blob`: 118 assertions unit test suite for storage.
 - `npm run test:search`: 77 assertions unit test suite for search query transforms.
 - `npm run verify`: One-step end-to-end verification (`npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run test:auth && npm run build`).
+
+Latest verification results on 2026-11-03 (Complete Remote Supabase Database & Storage Deployment + Full Portability):
+
+- `npm run typecheck`: passed (0 errors; Prisma Client v7.10.1 generated + strict tsc check).
+- `npm run db:migrations:check`: passed (`SYNCHRONIZED`, 3/3 applied, 0 pending, 0 failed, exit code 0).
+- `node scripts/test-remote-integration.mjs`: passed (41/41 assertions pass covering database tables, triggers, storage upload/download/sha256/deletion, admin profile mapping, relational insert/query, and full backup).
+- `npm run test:auth`: passed (7/7 test suites passed: session TTL 604800s, human units parsing, admin client with service role / secret key, route-handler cookie binding, admin user "asdy" resolution, proxy cookie detection, destination redirect).
+- `npm run test:migrations`: passed (43/43 assertions pass across all 8 migration scenarios).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (93/93 assertions pass).
+- Full Project Backup CLI (`npm run db:backup`): passed (created verifiable backup ZIP with all 19 tables, schema, migrations, logical SQL dump, storage objects, and self-contained restore runner).
 
 Latest verification results on 2026-11-03 (Supabase Auth Connection, Admin "asdy" & 1-Week Session TTL):
 

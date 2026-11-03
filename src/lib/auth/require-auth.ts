@@ -5,14 +5,16 @@ import { ensureBootstrapped } from "./account-store";
 import { readSessionId, validateSession } from "./session";
 import { getBlobBackend } from "../blob/backend-factory";
 import { createServerSupabaseClient } from "../supabase/server";
+import { getAuthoritativeAdminProfile } from "./user-profile";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * Route Guard — Administrator Security Boundary
  * ──────────────────────────────────────────────────────────────────────────
  * - First checks for an active Supabase Auth administrator session.
- * - If Supabase Auth is not configured or no session is found, checks the
- *   server session cookie.
+ * - Resolves the authenticated user against authoritative user_profiles row.
+ * - Enforces role = 'admin', is_suspended = false, is_deleted = false.
+ * - Exposes profileId and storageOwnerUuid in AdminContext for owner-scoped data.
  * - Protects against CSRF via same-origin verification on mutation requests.
  * - Server authority remains strictly on the server: browser never bypasses.
  * ═══════════════════════════════════════════════════════════════════════════
@@ -22,6 +24,8 @@ export interface AdminContext {
   username: string;
   authVersion: number;
   userId?: string;
+  profileId?: string;
+  storageOwnerUuid?: string;
 }
 
 export async function requireAdmin(
@@ -43,20 +47,26 @@ export async function requireAdmin(
         } = await supabase.auth.getUser();
 
         if (!error && user) {
-          const username =
-            (user.user_metadata?.username as string) ||
-            (user.user_metadata?.name as string) ||
-            (user.app_metadata?.username as string) ||
-            (user.email ? user.email.split("@")[0] : null) ||
-            user.email ||
-            "asdy";
+          const profile = await getAuthoritativeAdminProfile(user.id, user.email);
+
+          if (!profile) {
+            return {
+              ok: false,
+              response: NextResponse.json(
+                { error: "Forbidden — account lacks administrator privileges or is suspended." },
+                { status: 403 },
+              ),
+            };
+          }
 
           return {
             ok: true,
             admin: {
-              username,
+              username: profile.username,
               authVersion: 1,
               userId: user.id,
+              profileId: profile.id,
+              storageOwnerUuid: profile.storage_owner_uuid,
             },
           };
         }

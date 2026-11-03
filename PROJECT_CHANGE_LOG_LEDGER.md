@@ -2611,3 +2611,134 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+
+## 2026-11-03 (Complete Supabase Database & Storage Deployment, Remote Setup, and Full Portability)
+
+### Date/time
+
+2026-11-03 15:45 UTC.
+
+### Agent/model if known
+
+Antigravity.
+
+### Task summary
+
+Successfully completed remote infrastructure integration, deployed all pending database migrations to the configured Supabase project, created and configured canonical private Storage bucket `youtube-discovery-private`, connected all 19 canonical domain models with authoritative profile mapping for administrator `asdy`, built a complete full backup/export/restore engine for total portability, verified real remote integration with a 41-assertion test suite, and re-verified all test suites while strictly respecting PC resource limitations (no `npm run build`) and repository boundaries (no `git push`).
+
+### Reason/root cause
+
+1. The application's database and storage had not yet been deployed to the remote Supabase project (`qrsjlyminkpfcqpsnrxj`).
+2. The user required the database schema and private storage bucket to be created and active.
+3. The administrator account `asdy` needed authoritative 1:1 mapping between Supabase Auth and the `user_profiles` table.
+4. Total data portability was required so the owner can download a complete offline backup of all database tables and storage files at any time before closing or migrating the project.
+
+### Files changed
+
+- `prisma/migrations/20261102220000_phase1_5_security_and_old_archive/migration.sql`
+- `prisma/migrations/20261103150000_canonical_private_storage_bucket/migration.sql`
+- `package.json`
+- `src/lib/supabase/storage.ts`
+- `src/lib/auth/user-profile.ts`
+- `src/lib/auth/require-auth.ts`
+- `src/lib/backup/project-backup-service.ts`
+- `src/app/api/download-center/full-backup/route.ts`
+- `src/components/download-center/download-center-workspace.tsx`
+- `scripts/backup-cli.mjs`
+- `scripts/test-remote-integration.mjs`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- `prisma/migrations/20261102220000_phase1_5_security_and_old_archive/migration.sql`:
+  - Removed redundant `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;` which is already enabled by default on Supabase and causes permission code `42501` under user `postgres`.
+- `prisma/migrations/20261103150000_canonical_private_storage_bucket/migration.sql`:
+  - Idempotently inserted canonical private bucket `youtube-discovery-private` (public: false, file_size_limit: 52428800 bytes / 50 MiB) into `storage.buckets`.
+  - Defined strict owner-scoped RLS policies on `storage.objects` for both `youtube-discovery-private` and `youtube-discovery`.
+- `src/lib/supabase/storage.ts`:
+  - Updated `CANONICAL_STORAGE_BUCKET` and `DEFAULT_SUPABASE_BUCKET` to export `process.env.SUPABASE_STORAGE_BUCKET || "youtube-discovery-private"`.
+- `src/lib/auth/user-profile.ts`:
+  - Implemented `getAuthoritativeAdminProfile(authUserId, email)` to ensure the authenticated Supabase user (`asdy@youtube.discov.com`) has a corresponding `user_profiles` record with `username = 'asdy'`, `role = 'admin'`, a permanent `storage_owner_uuid`, and an initialized `user_preferences` record.
+- `src/lib/auth/require-auth.ts`:
+  - Integrated `getAuthoritativeAdminProfile()` into `requireAdmin()`.
+  - Added `profileId` and `storageOwnerUuid` to `AdminContext` so all downstream routes operate under verified database identity.
+- `src/lib/backup/project-backup-service.ts`:
+  - Implemented comprehensive project backup engine exporting:
+    1. Structured JSON for all 19 database tables.
+    2. Prisma schema definition and all migration SQL files.
+    3. Logical SQL dump compatible with `psql`.
+    4. All storage objects from `youtube-discovery-private`.
+    5. `checksums/SHA256SUMS.txt` and `backup-manifest.json`.
+    6. Verifiable standalone `restore.mjs` script with step-by-step restoration commands.
+- `src/app/api/download-center/full-backup/route.ts`:
+  - Protected API streaming `YouTube-Discovery-Full-Backup-<timestamp>.zip`.
+- `src/components/download-center/download-center-workspace.tsx`:
+  - Added "Export Complete Project Backup" button in Download Center UI with live loading state and error handling.
+- `scripts/backup-cli.mjs`:
+  - Pure Node.js CLI script callable via `npm run db:backup` generating verifiable backup archives to `data/backups/`.
+- `scripts/test-remote-integration.mjs`:
+  - Automated 41-assertion remote integration test covering database tables, triggers, storage upload, download, SHA-256 match, object deletion, admin profile mapping, relational operations, and backup archive verification.
+
+### Architecture impact
+
+The application is now fully connected to live Supabase PostgreSQL and Storage infrastructure. All 19 canonical domain models are active, storage operates with a 50 MiB limit supporting 45 MiB chunk parts, administrator identity is securely bound to database profile ownership, and full portability is enabled.
+
+### Environment impact
+
+Standardized and verified:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `DATABASE_URL` / `DIRECT_URL`
+- `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_STORAGE_BUCKET` (`youtube-discovery-private`)
+Zero secrets printed or exposed.
+
+### Database/migration impact
+
+Applied 3 migrations to remote Supabase project:
+1. `20261102000000_canonical_v1_4_foundation`
+2. `20261102220000_phase1_5_security_and_old_archive`
+3. `20261103150000_canonical_private_storage_bucket`
+All 20 tables (19 canonical models + `_prisma_migrations`) and security triggers verified active.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run db:migrations:check`: passed (`SYNCHRONIZED`, 3/3 applied, exit code 0).
+- `node scripts/test-remote-integration.mjs`: passed (41/41 assertions pass).
+- `npm run typecheck`: passed (0 errors; Prisma Client v7.10.1 generated + strict tsc check).
+- `npm run test:auth`: passed (7/7 test suites passed).
+- `npm run test:migrations`: passed (43/43 assertions pass).
+- `npm run test:old`: passed (15/15 assertions pass).
+- `npm run test:recovery`: passed (93/93 assertions pass).
+- Full Project Backup CLI (`npm run db:backup`): passed (created `YouTube-Discovery-Full-Backup-2026-11-03T13-09-31.zip`, 24,705 bytes, SHA-256 `7ec57c31d929c33dcb9366d08839932bb97053f869716d86280e7896573d52ad`).
+- Production build (`npm run build`) intentionally avoided per user performance constraint.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+Yes. Created migration `20261103150000_canonical_private_storage_bucket` and applied all 3 migrations.
+
+### Whether `db:apply` was run
+
+No. Applied via standard Prisma migration engine (`prisma migrate deploy`).

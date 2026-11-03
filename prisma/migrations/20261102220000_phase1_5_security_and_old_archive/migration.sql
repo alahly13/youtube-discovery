@@ -255,9 +255,6 @@ WHERE "source_batch_id" IS NOT NULL;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'storage') THEN
-    -- Ensure RLS is active on storage.objects
-    ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
-
     -- Drop older policies if present
     DROP POLICY IF EXISTS "owner_storage_select" ON storage.objects;
     DROP POLICY IF EXISTS "owner_storage_insert" ON storage.objects;

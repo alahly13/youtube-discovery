@@ -27,39 +27,55 @@ export interface AdminContext {
 export async function requireAdmin(
   request: Request,
 ): Promise<{ ok: true; admin: AdminContext } | { ok: false; response: NextResponse }> {
-  // 1. Try Supabase Auth first
-  try {
-    const supabase = await createServerSupabaseClient();
-    if (supabase) {
-      const {
-        data: { user },
-        error,
-      } = await supabase.auth.getUser();
+  const hasSupabaseConfig = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+    (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  );
 
-      if (!error && user) {
-        const username =
-          (user.user_metadata?.username as string) ||
-          (user.user_metadata?.name as string) ||
-          (user.app_metadata?.username as string) ||
-          (user.email ? user.email.split("@")[0] : null) ||
-          user.email ||
-          "asdy";
+  // 1. Authoritative Supabase Auth verification
+  if (hasSupabaseConfig) {
+    try {
+      const supabase = await createServerSupabaseClient(request);
+      if (supabase) {
+        const {
+          data: { user },
+          error,
+        } = await supabase.auth.getUser();
 
-        return {
-          ok: true,
-          admin: {
-            username,
-            authVersion: 1,
-            userId: user.id,
-          },
-        };
+        if (!error && user) {
+          const username =
+            (user.user_metadata?.username as string) ||
+            (user.user_metadata?.name as string) ||
+            (user.app_metadata?.username as string) ||
+            (user.email ? user.email.split("@")[0] : null) ||
+            user.email ||
+            "asdy";
+
+          return {
+            ok: true,
+            admin: {
+              username,
+              authVersion: 1,
+              userId: user.id,
+            },
+          };
+        }
       }
+    } catch (supabaseErr) {
+      console.warn("[requireAdmin] Supabase getUser verification exception:", supabaseErr);
     }
-  } catch {
-    // Supabase Auth not active, fall through to session store check
+
+    // When Supabase Auth is configured, access requires a verified Supabase session
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "Unauthorized — valid administrator session required." },
+        { status: 401 },
+      ),
+    };
   }
 
-  // 2. Standard session check
+  // 2. Legacy fallback only when Supabase Auth is completely unconfigured
   let backend;
   try {
     backend = getBlobBackend();

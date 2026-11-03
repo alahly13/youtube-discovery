@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getBlobBackend } from "@/lib/blob/backend-factory";
 import type { BlobBackend } from "@/lib/blob/blob-backend";
-import { verifyCredentials } from "@/lib/auth/account-store";
 import {
   clearLoginAttempts,
   checkLoginRateLimit,
@@ -78,9 +77,6 @@ export async function POST(request: Request) {
 
   const { username, password } = parsed.data;
   const ttl = getSessionTtlSeconds(); // Defaults to 604800 (1 week / 7 days)
-  let authenticated = false;
-  let displayUsername = username;
-  let authUserId: string | undefined;
 
   // Configured administrator email and environment password
   const configuredAdminEmail = (process.env.ADMIN_EMAIL || "asdy@youtube.discov.com").trim();
@@ -90,48 +86,37 @@ export async function POST(request: Request) {
     process.env.SUPABASE_ADMIN_PASSWORD
   )?.trim();
 
+  // 1. Validate Supabase environment configuration
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    return NextResponse.json(
+      { error: "Supabase Authentication is not configured on this server. Check your environment variables." },
+      { status: 500 },
+    );
+  }
+
   // Target is the administrator if username is "asdy", legacy "admin", or the configured email
   const isTargetAsdy =
     username.trim().toLowerCase() === "asdy" ||
     username.trim().toLowerCase() === "admin" ||
     username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
 
-  // Check if the entered password matches the configured environment password
+  // Exact password check without modifying user input
   const passwordMatchesEnv = Boolean(
-    configuredEnvPassword &&
-    (password === configuredEnvPassword || password.trim() === configuredEnvPassword.trim())
+    configuredEnvPassword && password === configuredEnvPassword
   );
 
-  // 1. Attempt Supabase Auth first
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseKey =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  const response = NextResponse.json({
-    success: true,
-    username: displayUsername,
-    ...(authUserId ? { userId: authUserId } : {}),
-  });
-
-  if (supabaseUrl && supabaseKey) {
-    const candidateEmails: string[] = [];
-
-    if (isTargetAsdy) {
-      candidateEmails.push(configuredAdminEmail);
-    }
-
-    if (username.includes("@") && !candidateEmails.includes(username.trim())) {
-      candidateEmails.push(username.trim());
-    }
-
-    // Attempt resolving or synchronizing user via Supabase Admin Client
+  // If password matches environment configuration, ensure Supabase Auth is synchronized
+  if (passwordMatchesEnv) {
     try {
       const adminClient = createAdminClient();
       if (adminClient) {
-        const { data } = await adminClient.auth.admin.listUsers();
-        const target = username.trim().toLowerCase();
-        let match = data?.users?.find((u) => {
+        const { data: userData } = await adminClient.auth.admin.listUsers();
+        const match = userData?.users?.find((u) => {
           const email = u.email?.toLowerCase();
           const uUsername = (
             u.user_metadata?.username ||
@@ -139,115 +124,124 @@ export async function POST(request: Request) {
             u.app_metadata?.username
           )?.toString().toLowerCase();
           return (
-            email === target ||
-            email?.split("@")[0] === target ||
             email === configuredAdminEmail.toLowerCase() ||
-            uUsername === target ||
-            ((target === "asdy" || target === "admin") && (email?.startsWith("asdy@") || uUsername === "asdy"))
+            uUsername === "asdy" ||
+            email?.startsWith("asdy@")
           );
         });
 
-        // If the password matches the environment variable, ensure it is synchronized in Supabase Auth
-        if (passwordMatchesEnv) {
-          if (match) {
-            try {
-              await adminClient.auth.admin.updateUserById(match.id, {
-                password: configuredEnvPassword!.trim(),
-                email_confirm: true,
-              });
-            } catch (syncErr) {
-              console.warn("[auth] Supabase password sync non-fatal warning:", syncErr);
-            }
-          } else if (isTargetAsdy) {
-            // Auto-create user in Supabase Auth if not yet created
-            try {
-              const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
-                email: configuredAdminEmail,
-                password: configuredEnvPassword!.trim(),
-                email_confirm: true,
-                user_metadata: { username: "asdy", name: "asdy" },
-              });
-              if (!createErr && created?.user) {
-                match = created.user;
-              }
-            } catch (createErr) {
-              console.warn("[auth] Supabase admin auto-create user warning:", createErr);
-            }
-          }
-        }
-
-        if (match && match.email) {
-          if (!candidateEmails.includes(match.email)) {
-            candidateEmails.unshift(match.email);
-          }
-          authUserId = match.id;
-          displayUsername =
-            (match.user_metadata?.username as string) ||
-            (match.user_metadata?.name as string) ||
-            match.email.split("@")[0] ||
-            "asdy";
-        }
-      }
-    } catch (adminErr) {
-      console.warn("[auth] Supabase admin user discovery non-fatal error:", adminErr);
-    }
-
-    // Always ensure raw username is included in candidate emails
-    if (!candidateEmails.includes(username.trim())) {
-      candidateEmails.push(username.trim());
-    }
-
-    // Initialize Route Handler Supabase client bound to response cookies
-    const supabase = createRouteHandlerSupabaseClient(request, response);
-    if (supabase) {
-      for (const emailToTry of candidateEmails) {
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: emailToTry,
-            password,
+        if (match) {
+          await adminClient.auth.admin.updateUserById(match.id, {
+            password: configuredEnvPassword,
+            email_confirm: true,
+            user_metadata: { username: "asdy", name: "asdy" },
           });
-
-          if (!error && data?.user) {
-            authenticated = true;
-            authUserId = data.user.id;
-            displayUsername =
-              (data.user.user_metadata?.username as string) ||
-              (data.user.user_metadata?.name as string) ||
-              data.user.email?.split("@")[0] ||
-              "asdy";
-            break;
-          }
-        } catch {
-          // Continue to next candidate
+        } else if (isTargetAsdy) {
+          await adminClient.auth.admin.createUser({
+            email: configuredAdminEmail,
+            password: configuredEnvPassword,
+            email_confirm: true,
+            user_metadata: { username: "asdy", name: "asdy" },
+          });
         }
       }
+    } catch (syncErr) {
+      console.warn("[auth/login] Supabase credential sync warning:", syncErr);
     }
   }
 
-  // 2. Direct environment password match fallback (if Supabase Auth is offline or network fails)
-  if (!authenticated && passwordMatchesEnv) {
-    if (isTargetAsdy) {
-      authenticated = true;
-      displayUsername = "asdy";
-    }
+  // Build candidate emails to try for sign-in
+  const candidateEmails: string[] = [];
+  if (isTargetAsdy) {
+    candidateEmails.push(configuredAdminEmail);
+  }
+  if (username.includes("@") && !candidateEmails.includes(username.trim())) {
+    candidateEmails.push(username.trim());
+  }
+  if (!candidateEmails.includes(username.trim())) {
+    candidateEmails.push(username.trim());
   }
 
-  // 3. Fall back to legacy local storage credentials if Supabase did not authenticate
-  if (!authenticated && backend) {
+  // Prepare response object where @supabase/ssr binds auth cookies
+  const response = NextResponse.json({
+    success: true,
+    username: isTargetAsdy ? "asdy" : username,
+  });
+
+  const supabase = createRouteHandlerSupabaseClient(request, response);
+  if (!supabase) {
+    return NextResponse.json(
+      { error: "Failed to initialize Supabase server client." },
+      { status: 500 },
+    );
+  }
+
+  let authUser: { id: string; email?: string; user_metadata?: Record<string, unknown> } | null = null;
+  let lastAuthError: { message: string; status?: number; code?: string } | null = null;
+
+  for (const emailToTry of candidateEmails) {
     try {
-      const account = await verifyCredentials(backend, username, password);
-      if (account) {
-        authenticated = true;
-        displayUsername = account.username;
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: emailToTry,
+        password, // Exact password as entered by the user
+      });
+
+      if (!error && data?.user) {
+        authUser = data.user;
+        break;
       }
-    } catch (err) {
-      console.warn("[auth] Legacy credentials verification fallback check:", err);
+      if (error) {
+        lastAuthError = {
+          message: error.message,
+          status: error.status,
+          code: (error as { code?: string }).code,
+        };
+      }
+    } catch (fetchErr) {
+      lastAuthError = {
+        message: fetchErr instanceof Error ? fetchErr.message : "Authentication network request failed",
+        status: 503,
+        code: "NETWORK_ERROR",
+      };
     }
   }
 
-  if (!authenticated) {
+  if (!authUser) {
     if (backend) await recordLoginAttempt(backend, ipHash);
-    return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
+
+    // Provide specific, actionable error messages
+    if (lastAuthError?.status === 503 || lastAuthError?.code === "NETWORK_ERROR") {
+      return NextResponse.json(
+        { error: "Supabase Authentication service is unreachable. Please verify network connectivity." },
+        { status: 503 },
+      );
+    }
+    if (lastAuthError?.message?.toLowerCase().includes("email not confirmed")) {
+      return NextResponse.json(
+        { error: "The administrator email is not confirmed in Supabase Auth." },
+        { status: 403 },
+      );
+    }
+    if (lastAuthError?.status === 429) {
+      return NextResponse.json(
+        { error: "Too many authentication attempts. Please wait a moment and try again." },
+        { status: 429 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Invalid username or password. Please verify your credentials." },
+      { status: 401 },
+    );
+  }
+
+  // Server-side confirmation of the authenticated identity
+  const { data: verified, error: verifyErr } = await supabase.auth.getUser();
+  if (verifyErr || !verified?.user) {
+    console.error("[auth/login] Supabase getUser verification error:", verifyErr);
+    return NextResponse.json(
+      { error: "Session creation could not be verified with Supabase Auth." },
+      { status: 500 },
+    );
   }
 
   // Clear rate limits upon successful login
@@ -255,7 +249,7 @@ export async function POST(request: Request) {
     await clearLoginAttempts(backend, ipHash);
   }
 
-  // Synchronize local session cookie with the configured session TTL
+  // Synchronize local session cookie mirror if Blob backend is available (for legacy checks)
   if (backend) {
     try {
       const { sid } = await createSession(backend, 1);
@@ -267,17 +261,8 @@ export async function POST(request: Request) {
         secure: isSecureCookie(),
       });
     } catch (sessionErr) {
-      console.warn("[auth] Failed to persist local session mirror:", sessionErr);
+      console.warn("[auth/login] Non-fatal legacy session mirror warning:", sessionErr);
     }
-  } else {
-    // If Blob backend is not configured, set direct admin session cookie so proxy middleware recognizes presence
-    response.cookies.set(SESSION_COOKIE_NAME, "admin_session_" + Date.now(), {
-      path: "/",
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: ttl,
-      secure: isSecureCookie(),
-    });
   }
 
   return response;

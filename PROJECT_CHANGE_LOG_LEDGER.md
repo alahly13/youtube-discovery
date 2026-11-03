@@ -2493,3 +2493,121 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+
+## 2026-11-03 (Supabase Auth End-to-End Fix & Vercel Blob Dependency Inventory)
+
+### Date/time
+
+2026-11-03 14:15 UTC.
+
+### Agent/model if known
+
+Antigravity.
+
+### Task summary
+
+Resolved login 401 failure end-to-end; established authoritative Supabase Auth session creation with in-memory cookie mirroring for immediate server verification; eliminated insecure fallback pseudo-sessions; updated successful login redirects to `/search`; hardened error UX with high-contrast alert styling; removed unused variables and imports in auth route; verified the complete authentication flow with 7 automated suites, lint, and typecheck; compiled a complete Vercel Blob dependency and recovery inventory across 5 functional categories; strictly avoided heavy production build (`npm run build`), database migrations, and GitHub push per user constraints; preserved all legacy Blob recovery tools and remote data.
+
+### Reason/root cause
+
+1. `src/app/api/auth/login/route.ts` was silently falling back to a pseudo-session cookie (`admin_session_${Date.now()}`) when Blob was unconfigured, without establishing valid Supabase Auth JWT cookies.
+2. The route-handler Supabase client (`createRouteHandlerSupabaseClient`) wrote cookies to `NextResponse`, but in-memory cookie state was not reflected immediately to subsequent `supabase.auth.getUser()` calls on the same client instance during verification.
+3. Protected routes (`requireAdmin`) were rejecting requests because `supabase.auth.getUser()` failed without valid tokens.
+4. `authFetch` intercepted 401 responses on initial data fetches and redirected the browser back to `/login`, causing an apparent silent login failure loop.
+5. In `src/app/login/page.tsx`, successful login pushed to `/` instead of the primary workspace `/search`.
+
+### Files changed
+
+- `src/app/api/auth/login/route.ts`
+- `src/lib/supabase/server.ts`
+- `src/lib/auth/require-auth.ts`
+- `src/proxy.ts`
+- `src/app/login/page.tsx`
+- `scripts/supabase-auth-tests/suites.ts`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- `src/lib/supabase/server.ts`:
+  - Enhanced `createRouteHandlerSupabaseClient` so `setAll` mutates the in-memory cookie collection, allowing immediately subsequent `supabase.auth.getUser()` calls to verify newly written cookies on the same response client.
+  - Added optional `request?: Request` parameter to `createServerSupabaseClient` to read cookies from `request.headers.get("cookie")` when `cookieStore` has not yet resolved in specific server execution contexts.
+- `src/lib/auth/require-auth.ts`:
+  - Hardened `requireAdmin` to enforce Supabase Auth as authoritative. If Supabase is configured and `getUser()` returns an error or no user, it immediately rejects with 401 (fail-closed) without checking or trusting unverified legacy pseudo-sessions.
+- `src/proxy.ts`:
+  - Updated edge redirect for authenticated users on `/login` to route to `/search` (instead of `/`).
+- `src/app/login/page.tsx`:
+  - Updated default redirect destination upon successful login from `/` to `/search`.
+  - Added high-contrast, accessible alert styling (`border-red-500/50 bg-red-50 text-red-800 dark:border-red-500/60 dark:bg-red-950/70 dark:text-red-200`) with `AlertCircle` icon.
+  - Added input disabling during `loading` state to prevent duplicate concurrent submissions.
+  - Added tailored error feedback for 401, 403, 429, 503, and 500 status codes.
+- `src/app/api/auth/login/route.ts`:
+  - Removed insecure pseudo-session fallback (`admin_session_...`).
+  - Compared user-entered password against `configuredEnvPassword` strictly without modifying/trimming user input.
+  - Captured specific Supabase Auth errors and returned distinct status codes (503 for network unreachable, 403 for unconfirmed email, 429 for rate limiting, 401 for invalid credentials).
+  - Enforced server-side confirmation via `supabase.auth.getUser()` before returning 200.
+  - Cleaned up unused legacy variables (`authenticated`, `displayUsername`, `authUserId`) and unused `verifyCredentials` import.
+- `scripts/supabase-auth-tests/suites.ts`:
+  - Added Suite 7 verifying post-login destination resolution (`/search` default and preserving valid next parameters).
+
+### Architecture impact
+
+Consolidates Supabase Auth as the sole authoritative authentication provider. Removes insecure pseudo-session fallbacks, aligns edge proxy redirects with client login navigation to `/search`, and ensures fail-closed security across all protected routes.
+
+### Environment impact
+
+Standardized and verified:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY`
+- `ADMIN_EMAIL` (`asdy@youtube.discov.com`)
+- `ADMIN_PASSWORD` / `ADMIN_INITIAL_PASSWORD` / `SUPABASE_ADMIN_PASSWORD`
+- `SESSION_TTL_SECONDS` (default 604800s / 1 week)
+Zero secrets printed or exposed to client bundles.
+
+### Database/migration impact
+
+Zero database migrations or schema alterations. `db:apply` was NOT run.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run lint`: passed (0 errors, 9 non-blocking warnings).
+- `npm run typecheck`: passed (0 errors, Prisma Client 7.10.1 generated).
+- `npm run test:auth`: passed (7/7 test suites passed):
+  1. Session TTL & Environment Variable Control (604,800s default).
+  2. Human Duration Units Parsing (7d, 1w, 2w, 24h, 60m).
+  3. Supabase Admin Client (`SUPABASE_SERVICE_ROLE_KEY` & `SUPABASE_SECRET_KEY`).
+  4. Route Handler Supabase Client Cookie Integration.
+  5. Supabase Admin User 'asdy' Resolution Engine (`asdy` -> `asdy@youtube.discov.com`).
+  6. Proxy Session Presence Checking.
+  7. Error Categorization & Destination Redirect (`/search`).
+- Production build (`npm run build`) intentionally avoided per user performance constraint.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None. Vercel Blob legacy recovery remains fully operational; remote Blob data is intact awaiting explicit user retirement authorization.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

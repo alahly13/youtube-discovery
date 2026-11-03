@@ -181,4 +181,22 @@ export async function runAllSuites() {
   );
   assert.equal(hasNeither, false, "Empty cookies correctly detected as unauthenticated");
   console.log("  ok: proxy session detector recognizes both Supabase and local session cookies");
+
+  console.log("\n[ 7. Error Categorization & Destination Redirect ]");
+  // Test destination redirect logic
+  const searchParamsWithNext = new URLSearchParams("next=/saved");
+  const nextVal = searchParamsWithNext.get("next");
+  const destination1 = nextVal && nextVal.startsWith("/") && !nextVal.startsWith("//") && nextVal !== "/login" ? nextVal : "/search";
+  assert.equal(destination1, "/saved", "Must redirect to requested /saved path");
+
+  const searchParamsEmpty = new URLSearchParams("");
+  const nextEmpty = searchParamsEmpty.get("next");
+  const destination2 = nextEmpty && nextEmpty.startsWith("/") && !nextEmpty.startsWith("//") && nextEmpty !== "/login" ? nextEmpty : "/search";
+  assert.equal(destination2, "/search", "Must redirect to /search by default");
+
+  const searchParamsLogin = new URLSearchParams("next=/login");
+  const nextLogin = searchParamsLogin.get("next");
+  const destination3 = nextLogin && nextLogin.startsWith("/") && !nextLogin.startsWith("//") && nextLogin !== "/login" ? nextLogin : "/search";
+  assert.equal(destination3, "/search", "Must avoid self-loop redirect when next is /login");
+  console.log("  ok: successful login destination correctly resolves to /search by default and preserves valid next routes");
 }

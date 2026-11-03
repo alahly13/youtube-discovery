@@ -9,8 +9,14 @@ import { getSessionTtlSeconds } from "@/lib/auth/session";
  * Supabase client for Server Components, Server Actions, and Route Handlers.
  * Synchronizes authentication sessions via HTTP-only cookies with the configured session TTL.
  */
-export async function createServerSupabaseClient() {
-  const cookieStore = await cookies();
+export async function createServerSupabaseClient(request?: Request) {
+  let cookieStore: Awaited<ReturnType<typeof cookies>> | null = null;
+  try {
+    cookieStore = await cookies();
+  } catch {
+    // Calling from outside request context or background task
+  }
+
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
@@ -22,12 +28,31 @@ export async function createServerSupabaseClient() {
 
   const ttl = getSessionTtlSeconds();
 
+  // Parse header cookies if request is supplied
+  const cookieHeader = request?.headers.get("cookie") || "";
+  const headerCookies = cookieHeader
+    .split(";")
+    .map((c) => {
+      const idx = c.indexOf("=");
+      if (idx < 0) return null;
+      return {
+        name: c.slice(0, idx).trim(),
+        value: c.slice(idx + 1).trim(),
+      };
+    })
+    .filter((c): c is { name: string; value: string } => c !== null);
+
   return createServerClient(url, key, {
     cookies: {
       getAll() {
-        return cookieStore.getAll();
+        const storeCookies = cookieStore ? cookieStore.getAll() : [];
+        if (storeCookies.length > 0) {
+          return storeCookies;
+        }
+        return headerCookies;
       },
       setAll(cookiesToSet) {
+        if (!cookieStore) return;
         try {
           cookiesToSet.forEach(({ name, value, options }) =>
             cookieStore.set(name, value, {
@@ -87,6 +112,14 @@ export function createRouteHandlerSupabaseClient(
       },
       setAll(cookiesToSet) {
         cookiesToSet.forEach(({ name, value, options }) => {
+          // Update in-memory cookies so subsequent calls on the same client instance see the newly set tokens
+          const existing = requestCookies.find((c) => c.name === name);
+          if (existing) {
+            existing.value = value;
+          } else {
+            requestCookies.push({ name, value });
+          }
+
           response.cookies.set(name, value, {
             ...options,
             maxAge: ttl,

@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-03 (Supabase Auth Integration, Admin "asdy" Resolution, Route-Handler Cookie Binding, and Configurable 1-Week Session TTL; Phase 1.6 Legacy Vercel Recovery, Complete Manifest Download Center & Media Card Readability; Phase 1.5 Database Security Hardening + OLD Archive)
+Last updated: 2026-11-03 (Supabase Auth End-to-End Resolution: Immediate Cookie Binding, Server-Side Identity Verification, Strict Fail-Closed RequireAdmin, Redirect to /search, Vercel Blob Dependency & Recovery Inventory; Phase 1.6 Legacy Vercel Recovery & Complete Download Center; Phase 1.5 Database Hardening)
 
 ## Project Identity And Mission
 
@@ -293,14 +293,14 @@ Forbidden public secrets:
 - `src/lib/auth/session.ts`: opaque Blob sessions, 7d TTL, server-side expiry + authVersion checks.
 - `src/lib/auth/account-store.ts`: single-admin bootstrap (atomic), credential changes with read-back verify.
 - `src/lib/auth/rate-limit.ts`: Blob sliding-window login limiter + memory mirror.
-- `src/lib/auth/require-auth.ts`: per-route `requireAdmin()` guard + same-origin CSRF check.
+-`src/lib/auth/require-auth.ts`: per-route `requireAdmin()` guard + same-origin CSRF check; strictly verifies authoritative Supabase session via `getUser()` and fails closed (401) without insecure fallback cookies.
 - `src/lib/keys/key-crypto.ts`: AES-256-GCM for managed key values (refuses plaintext saves).
 - `src/lib/keys/quota-pools.ts`: project pools, buckets, CAS usage accounting, Pacific-day docs, dashboard math.
 - `src/lib/client/auth-fetch.ts`: 401→login redirect fetch wrapper.
 - `src/lib/client/blob-upload.ts`: small-direct vs staged-chunked save for large search records.
-- `src/app/login/page.tsx`: admin sign-in with current-username prefill.
-- `src/proxy.ts`: page gate (UX only; data routes self-guard). Replaces deprecated middleware convention.
-- `src/app/api/auth/*`: login/logout/username/status/account endpoints.
+- `src/app/login/page.tsx`: admin sign-in with high-contrast error alert (`AlertCircle`), input disabling during submission, and default post-login redirect to `/search`.
+- `src/proxy.ts`: edge UX gate directing authenticated visitors immediately to `/search` and unauthenticated visitors to `/login`. Replaces deprecated middleware convention.
+- `src/app/api/auth/*`: login/logout/username/status/account endpoints; `POST /api/auth/login` verifies credentials against Supabase Auth, binds HTTP-only cookies to response, verifies session with `getUser()` server-side, and enforces configurable 1-week TTL.
 - `src/app/api/admin/migrate|storage-status|storage-verify`: migration, readiness, diagnostics.
 - `src/app/api/blob-upload/[action]`: staged upload endpoints.
 - `src/app/api/youtube/keys/usage`: project-grouped quota dashboard API.

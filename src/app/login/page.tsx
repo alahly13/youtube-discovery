@@ -48,12 +48,31 @@ function LoginForm() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const errorMsg = data?.error || (res.status === 401 ? "Invalid username or password. Please verify your credentials." : "Login failed. Please try again.");
-        console.warn("[auth/login] Rejected:", { status: res.status, error: errorMsg });
+        let errorMsg = data?.error;
+        if (!errorMsg) {
+          if (res.status === 401) {
+            errorMsg = "Invalid username or password. Please verify your credentials.";
+          } else if (res.status === 403) {
+            errorMsg = "Access forbidden. Your account is not confirmed or lacks administrator permissions.";
+          } else if (res.status === 429) {
+            errorMsg = "Too many login attempts. Please wait a few moments and try again.";
+          } else if (res.status === 503) {
+            errorMsg = "Authentication service is temporarily unavailable. Please try again shortly.";
+          } else if (res.status >= 500) {
+            errorMsg = "Server configuration error occurred during authentication.";
+          } else {
+            errorMsg = "Sign-in failed. Please try again.";
+          }
+        }
+        console.warn("[auth/login] Request failed:", { status: res.status, error: errorMsg });
         throw new Error(errorMsg);
       }
       const next = searchParams.get("next");
-      router.push(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+      const destination =
+        next && next.startsWith("/") && !next.startsWith("//") && next !== "/login"
+          ? next
+          : "/search";
+      router.push(destination);
       router.refresh();
     } catch (err) {
       const displayMsg = err instanceof Error ? err.message : "Login failed";
@@ -80,7 +99,7 @@ function LoginForm() {
           <div
             role="alert"
             aria-live="assertive"
-            className="mb-4 flex items-start gap-2.5 rounded-lg border border-red-500/30 bg-red-50 p-3 text-xs text-red-700 shadow-xs dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300"
+            className="mb-4 flex items-start gap-2.5 rounded-lg border border-red-500/50 bg-red-50 p-3 text-xs text-red-800 shadow-sm dark:border-red-500/60 dark:bg-red-950/70 dark:text-red-200"
           >
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
             <div className="flex-1 font-medium leading-relaxed">{error}</div>
@@ -95,9 +114,10 @@ function LoginForm() {
               id="login-username"
               type="text"
               autoComplete="username"
+              disabled={loading}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-60"
             />
           </div>
           <div>
@@ -108,9 +128,10 @@ function LoginForm() {
               id="login-password"
               type="password"
               autoComplete="current-password"
+              disabled={loading}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-60"
             />
           </div>
           <Button type="submit" variant="primary" className="w-full" disabled={loading || !username || !password}>

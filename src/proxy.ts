@@ -37,10 +37,10 @@ export default function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
   if (hasSession && PUBLIC_PATHS.has(pathname)) {
-    const homeUrl = request.nextUrl.clone();
-    homeUrl.pathname = "/";
-    homeUrl.search = "";
-    return NextResponse.redirect(homeUrl);
+    const searchUrl = request.nextUrl.clone();
+    searchUrl.pathname = "/search";
+    searchUrl.search = "";
+    return NextResponse.redirect(searchUrl);
   }
   return NextResponse.next();
 }

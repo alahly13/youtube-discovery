@@ -11,9 +11,9 @@ export const dynamic = "force-dynamic";
  * login page can prefill it. Never exposes hashes, secrets, or metadata.
  */
 export async function GET() {
-  // 1. Explicit admin username environment variable
+  // 1. Explicit admin username environment variable (prefer "asdy" if unset or left as legacy "admin")
   const envUsername = process.env.ADMIN_DEFAULT_USERNAME?.trim();
-  if (envUsername) {
+  if (envUsername && envUsername.toLowerCase() !== "admin") {
     return NextResponse.json({ username: envUsername });
   }
 

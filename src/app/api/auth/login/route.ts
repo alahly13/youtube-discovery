@@ -90,6 +90,18 @@ export async function POST(request: Request) {
     process.env.SUPABASE_ADMIN_PASSWORD
   )?.trim();
 
+  // Target is the administrator if username is "asdy", legacy "admin", or the configured email
+  const isTargetAsdy =
+    username.trim().toLowerCase() === "asdy" ||
+    username.trim().toLowerCase() === "admin" ||
+    username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
+
+  // Check if the entered password matches the configured environment password
+  const passwordMatchesEnv = Boolean(
+    configuredEnvPassword &&
+    (password === configuredEnvPassword || password.trim() === configuredEnvPassword.trim())
+  );
+
   // 1. Attempt Supabase Auth first
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
@@ -104,11 +116,6 @@ export async function POST(request: Request) {
 
   if (supabaseUrl && supabaseKey) {
     const candidateEmails: string[] = [];
-
-    // If username is "asdy" or matches configured email, prioritize asdy@youtube.discov.com
-    const isTargetAsdy =
-      username.trim().toLowerCase() === "asdy" ||
-      username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
 
     if (isTargetAsdy) {
       candidateEmails.push(configuredAdminEmail);
@@ -136,16 +143,16 @@ export async function POST(request: Request) {
             email?.split("@")[0] === target ||
             email === configuredAdminEmail.toLowerCase() ||
             uUsername === target ||
-            (target === "asdy" && (email?.startsWith("asdy@") || uUsername === "asdy"))
+            ((target === "asdy" || target === "admin") && (email?.startsWith("asdy@") || uUsername === "asdy"))
           );
         });
 
         // If the password matches the environment variable, ensure it is synchronized in Supabase Auth
-        if (configuredEnvPassword && password === configuredEnvPassword) {
+        if (passwordMatchesEnv) {
           if (match) {
             try {
               await adminClient.auth.admin.updateUserById(match.id, {
-                password: configuredEnvPassword,
+                password: configuredEnvPassword!.trim(),
                 email_confirm: true,
               });
             } catch (syncErr) {
@@ -156,7 +163,7 @@ export async function POST(request: Request) {
             try {
               const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
                 email: configuredAdminEmail,
-                password: configuredEnvPassword,
+                password: configuredEnvPassword!.trim(),
                 email_confirm: true,
                 user_metadata: { username: "asdy", name: "asdy" },
               });
@@ -218,10 +225,7 @@ export async function POST(request: Request) {
   }
 
   // 2. Direct environment password match fallback (if Supabase Auth is offline or network fails)
-  if (!authenticated && configuredEnvPassword && password === configuredEnvPassword) {
-    const isTargetAsdy =
-      username.trim().toLowerCase() === "asdy" ||
-      username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
+  if (!authenticated && passwordMatchesEnv) {
     if (isTargetAsdy) {
       authenticated = true;
       displayUsername = "asdy";
@@ -265,6 +269,15 @@ export async function POST(request: Request) {
     } catch (sessionErr) {
       console.warn("[auth] Failed to persist local session mirror:", sessionErr);
     }
+  } else {
+    // If Blob backend is not configured, set direct admin session cookie so proxy middleware recognizes presence
+    response.cookies.set(SESSION_COOKIE_NAME, "admin_session_" + Date.now(), {
+      path: "/",
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: ttl,
+      secure: isSecureCookie(),
+    });
   }
 
   return response;

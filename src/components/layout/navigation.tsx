@@ -29,6 +29,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/format";
 import { DailymotionIcon } from "@/components/layout/dailymotion-icon";
+import { SignOutButton } from "@/components/layout/sign-out-button";
 
 interface NavItem {
   href: string;
@@ -282,6 +283,11 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
       <div className="mt-2 rounded-lg border border-border/70 bg-surface-muted/60 p-2.5 text-[11px] leading-relaxed text-muted">
         <p className="font-semibold text-foreground/80">YouTube Discovery 2026</p>
         <p className="mt-0.5 text-muted/80">Dedicated OLD & NEW Storage separation with zero-quota search cache.</p>
+      </div>
+
+      {/* Account / Sign Out Section */}
+      <div className="mt-2 border-t border-border/50 pt-2">
+        <SignOutButton variant="sidebar" />
       </div>
     </nav>
   );

@@ -295,7 +295,7 @@ Forbidden public secrets:
 - `DESIGN_DARK.md`, `DESIGN_LIGHT.md`, `design-inspiration/*`: visual inspiration, not product truth.
 - `src/app/globals.css`: design tokens and global layout safeguards; avoid one-off color systems.
 - `src/app/layout.tsx`: root metadata, fonts, and theme boot script.
-- `src/components/layout/*`: app shell, navigation, theme toggle; keep provider secrets out.
+- `src/components/layout/*`: app shell, navigation, theme toggle, and SignOutButton; features responsive desktop and mobile Show/Hide Navbar controls, sidebar collapse button, and top-level sign out; keep provider secrets out.
 - `src/components/ui/back-to-top.tsx`: reusable smooth-scrolling floating Back-to-Top button.
 - `src/components/search/search-workspace.tsx`: main client search experience; local filters do not call YouTube; includes configurable TTL search persistence (default 168h / 7 days), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control.
 - `src/lib/config/search-storage-config.ts`: centralized safe TTL parser and expiration calculation module.

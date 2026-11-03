@@ -3167,3 +3167,86 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+
+---
+
+## 2026-11-03 (Sign Out Button & Show/Hide Navbar Button Controls)
+
+### Date/time
+
+2026-11-03 ~20:50 UTC+2
+
+### Agent/model if known
+
+Antigravity / Gemini 3.8 Flash (High)
+
+### Task summary
+
+Created a dedicated, accessible global Sign Out button and enhanced Show/Hide Navbar controls across desktop and mobile headers and the sidebar navigation.
+
+### Reason/root cause
+
+User requested a dedicated Sign Out button and Show/Hide Navbar button for convenient layout management and authentication control.
+
+### Files changed
+
+- `src/components/layout/sign-out-button.tsx` (created: reusable sign out button invoking `POST /api/auth/logout`, clearing sessions, and redirecting cleanly to `/login`).
+- `src/components/layout/app-shell.tsx` (updated: added responsive "Show Navbar" / "Hide Navbar" toggle buttons in header for desktop and mobile, collapse button inside sidebar header, and top-level Sign Out button).
+- `src/components/layout/navigation.tsx` (updated: added Sign Out button at the bottom of the navigation menu).
+- `youtube_discovery_ledger.md` (updated: documented layout controls in file map).
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended: dated record of changes).
+
+### Technical details
+
+- `SignOutButton`: Invokes `POST /api/auth/logout` via fetch with credentials, shows active loading spinner state during sign-out, and performs a clean full-page redirect to `/login` to clear client session and state.
+- Show/Hide Navbar:
+  - Desktop header button toggles `isSidebarOpen` from `useYouTubeWorkspaceStore` with dynamic label ("Hide Navbar" when open, "Show Navbar" with highlighted primary styling when collapsed).
+  - Inside the desktop sidebar header, a dedicated `<PanelLeftClose>` button enables immediate sidebar collapsing.
+  - Mobile header button provides a dedicated "Navbar" / "Hide Navbar" toggle button to open and close the mobile navigation drawer.
+
+### Architecture impact
+
+Improves accessibility and user experience without modifying database models, API contracts, or server routes.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact when relevant
+
+Zero quota impact.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `node scripts/test-cloudflare-r2-workers.mjs`: passed (11/11 assertions pass).
+- `node scripts/test-phase1-5-old-archive.mjs`: passed (15/15 assertions pass).
+- `node scripts/test-phase1-5-database-security.mjs`: passed (15/15 assertions pass).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

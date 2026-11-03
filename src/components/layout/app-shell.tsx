@@ -6,6 +6,7 @@ import { useSyncExternalStore, useState } from "react";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Navigation } from "@/components/layout/navigation";
 import { SaveCenter } from "@/components/layout/save-center";
+import { SignOutButton } from "@/components/layout/sign-out-button";
 import { Badge } from "@/components/ui/badge";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <p className="text-base font-semibold whitespace-nowrap">YouTube Discovery</p>
             <p className="font-mono text-xs text-muted whitespace-nowrap">Research Terminal</p>
           </div>
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-surface text-muted hover:bg-surface-muted hover:text-foreground transition-colors cursor-pointer"
+            title="Hide Navbar (Collapse sidebar)"
+            aria-label="Hide Navbar"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </button>
         </div>
         <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
           <Navigation />
@@ -104,27 +114,51 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-30 border-b border-border bg-background/85 px-4 py-3 backdrop-blur md:px-6">
           <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              {/* Mobile menu button */}
+              {/* Mobile Navbar Toggle */}
               <button
                 type="button"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-surface text-muted lg:hidden hover:text-foreground hover:bg-surface-muted"
-                aria-label="Open navigation"
-                title="Open navigation"
-                onClick={() => setMobileMenuOpen(true)}
+                className="inline-flex lg:hidden h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-muted hover:text-foreground hover:bg-surface-muted transition-colors shadow-2xs cursor-pointer"
+                aria-label={mobileMenuOpen ? "Hide Navbar" : "Show Navbar"}
+                title={mobileMenuOpen ? "Hide Navbar" : "Show Navbar"}
+                onClick={() => setMobileMenuOpen((prev) => !prev)}
               >
-                <Menu className="h-4 w-4" />
+                {mobileMenuOpen ? (
+                  <>
+                    <X className="h-4 w-4" />
+                    <span>Hide Navbar</span>
+                  </>
+                ) : (
+                  <>
+                    <Menu className="h-4 w-4" />
+                    <span>Navbar</span>
+                  </>
+                )}
               </button>
 
-              {/* Desktop Sidebar Toggle */}
-              <Button
-                variant="ghost"
-                className="hidden lg:inline-flex h-9 w-9 px-0 text-muted hover:text-foreground"
+              {/* Desktop Show / Hide Navbar Toggle */}
+              <button
+                type="button"
                 onClick={toggleSidebar}
-                aria-label="Toggle Sidebar"
-                title="Toggle Sidebar"
+                className={`hidden lg:inline-flex h-9 items-center gap-2 rounded-lg border px-3 py-1 text-xs font-semibold transition-all shadow-2xs cursor-pointer ${
+                  isOpen
+                    ? "border-border bg-surface text-muted hover:bg-surface-muted hover:text-foreground"
+                    : "border-primary/50 bg-primary-soft text-primary hover:bg-primary-soft/80"
+                }`}
+                aria-label={isOpen ? "Hide Navbar" : "Show Navbar"}
+                title={isOpen ? "Hide Navbar (Collapse sidebar)" : "Show Navbar (Expand sidebar)"}
               >
-                {isOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeftOpen className="h-5 w-5" />}
-              </Button>
+                {isOpen ? (
+                  <>
+                    <PanelLeftClose className="h-4 w-4 text-muted" />
+                    <span>Hide Navbar</span>
+                  </>
+                ) : (
+                  <>
+                    <PanelLeftOpen className="h-4 w-4 text-primary" />
+                    <span>Show Navbar</span>
+                  </>
+                )}
+              </button>
 
               <div className="hidden items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted md:flex xl:flex">
                 <Search className="h-4 w-4" />
@@ -145,6 +179,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Bell className="h-4 w-4" />
               </button>
               <ThemeToggle />
+              <SignOutButton />
             </div>
           </div>
         </header>

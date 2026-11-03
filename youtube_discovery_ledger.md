@@ -213,7 +213,8 @@ Blob/auth/quota persistence (server-only, never `NEXT_PUBLIC_*`):
 - `BLOB_STORE_ID` — expected store id; validated + compared with observed Blob URL host.
 - `BLOB_READ_WRITE_TOKEN` — private SDK token for all Blob I/O. No local-only fallback when missing.
 - `BLOB_WEBHOOK_PUBLIC_KEY` — webhook signature verification ONLY. No webhook endpoint exists, so NOT required for reads/writes/auth.
-- `ADMIN_DEFAULT_USERNAME` (default `asdy`), `ADMIN_INITIAL_PASSWORD` (required, ≥12 chars, no default) — bootstrap-only; persisted account wins afterwards.
+- `ADMIN_EMAIL` — Email of the authoritative admin account in Supabase Auth (default `asdy@youtube.discov.com`).
+- `ADMIN_DEFAULT_USERNAME` (default `asdy`), `ADMIN_PASSWORD` / `ADMIN_INITIAL_PASSWORD` / `SUPABASE_ADMIN_PASSWORD` — admin credentials for login and automated Supabase Auth password synchronization (minimum 8 chars). When configured, logging in with username "asdy" automatically maps to `asdy@youtube.discov.com` and synchronizes the password in Supabase Auth.
 - `ADMIN_SESSION_SECRET` — session/rate-limit salt (independent secret).
 - `SESSION_TTL_SECONDS` / `ADMIN_SESSION_TTL_SECONDS` / `SUPABASE_SESSION_TTL_SECONDS` (default `604800` = 7d = 1 week; accepts raw seconds or human units `7d`, `1w`, `24h`; clamped 300s–30d). Controls both Supabase Auth cookie max-age and local session cookie max-age.
 - `API_KEYS_ENCRYPTION_KEY` — 32-byte AES-256-GCM key (base64/hex/raw-32). Saves refused without it. Back up securely.

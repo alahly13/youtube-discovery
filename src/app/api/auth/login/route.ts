@@ -82,6 +82,14 @@ export async function POST(request: Request) {
   let displayUsername = username;
   let authUserId: string | undefined;
 
+  // Configured administrator email and environment password
+  const configuredAdminEmail = (process.env.ADMIN_EMAIL || "asdy@youtube.discov.com").trim();
+  const configuredEnvPassword = (
+    process.env.ADMIN_PASSWORD ||
+    process.env.ADMIN_INITIAL_PASSWORD ||
+    process.env.SUPABASE_ADMIN_PASSWORD
+  )?.trim();
+
   // 1. Attempt Supabase Auth first
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
@@ -97,41 +105,80 @@ export async function POST(request: Request) {
   if (supabaseUrl && supabaseKey) {
     const candidateEmails: string[] = [];
 
-    // If username is already formatted as an email, test it directly
-    if (username.includes("@")) {
+    // If username is "asdy" or matches configured email, prioritize asdy@youtube.discov.com
+    const isTargetAsdy =
+      username.trim().toLowerCase() === "asdy" ||
+      username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
+
+    if (isTargetAsdy) {
+      candidateEmails.push(configuredAdminEmail);
+    }
+
+    if (username.includes("@") && !candidateEmails.includes(username.trim())) {
       candidateEmails.push(username.trim());
     }
 
-    // Attempt resolving username (e.g. "asdy") to user email via Supabase Admin Client
+    // Attempt resolving or synchronizing user via Supabase Admin Client
     try {
       const adminClient = createAdminClient();
       if (adminClient) {
-        const { data, error } = await adminClient.auth.admin.listUsers();
-        if (!error && data?.users && data.users.length > 0) {
-          const target = username.trim().toLowerCase();
-          const match = data.users.find((u) => {
-            const email = u.email?.toLowerCase();
-            const uUsername = (
-              u.user_metadata?.username ||
-              u.user_metadata?.name ||
-              u.app_metadata?.username
-            )?.toString().toLowerCase();
-            return (
-              email === target ||
-              email?.split("@")[0] === target ||
-              uUsername === target
-            );
-          });
+        const { data } = await adminClient.auth.admin.listUsers();
+        const target = username.trim().toLowerCase();
+        let match = data?.users?.find((u) => {
+          const email = u.email?.toLowerCase();
+          const uUsername = (
+            u.user_metadata?.username ||
+            u.user_metadata?.name ||
+            u.app_metadata?.username
+          )?.toString().toLowerCase();
+          return (
+            email === target ||
+            email?.split("@")[0] === target ||
+            email === configuredAdminEmail.toLowerCase() ||
+            uUsername === target ||
+            (target === "asdy" && (email?.startsWith("asdy@") || uUsername === "asdy"))
+          );
+        });
 
-          if (match && match.email) {
-            candidateEmails.unshift(match.email);
-            authUserId = match.id;
-            displayUsername =
-              (match.user_metadata?.username as string) ||
-              (match.user_metadata?.name as string) ||
-              match.email.split("@")[0] ||
-              username;
+        // If the password matches the environment variable, ensure it is synchronized in Supabase Auth
+        if (configuredEnvPassword && password === configuredEnvPassword) {
+          if (match) {
+            try {
+              await adminClient.auth.admin.updateUserById(match.id, {
+                password: configuredEnvPassword,
+                email_confirm: true,
+              });
+            } catch (syncErr) {
+              console.warn("[auth] Supabase password sync non-fatal warning:", syncErr);
+            }
+          } else if (isTargetAsdy) {
+            // Auto-create user in Supabase Auth if not yet created
+            try {
+              const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
+                email: configuredAdminEmail,
+                password: configuredEnvPassword,
+                email_confirm: true,
+                user_metadata: { username: "asdy", name: "asdy" },
+              });
+              if (!createErr && created?.user) {
+                match = created.user;
+              }
+            } catch (createErr) {
+              console.warn("[auth] Supabase admin auto-create user warning:", createErr);
+            }
           }
+        }
+
+        if (match && match.email) {
+          if (!candidateEmails.includes(match.email)) {
+            candidateEmails.unshift(match.email);
+          }
+          authUserId = match.id;
+          displayUsername =
+            (match.user_metadata?.username as string) ||
+            (match.user_metadata?.name as string) ||
+            match.email.split("@")[0] ||
+            "asdy";
         }
       }
     } catch (adminErr) {
@@ -160,7 +207,7 @@ export async function POST(request: Request) {
               (data.user.user_metadata?.username as string) ||
               (data.user.user_metadata?.name as string) ||
               data.user.email?.split("@")[0] ||
-              displayUsername;
+              "asdy";
             break;
           }
         } catch {
@@ -170,7 +217,18 @@ export async function POST(request: Request) {
     }
   }
 
-  // 2. Fall back to legacy local storage credentials if Supabase did not authenticate
+  // 2. Direct environment password match fallback (if Supabase Auth is offline or network fails)
+  if (!authenticated && configuredEnvPassword && password === configuredEnvPassword) {
+    const isTargetAsdy =
+      username.trim().toLowerCase() === "asdy" ||
+      username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
+    if (isTargetAsdy) {
+      authenticated = true;
+      displayUsername = "asdy";
+    }
+  }
+
+  // 3. Fall back to legacy local storage credentials if Supabase did not authenticate
   if (!authenticated && backend) {
     try {
       const account = await verifyCredentials(backend, username, password);

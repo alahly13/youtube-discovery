@@ -25,7 +25,7 @@ async function main() {
       path.join(PROJECT_ROOT, "scripts", "supabase-auth-tests", "tsconfig.json"),
       "--outDir", tmp,
     ],
-    { cwd: PROJECT_ROOT, stdio: "inherit" },
+    { cwd: PROJECT_ROOT, stdio: ["ignore", "inherit", "inherit"] },
   );
 
   const Module = projectRequire("node:module");

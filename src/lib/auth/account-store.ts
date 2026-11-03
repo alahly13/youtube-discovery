@@ -45,12 +45,17 @@ export class AuthConfigError extends Error {
 }
 
 function readBootstrapEnv(): { username: string; initialPassword: string } {
-  const username = (process.env.ADMIN_DEFAULT_USERNAME?.trim() || "admin").slice(0, 32);
-  const initialPassword = process.env.ADMIN_INITIAL_PASSWORD ?? "";
-  if (!initialPassword || initialPassword.length < 12) {
+  const username = (process.env.ADMIN_DEFAULT_USERNAME?.trim() || "asdy").slice(0, 32);
+  const initialPassword = (
+    process.env.ADMIN_PASSWORD ||
+    process.env.ADMIN_INITIAL_PASSWORD ||
+    process.env.SUPABASE_ADMIN_PASSWORD ||
+    ""
+  ).trim();
+  if (!initialPassword || initialPassword.length < 8) {
     throw new AuthConfigError(
-      "Authentication is not initialized and ADMIN_INITIAL_PASSWORD is missing or too short. " +
-        "Set a strong initial password (≥12 characters) in the environment. No default password exists.",
+      "Authentication is not initialized and ADMIN_PASSWORD / ADMIN_INITIAL_PASSWORD is missing or too short. " +
+        "Set an initial password in the environment. No default password exists.",
     );
   }
   try {

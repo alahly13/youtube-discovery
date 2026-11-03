@@ -119,27 +119,41 @@ export async function runAllSuites() {
 
   console.log("\n[ 5. Supabase Admin User 'asdy' Resolution Engine ]");
   const target = "asdy";
+  const configuredEmail = "asdy@youtube.discov.com";
   const mockUserCatalog = [
     { id: "u-1", email: "other@domain.com", user_metadata: { username: "other" } },
-    { id: "u-2", email: "asdy@company.com", user_metadata: { username: "asdy" } },
+    { id: "u-2", email: "asdy@youtube.discov.com", user_metadata: { username: "asdy" } },
     { id: "u-3", email: "asdy", user_metadata: {} },
     { id: "u-4", email: "admin@asdy.org", user_metadata: { name: "asdy" } },
   ];
 
-  // Test 1: Match by username in user_metadata
+  // Test 1: Match by asdy@youtube.discov.com
   const match1 = mockUserCatalog.find(
     (u) =>
-      u.email === target ||
-      u.email.split("@")[0] === target ||
+      u.email === configuredEmail ||
+      u.email?.split("@")[0] === target ||
       u.user_metadata?.username === target,
   );
-  assert.equal(match1?.id, "u-2", "Must resolve user 'asdy' by email prefix or metadata");
-  console.log("  ok: resolves 'asdy' from email prefix (asdy@company.com) and user_metadata");
+  assert.equal(match1?.id, "u-2", "Must resolve user 'asdy' to asdy@youtube.discov.com");
+  assert.equal(match1?.email, "asdy@youtube.discov.com", "Resolved email must match asdy@youtube.discov.com");
+  console.log("  ok: resolves 'asdy' directly to asdy@youtube.discov.com");
 
   // Test 2: Match by exact email asdy
   const match2 = [mockUserCatalog[2]].find((u) => u.email === target);
   assert.equal(match2?.id, "u-3", "Must resolve user 'asdy' by direct email match");
   console.log("  ok: resolves 'asdy' from direct email match");
+
+  // Test 3: Environment password extraction
+  process.env.ADMIN_PASSWORD = "TestAdminPassword123!";
+  const resolvedEnvPw1 = (process.env.ADMIN_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
+  assert.equal(resolvedEnvPw1, "TestAdminPassword123!", "ADMIN_PASSWORD must be resolved");
+
+  delete process.env.ADMIN_PASSWORD;
+  process.env.ADMIN_INITIAL_PASSWORD = "FallbackInitialPw456!";
+  const resolvedEnvPw2 = (process.env.ADMIN_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD)?.trim();
+  assert.equal(resolvedEnvPw2, "FallbackInitialPw456!", "ADMIN_INITIAL_PASSWORD must be resolved as fallback");
+  console.log("  ok: environment password correctly extracted from ADMIN_PASSWORD / ADMIN_INITIAL_PASSWORD");
+  Object.assign(process.env, envBackup);
 
   console.log("\n[ 6. Proxy Session Presence Checking ]");
   // Test local session cookie

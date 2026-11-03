@@ -5,6 +5,8 @@ import { persist } from "zustand/middleware";
 import type { YouTubeManifest } from "@/types/manifest";
 import type { PersistedLastSearch } from "@/types/manifest";
 import type { NormalizedYouTubeDiscoveryItem, SavedSearch, SearchHistoryItem, YouTubeResultFilters } from "@/types/youtube";
+import { saveEntityLocally, deleteEntityLocally } from "@/lib/storage/indexeddb-store";
+import { syncCoordinator } from "@/lib/sync/sync-coordinator";
 
 export type SuggestionSourcePriority = "manifest" | "same_channel" | "mixed";
 
@@ -137,6 +139,12 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
             (i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType
           );
           if (isSaved) {
+            // Local deletion from IndexedDB and queue DELETE in Outbox
+            if (typeof window !== "undefined") {
+              deleteEntityLocally("asdy-admin", "SAVED_ITEMS", item.platformItemId)
+                .then(() => syncCoordinator.refreshSummary())
+                .catch(console.error);
+            }
             return {
               savedItems: state.savedItems.filter(
                 (i) => !(i.platformItemId === item.platformItemId && i.itemType === item.itemType)
@@ -150,6 +158,14 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
             savedAt: item.savedAt || item.collectedAt || nowIso,
             rawJson: undefined,
           };
+
+          // Local persistence into IndexedDB and queue UPSERT in Outbox
+          if (typeof window !== "undefined") {
+            saveEntityLocally("asdy-admin", "SAVED_ITEMS", item.platformItemId, itemToSave as Record<string, unknown>)
+              .then(() => syncCoordinator.refreshSummary())
+              .catch(console.error);
+          }
+
           return { savedItems: [itemToSave, ...state.savedItems] };
         }),
       saveSearch: (searchData) => {
@@ -159,21 +175,40 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           id,
           createdAt: new Date().toISOString(),
         };
+        if (typeof window !== "undefined") {
+          saveEntityLocally("asdy-admin", "REFERENCES", id, newSearch as unknown as Record<string, unknown>)
+            .then(() => syncCoordinator.refreshSummary())
+            .catch(console.error);
+        }
         set((state) => ({
           savedSearches: [newSearch, ...state.savedSearches],
         }));
         return newSearch;
       },
       updateSavedSearch: (id, patch) =>
-        set((state) => ({
-          savedSearches: state.savedSearches.map((s) =>
+        set((state) => {
+          const updated = state.savedSearches.map((s) =>
             s.id === id ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s
-          ),
-        })),
+          );
+          const found = updated.find((s) => s.id === id);
+          if (found && typeof window !== "undefined") {
+            saveEntityLocally("asdy-admin", "REFERENCES", id, found as unknown as Record<string, unknown>)
+              .then(() => syncCoordinator.refreshSummary())
+              .catch(console.error);
+          }
+          return { savedSearches: updated };
+        }),
       deleteSavedSearch: (id) =>
-        set((state) => ({
-          savedSearches: state.savedSearches.filter((s) => s.id !== id),
-        })),
+        set((state) => {
+          if (typeof window !== "undefined") {
+            deleteEntityLocally("asdy-admin", "REFERENCES", id)
+              .then(() => syncCoordinator.refreshSummary())
+              .catch(console.error);
+          }
+          return {
+            savedSearches: state.savedSearches.filter((s) => s.id !== id),
+          };
+        }),
       togglePinSavedSearch: (id) =>
         set((state) => ({
           savedSearches: state.savedSearches.map((s) =>
@@ -187,6 +222,11 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           id,
           timestamp: new Date().toISOString(),
         };
+        if (typeof window !== "undefined") {
+          saveEntityLocally("asdy-admin", "SEARCH_HISTORY", id, newItem as unknown as Record<string, unknown>, "APPEND")
+            .then(() => syncCoordinator.refreshSummary())
+            .catch(console.error);
+        }
         set((state) => ({
           // Store up to 100 most recent searches in history
           searchHistory: [newItem, ...state.searchHistory.filter((h) => h.id !== id)].slice(0, 100),
@@ -194,13 +234,22 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         return newItem;
       },
       deleteSearchHistoryItem: (id) =>
-        set((state) => ({
-          searchHistory: state.searchHistory.filter((item) => item.id !== id),
-        })),
+        set((state) => {
+          if (typeof window !== "undefined") {
+            deleteEntityLocally("asdy-admin", "SEARCH_HISTORY", id)
+              .then(() => syncCoordinator.refreshSummary())
+              .catch(console.error);
+          }
+          return {
+            searchHistory: state.searchHistory.filter((item) => item.id !== id),
+          };
+        }),
       clearSearchHistory: () =>
-        set(() => ({
-          searchHistory: [],
-        })),
+        set(() => {
+          return {
+            searchHistory: [],
+          };
+        }),
       lastSearch: null,
       setLastSearch: (search) =>
         set({

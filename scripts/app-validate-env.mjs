@@ -27,18 +27,15 @@ if (!process.env.NEXT_PUBLIC_APP_URL) {
 const requiredPublicKeys = ["NEXT_PUBLIC_APP_URL"];
 const optionalServerKeys = ["YOUTUBE_API_KEY", "GEMINI_API_KEY"];
 const requiredWhenPersistenceEnabled = ["DATABASE_URL"];
-/* Blob + auth are required at RUNTIME (local .env.local and Vercel Project
-   Settings) but only warn here so CI/preview builds without them still pass.
-   Routes return clear 503/401 errors instead of silently falling back. */
-const blobAuthKeys = [
-  "BLOB_STORE_ID",
-  "BLOB_READ_WRITE_TOKEN",
-  "ADMIN_INITIAL_PASSWORD",
-  "ADMIN_SESSION_SECRET",
+/* Core authentication and storage keys checked at runtime.
+   Missing keys only emit warnings during build so preview/CI builds still pass. */
+const coreAuthKeys = [
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+  "ADMIN_DEFAULT_USERNAME",
+  "ADMIN_EMAIL",
   "API_KEYS_ENCRYPTION_KEY",
 ];
-/* BLOB_WEBHOOK_PUBLIC_KEY is webhook-only (no webhook endpoint exists) and
-   is intentionally never required for reads, writes, or authentication. */
 
 const missingRequired = requiredPublicKeys.filter((key) => !process.env[key]);
 const missingOptional = optionalServerKeys.filter((key) => !process.env[key]);
@@ -73,18 +70,18 @@ if (missingOptional.length > 0) {
 
 const hasSupabase =
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+  Boolean(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) &&
   Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 if (hasSupabase) {
-  console.log("[env] Supabase Auth & Storage persistence is active.");
+  console.log("[env] Supabase Auth & PostgreSQL persistence configured.");
 } else {
-  const missingBlobAuth = blobAuthKeys.filter((key) => !process.env[key]);
-  if (missingBlobAuth.length > 0) {
+  const missingCoreAuth = coreAuthKeys.filter((key) => !process.env[key]);
+  if (missingCoreAuth.length > 0) {
     console.warn(
-      `[env] Blob/auth persistence is not fully configured (missing: ${missingBlobAuth.join(", ")}). ` +
-        `Protected routes will return clear errors until BLOB_STORE_ID, BLOB_READ_WRITE_TOKEN, ` +
-        `ADMIN_INITIAL_PASSWORD, ADMIN_SESSION_SECRET, and API_KEYS_ENCRYPTION_KEY are set. ` +
-        `See .env.example. Local-only storage is never used as a substitute.`,
+      `[env] Supabase Auth is not fully configured (missing: ${missingCoreAuth.join(", ")}). ` +
+        `Protected routes will return clear errors until Supabase Auth environment variables are set. ` +
+        `See .env.example.`,
     );
   }
 }

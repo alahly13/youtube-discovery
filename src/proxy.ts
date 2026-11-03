@@ -29,12 +29,18 @@ export default function proxy(request: NextRequest) {
   ) {
     return NextResponse.next();
   }
+
   const sessionCookie = request.cookies.get(SESSION_COOKIE_NAME);
   const hasLocalSession = Boolean(sessionCookie?.value);
   const hasSupabaseSession = request.cookies
     .getAll()
-    .some((c) => (c.name.startsWith("sb-") && c.name.includes("-auth-token")) || c.name.includes("supabase-auth-token"));
+    .some(
+      (c) =>
+        (c.name.startsWith("sb-") && c.name.includes("auth-token")) ||
+        c.name.includes("supabase-auth-token")
+    );
   const hasSession = hasLocalSession || hasSupabaseSession;
+
   if (!hasSession && !PUBLIC_PATHS.has(pathname)) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";

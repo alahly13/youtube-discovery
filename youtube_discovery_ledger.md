@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-03 (Four Canonical OLD Categories, Dedicated OLD & NEW Private Storage Buckets 'old-youtube-discovery-private' & 'new-youtube-discovery-private', Migration 20261103173000, Manifest Upload / Viewer / Export Routes, Collapsible OLD Archive Navigation, Download OLD Data Engine Packaging Browser IndexedDB + LocalStorage into Verifiable ZIP with Secret Redaction and Zero Storage Mutation)
+Last updated: 2026-11-03 (Complete Local-First Hybrid Persistence, Dataset-Level Storage, 12-Hour Scheduled Sync & Cloudflare R2 Grouped Batch Upload Engine via new-youtube-discovery-api, Zero 50MB Constraint, Exactly 5 Canonical Datasets SAVED_ITEMS, PLAYLIST, SEARCH_HISTORY, RESEARCH_QUEUE, REFERENCES, Merged Read Model with Tombstone Filtering, Global 'Save All New Actions & Data' Header Control)
 
 ## Project Identity And Mission
 
@@ -59,15 +59,23 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 The app is manifest-first. Every provider fetch returns a `YouTubeManifest` with provenance, settings snapshot, pages fetched, quota estimate, status, duplicate count, warnings/errors, and normalized items.
 
 Authoritative persistence uses Cloudflare R2 via `src/lib/storage/r2-blob-backend.ts` and `src/lib/storage/r2-worker-storage-client.ts` with transparent fallback to `DiskStorageBackend` (`data/storage/`) for local offline development.
-- OLD archives route strictly to `old-youtube-discovery-private` via `old-youtube-discovery-api` under `asdy/old/<category>/<manifestId>/manifest.json`.
-- NEW dataset generations route strictly to `new-youtube-discovery-private` via `new-youtube-discovery-api` under `<owner_uuid>/persistence/datasets/...`.
+- **Local-First Hybrid Architecture:** Application UI → Local-First Repository → IndexedDB (`youtube_discovery_local_v1`) → Persistent Outbox Journal → Save All / 12h Scheduled Background Sync → Next.js Backend (`POST /api/sync/save-all`) → Supabase PostgreSQL Registry → NEW Cloudflare Worker (`new-youtube-discovery-api`) → Cloudflare R2 (`new-youtube-discovery-private`).
+- **Zero Data Loss & Offline Durability:** Local mutations commit to IndexedDB before UI feedback. Outbox operations remain pending until verified cloud acknowledgement.
+- **Dataset-Level Grouping:** N items (e.g. 20 saved videos) = 1 grouped immutable generation (`manifest.json` + `parts/part-XXXXXX.json` + `version.json`), avoiding individual Worker requests for individual records.
+- **Zero 50MB Storage Limit:** Cloudflare R2 eliminates Supabase Storage limits; manifests and parts up to 40–45 MiB partition smoothly without hard storage ceiling boundaries.
+- **Strictly 5 Canonical Datasets:** `SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`. (`COLLECTIONS` deprecated and removed).
+- **NEW Cloudflare Worker Grouped Batch API:** `POST /v1/batches/upload` verified via HMAC-SHA256 capability tokens, writing manifest + parts with SHA-256 integrity receipts.
+- **12-Hour Scheduled Sync & Overdue Catchup:** Automated foreground timer + visibilitychange catchup executing every 12 hours or on tab re-activation.
+- **Merged Read Model:** `useMergedDataset` hook combines server-committed data with uncommitted local additions and suppresses local `DELETE` tombstones immediately.
+- **OLD archives** route strictly to `old-youtube-discovery-private` via `old-youtube-discovery-api` under `asdy/old/<category>/<manifestId>/manifest.json`.
+- **NEW dataset generations** route strictly to `new-youtube-discovery-private` via `new-youtube-discovery-api` under `<owner_uuid>/persistence/<datasetType>/...`.
 - Structured data persistence is fully connected to Prisma 7 / Supabase PostgreSQL across all 19 canonical models.
 - Object storage routes through dedicated Cloudflare Workers using short-lived cryptographic capability tokens.
 - Manifests, playlists, and search histories are permanently stored without TTL data loss.
 - Complete Project Backup & Restore Engine allows full offline portability (database JSON + SQL dump + migrations + storage objects + restore CLI script).
 - Browser Data Recovery Engine ingests Chrome storage without mutation and produces compliant ZIP archives.
 
-Access is gated by a single-admin session system with Supabase Auth (`@supabase/ssr`) prioritized alongside legacy scrypt password session fallback. Every data API route enforces `requireAdmin()` itself; middleware redirects are UX only. `/login` and the username prefill endpoint are the only public surfaces.
+Access is gated by a single-admin session system with Supabase Auth (`@supabase/ssr`) as the SOLE authority for administrator credentials and session cookies. Legacy Blob password hashes and competing opaque sessions are retired from active authentication. The administrator signs in with username 'asdy', mapped server-side to canonical identity 'asdy@youtube.discov.com'. Every data API route enforces `requireAdmin()` itself; middleware redirects are UX only. `/login` and the username prefill endpoint are the only public surfaces.
 
 Provider quota model: keys are grouped into Google Cloud project pools
 (`project:<id>`; unknown keys form solo pools, never merged). Rotation is
@@ -83,7 +91,8 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 
 ## Route Map And Page Responsibilities
 
-- `/login`: single-administrator sign-in with Supabase Auth and session store fallbacks.
+- `/login`: single-administrator sign-in with username "asdy", accessible password show/hide eye toggle button, server-side username mapping to canonical Supabase Auth identity (`asdy@youtube.discov.com`), sliding-window rate-limiting, and `@supabase/ssr` session cookie establishment.
+- `/dashboard/settings/security`: **FULL DEDICATED** Account Security & Administrator Password Change workspace, providing accessible show/hide eye toggle controls for Current Password, New Password, and Confirm New Password, password strength validation, and direct in-app password update via Supabase Auth without email dependencies.
 - `/`: dashboard with product posture, system boundaries, quick actions, and manifest overview.
 - `/saved`: **FULL DEDICATED** Saved Items page supporting all 3 YouTube entity types (Videos, Channels, Playlists) with **Daily Grouping** by calendar date (e.g., "November 2, 2026", newer first, clear visual separators), type filters (All, Videos, Channels, Playlists), search, sort, add-to-playlist actions, and **Phase 1.6 UI Readability Upgrades** (spacious 3-column responsive grid `grid gap-5 sm:grid-cols-2 lg:grid-cols-3`, crisp 16:9 thumbnail containers, centered circular channel artwork, and prominent 2-line title typography `line-clamp-2 text-base font-bold`).
 - `/playlist-manager`: **FULL DEDICATED** Personal Playlist Manager workspace for creating, editing, renaming, deleting, and reviewing personal playlists, featuring prominent video thumbnail galleries, bold multi-line titles (`line-clamp-2 text-base font-bold`), item count badges, section badges, and direct links to `/saved/[playlistId]`.
@@ -120,12 +129,13 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 
 ## API Route Map And Backend Authority Boundaries
 
-- Auth (public: login, username; protected: logout, status, account change):
+- Auth (public: login, username; protected: logout, status, account change, change password):
   `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/username`,
-  `GET /api/auth/status`, `POST /api/auth/account`.
+  `GET /api/auth/status`, `POST /api/auth/account`, `POST /api/auth/change-password`.
 - Admin (protected): `POST /api/admin/migrate` (idempotent disk + browser
   title import), `GET /api/admin/storage-status`, `POST /api/admin/storage-verify`
-  (config/list/write-probe/store-identity diagnostics, no secrets).
+  (config/list/write-probe/store-identity diagnostics, no secrets),
+  `GET /api/admin/auth-diagnostics` (safe structured auth status, no secrets).
 - Chunked uploads (protected): `POST /api/blob-upload/[init|chunk|commit|abort]`.
 - Quota (protected): `GET /api/youtube/keys/usage` (project pools dashboard),
   `PATCH /api/youtube/keys/[keyId]` (label/account/project/enabled/priority).
@@ -176,6 +186,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `POST /api/download-center/full-backup`: protected endpoint streaming complete project backup ZIP (all 19 database tables JSON, schema DDL, applied migrations, logical SQL dump, storage objects, SHA256SUMS, and self-contained restore runner) for total data portability.
 - `POST /api/download-center/legacy-recovery/scan`: protected legacy data discovery scanner with read-only safety guarantees across Vercel Blob, disk cache, and browser storage.
 - `POST /api/download-center/legacy-recovery/backup`: protected offline verifiable backup package generator streaming ZIP (`YouTube-Discovery-Legacy-Backup/...`) with `backup-manifest.json` and `checksums/SHA256SUMS.txt`.
+- `POST /api/sync/save-all`: protected authoritative cloud synchronization endpoint; validates session, groups outbox operations into canonical dataset generations, uploads batch to Cloudflare R2 Worker, and atomically commits generation, parts, revisions, and relational index in Supabase PostgreSQL (Prisma 7).
 - `POST /api/ai/youtube-search-assistant`: scoped AI search helper.
 - `POST /api/ai/youtube-manifest-assistant`: scoped manifest analyst.
 - `POST /api/ai/youtube-video-explorer`: selected-video AI explorer.
@@ -229,45 +240,39 @@ Migration status: All 3 migrations deployed and synchronized on remote Supabase 
 
 ## Environment Variable Map
 
-Blob/auth/quota persistence (server-only, never `NEXT_PUBLIC_*`):
+Public (browser-safe):
 
-- `BLOB_STORE_ID` — expected store id; validated + compared with observed Blob URL host.
-- `BLOB_READ_WRITE_TOKEN` — private SDK token for all Blob I/O. No local-only fallback when missing.
-- `BLOB_WEBHOOK_PUBLIC_KEY` — webhook signature verification ONLY. No webhook endpoint exists, so NOT required for reads/writes/auth.
-- `ADMIN_EMAIL` — Email of the authoritative admin account in Supabase Auth (default `asdy@youtube.discov.com`).
-- `ADMIN_DEFAULT_USERNAME` (default `asdy`), `ADMIN_PASSWORD` / `ADMIN_INITIAL_PASSWORD` / `SUPABASE_ADMIN_PASSWORD` — admin credentials for login and automated Supabase Auth password synchronization (minimum 8 chars). When configured, logging in with username "asdy" automatically maps to `asdy@youtube.discov.com` and synchronizes the password in Supabase Auth.
-- `ADMIN_SESSION_SECRET` — session/rate-limit salt (independent secret).
-- `SESSION_TTL_SECONDS` / `ADMIN_SESSION_TTL_SECONDS` / `SUPABASE_SESSION_TTL_SECONDS` (default `604800` = 7d = 1 week; accepts raw seconds or human units `7d`, `1w`, `24h`; clamped 300s–30d). Controls both Supabase Auth cookie max-age and local session cookie max-age.
-- `API_KEYS_ENCRYPTION_KEY` — 32-byte AES-256-GCM key (base64/hex/raw-32). Saves refused without it. Back up securely.
+- `NEXT_PUBLIC_APP_URL` — Public base URL of the application.
+- `NEXT_PUBLIC_SUPABASE_URL` — Canonical Supabase project API URL (e.g. `https://<ref>.supabase.co`).
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) — Supabase browser-safe publishable key for client and server auth.
 
-Public:
+Server-only (never `NEXT_PUBLIC_*`):
 
-- `NEXT_PUBLIC_APP_URL`
-- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project API URL (e.g. `https://<ref>.supabase.co`).
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — Supabase publishable key / anon key for client and server auth.
-
-Server-only:
-
-- `DATABASE_URL` — Supabase PostgreSQL pooled connection string (port 6543/5432 with pgbouncer=true).
-- `DIRECT_URL` — Supabase PostgreSQL direct connection string (port 5432).
-- `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_ROLE_KEY` — Server-only secret keys for bypassing RLS, admin auth, user discovery, and background tasks. NEVER expose to the browser.
-- `YOUTUBE_API_KEY`
-- `YOUTUBE_API_BASE_URL`
-- `YOUTUBE_DEFAULT_REGION`
-- `YOUTUBE_DEFAULT_RELEVANCE_LANGUAGE`
-- `YOUTUBE_SEARCH_PAGE_SIZE`
-- `YOUTUBE_SEARCH_MAX_PAGES`
-- `YOUTUBE_SEARCH_MAX_ITEMS`
-- `YOUTUBE_SEARCH_DELAY_MS`
-- `YOUTUBE_SEARCH_CONCURRENCY`
-- `YOUTUBE_DAILY_QUOTA_BUDGET`
-- `SEARCH_STORAGE_TTL_HOURS`: legacy disk-cache retention only (Blob saved history is permanent and ignores it).
-  Default 168h; safe numeric parser fallback on invalid values.
-- `ENABLE_YOUTUBE_MANIFEST_PERSISTENCE`
-- `GEMINI_API_KEY`
-- `GEMINI_MODEL`
-- `AI_MANIFEST_MAX_ITEMS`
-- `AI_MANIFEST_MAX_CHARS`
+- `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_SECRET_KEY` — Privileged Supabase administrative secret key for password reset CLI, user verification, and admin auth operations. NEVER exposed to the browser.
+- `ADMIN_DEFAULT_USERNAME` — Authoritative administrator login username (`asdy`).
+- `ADMIN_EMAIL` — Canonical synthetic Supabase Auth email identity (`asdy@youtube.discov.com`). No email inbox or OTP delivery required.
+- `SESSION_TTL_SECONDS` — Session duration in seconds (default `604800` = 7 days / 1 week; accepts integer seconds or human units `7d`, `1w`, `24h`; clamped 300s–30d). Controls Supabase SSR session cookie lifetime.
+- `DATABASE_URL` — Supabase PostgreSQL pooled connection string (port 6543 via Supavisor pooler with `pgbouncer=true`).
+- `DIRECT_URL` — Supabase PostgreSQL direct connection string (port 5432) for Prisma CLI migrations and backups.
+- `R2_NEW_WORKER_URL` — Cloudflare Worker URL for active manifests and dataset generations (`new-youtube-discovery-api`).
+- `R2_OLD_WORKER_URL` — Cloudflare Worker URL for historical archive manifests (`old-youtube-discovery-api`).
+- `R2_NEW_WORKER_AUTH_SECRET` — HMAC-SHA256 capability token shared secret for the NEW worker.
+- `R2_OLD_WORKER_AUTH_SECRET` — HMAC-SHA256 capability token shared secret for the OLD worker.
+- `WORKER_AUTH_SECRET` — Optional fallback shared secret if both workers use the same HMAC secret.
+- `API_KEYS_ENCRYPTION_KEY` — 32-byte AES-256-GCM key (base64/hex/raw-32) for encrypting managed YouTube API keys in database.
+- `YOUTUBE_API_BASE_URL` — Base endpoint for official YouTube Data API v3 (`https://www.googleapis.com/youtube/v3`).
+- `YOUTUBE_API_KEY` — Optional default server YouTube API key (managed keys in database take priority).
+- `YOUTUBE_SEARCH_PAGE_SIZE` — Search page size default (default: 25).
+- `YOUTUBE_SEARCH_MAX_PAGES` — Maximum pages per search (default: 3).
+- `YOUTUBE_SEARCH_MAX_ITEMS` — Maximum items per search (default: 150).
+- `YOUTUBE_SEARCH_DELAY_MS` — Inter-page request throttle delay in ms (default: 250).
+- `YOUTUBE_DAILY_QUOTA_BUDGET` — Estimated daily quota budget for UI tracking (default: 10000).
+- `ENABLE_YOUTUBE_MANIFEST_PERSISTENCE` — Optional flag for durable database manifest persistence (default: false).
+- `GEMINI_API_KEY` — Google Gemini API key for scoped manifest analysis.
+- `GEMINI_MODEL` — Google Gemini model name (default: `gemini-2.5-flash`).
+- `AI_MANIFEST_MAX_ITEMS` — Maximum items to supply in AI manifest context (default: 60).
+- `AI_MANIFEST_MAX_CHARS` — Maximum characters in AI manifest context (default: 30000).
+- `SEARCH_STORAGE_TTL_HOURS` — Search storage retention period in hours (default: 168).
 
 Forbidden public secrets:
 
@@ -303,6 +308,11 @@ Forbidden public secrets:
 - `src/lib/blob/blob-config.ts`: token/OIDC resolution + validation (no secrets in errors).
 - `src/lib/blob/blob-backend.ts`: swappable byte adapter interface + in-memory mock for tests.
 - `src/lib/blob/vercel-blob-backend.ts`: production storage adapter delegating to R2StorageBackend (`new-youtube-discovery-private`).
+- `src/lib/storage/indexeddb-store.ts`: local-first IndexedDB database (`youtube_discovery_local_v1`) providing atomic write-ahead outbox journaling, multi-user isolation by Supabase UUID, and entity stores across the 5 canonical datasets (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`).
+- `src/lib/sync/sync-coordinator.ts`: client synchronization coordinator orchestrating outbox freezing, grouped generation building, batch uploads to Cloudflare R2 Worker, Supabase PostgreSQL atomic commits, 12-hour background scheduler, and cross-tab Web Lock coordination.
+- `src/lib/storage/use-merged-dataset.ts`: reactive client hook merging remote server-committed items with uncommitted local additions and suppressing local `DELETE` tombstones immediately.
+- `src/app/api/sync/save-all/route.ts`: authoritative Next.js backend sync route validating Supabase session, calling Cloudflare R2 Worker `POST /v1/batches/upload`, and executing atomic Prisma transactions.
+- `scripts/test-local-first-sync-pipeline.mjs`: comprehensive standalone test suite validating local-first persistence, 20 items -> 1 generation grouping, batch capability tokens, 12h scheduler math, and multi-user isolation.
 - `src/lib/storage/r2-capability-token.ts`: cryptographic capability token engine; signs short-lived (120s) HMAC-SHA256 JWTs with operation, key scope, and audience validation.
 - `src/lib/storage/r2-worker-storage-client.ts`: centralized HTTPS client for the two Cloudflare Workers (`new-youtube-discovery-api` and `old-youtube-discovery-api`).
 - `src/lib/storage/r2-blob-backend.ts`: authoritative BlobBackend adapter connecting the app to Cloudflare R2 through the two Workers with local Disk fallback.
@@ -405,6 +415,12 @@ Forbidden public secrets:
 - `docs/data-architecture/current-state.md`: Phase 0 repository, routes, data contracts, and persistence audit.
 - `docs/data-architecture/erd.md`: Phase 1 canonical Entity-Relationship Diagram (design proposal pending approval).
 - `src/lib/auth/user-profile.ts`: Authoritative administrator user profile resolver and bootstrap mapping Supabase Auth UUID to `user_profiles` (`username = 'asdy'`, `role = 'admin'`, `storage_owner_uuid`).
+- `src/lib/auth/auth-diagnostics.ts`: Server-only safe authentication diagnostics engine reporting boolean configuration status, account discovery, and authorization health without printing secrets.
+- `src/app/api/auth/change-password/route.ts`: Authenticated administrator password change endpoint verifying current password and updating Supabase Auth directly without email.
+- `src/app/api/admin/auth-diagnostics/route.ts`: Protected diagnostics endpoint returning structured non-sensitive auth health status.
+- `src/app/dashboard/settings/security/page.tsx`: Dedicated Account Security page for changing administrator password.
+- `scripts/auth-admin-reset.mjs`: Explicitly invoked local CLI utility to recover/reset the existing Supabase administrator password without email dependency (`npm run auth:admin-reset`), featuring visible password echoing by default to eliminate confusion and typos, plus optional `--hidden` flag for silent input and `--password=<val>` argument for direct non-interactive recovery.
+- `scripts/auth-diagnose.mjs`: Safe CLI authentication diagnostics tool verifying Supabase Auth configuration, account discovery, and PostgreSQL profile synchronization (`npm run auth:diagnose`).
 - `src/lib/backup/project-backup-service.ts`: Full project backup and portability engine exporting all 19 PostgreSQL tables into structured JSON, capturing Prisma schema, all migration SQL, generating pg_dump-compatible logical SQL dump, packaging storage objects from `youtube-discovery-private`, creating `SHA256SUMS.txt`, manifest report, and generating a self-contained Node.js `restore.mjs` script.
 - `src/app/api/download-center/full-backup/route.ts`: Protected endpoint streaming the complete full project backup archive (`YouTube-Discovery-Full-Backup-<timestamp>.zip`).
 - `scripts/backup-cli.mjs`: Pure Node.js CLI backup runner (`npm run db:backup`) generating identical verifiable full project backups without requiring a running web server.

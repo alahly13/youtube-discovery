@@ -1,3 +1,5 @@
+import "server-only";
+
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getBlobBackend } from "@/lib/blob/backend-factory";
@@ -9,15 +11,10 @@ import {
   hashIp,
   recordLoginAttempt,
 } from "@/lib/auth/rate-limit";
-import {
-  createSession,
-  getSessionTtlSeconds,
-  SESSION_COOKIE_NAME,
-  isSecureCookie,
-} from "@/lib/auth/session";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/cookies";
 import { assertSameOrigin } from "@/lib/auth/require-auth";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { createRouteHandlerSupabaseClient } from "@/lib/supabase/server";
+import { getAuthoritativeAdminProfile } from "@/lib/auth/user-profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,16 +25,22 @@ const loginSchema = z.object({
 });
 
 /**
- * POST /api/auth/login
- * ─────────────────────────────────────────────────────────────────────────────
- * Primary authentication via Supabase Auth with fallback to server store.
- * - Resolves admin username (e.g. "asdy") to Supabase user email via Admin Client.
- * - Signs in with Supabase Auth, establishing HTTP-only auth cookies on the response.
- * - Synchronizes with the local session cookie (yd_admin_session).
- * - Enforces configurable session TTL (default 1 week / 604800 seconds) via
- *   SESSION_TTL_SECONDS, ADMIN_SESSION_TTL_SECONDS, or SUPABASE_SESSION_TTL_SECONDS.
- * - Protects against brute-force attacks via sliding-window rate limiting.
- * ─────────────────────────────────────────────────────────────────────────────
+ * ═══════════════════════════════════════════════════════════════════════════
+ * POST /api/auth/login — Sole Authoritative Admin Login Handler
+ * ──────────────────────────────────────────────────────────────────────────
+ * Architecture Flow:
+ *   Admin Login UI → Next.js Login Handler → Username Mapping →
+ *   Supabase Auth (signInWithPassword) → Supabase SSR Cookies →
+ *   Admin Profile Authorization
+ *
+ * Requirements:
+ * - Supabase Auth is the SOLE authority for the administrator password.
+ * - Maps normalized username (e.g. "asdy") to canonical email (asdy@youtube.discov.com).
+ * - Enforces rate-limiting to prevent brute force attacks.
+ * - Never reveals whether a username exists through differentiated error messages.
+ * - Establishes official @supabase/ssr session cookies on NextResponse.
+ * - Removes competing legacy Blob session cookies.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 export async function POST(request: Request) {
   const csrf = assertSameOrigin(request);
@@ -47,11 +50,12 @@ export async function POST(request: Request) {
   try {
     backend = getBlobBackend();
   } catch {
-    // Storage might not be configured if only Supabase Auth is active
+    // Storage backend is optional if only Supabase Auth is active
   }
 
   const ipHash = hashIp(clientIpFromHeaders(request.headers));
 
+  // Rate-limiting check
   if (backend) {
     const limit = await checkLoginRateLimit(backend, ipHash);
     if (!limit.allowed) {
@@ -66,27 +70,18 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request payload." }, { status: 400 });
   }
 
   const parsed = loginSchema.safeParse(body);
   if (!parsed.success) {
     if (backend) await recordLoginAttempt(backend, ipHash);
-    return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
+    return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
   }
 
   const { username, password } = parsed.data;
-  const ttl = getSessionTtlSeconds(); // Defaults to 604800 (1 week / 7 days)
 
-  // Configured administrator email and environment password
-  const configuredAdminEmail = (process.env.ADMIN_EMAIL || "asdy@youtube.discov.com").trim();
-  const configuredEnvPassword = (
-    process.env.ADMIN_PASSWORD ||
-    process.env.ADMIN_INITIAL_PASSWORD ||
-    process.env.SUPABASE_ADMIN_PASSWORD
-  )?.trim();
-
-  // 1. Validate Supabase environment configuration
+  // Supabase infrastructure configuration check
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
@@ -94,78 +89,32 @@ export async function POST(request: Request) {
 
   if (!supabaseUrl || !supabaseKey) {
     return NextResponse.json(
-      { error: "Supabase Authentication is not configured on this server. Check your environment variables." },
-      { status: 500 },
+      { error: "Authentication service unavailable. Please check system configuration." },
+      { status: 503 },
     );
   }
 
-  // Target is the administrator if username is "asdy", legacy "admin", or the configured email
-  const isTargetAsdy =
-    username.trim().toLowerCase() === "asdy" ||
-    username.trim().toLowerCase() === "admin" ||
-    username.trim().toLowerCase() === configuredAdminEmail.toLowerCase();
+  // Server-side canonical username-to-email mapping
+  const configuredAdminUsername = (process.env.ADMIN_DEFAULT_USERNAME || "asdy").trim().toLowerCase();
+  const configuredAdminEmail = (process.env.ADMIN_EMAIL || "asdy@youtube.discov.com").trim().toLowerCase();
+  const normalizedInput = username.trim().toLowerCase();
 
-  // Exact password check without modifying user input
-  const passwordMatchesEnv = Boolean(
-    configuredEnvPassword && password === configuredEnvPassword
-  );
+  const isConfiguredAdmin =
+    normalizedInput === configuredAdminUsername ||
+    normalizedInput === configuredAdminEmail;
 
-  // If password matches environment configuration, ensure Supabase Auth is synchronized
-  if (passwordMatchesEnv) {
-    try {
-      const adminClient = createAdminClient();
-      if (adminClient) {
-        const { data: userData } = await adminClient.auth.admin.listUsers();
-        const match = userData?.users?.find((u) => {
-          const email = u.email?.toLowerCase();
-          const uUsername = (
-            u.user_metadata?.username ||
-            u.user_metadata?.name ||
-            u.app_metadata?.username
-          )?.toString().toLowerCase();
-          return (
-            email === configuredAdminEmail.toLowerCase() ||
-            uUsername === "asdy" ||
-            email?.startsWith("asdy@")
-          );
-        });
-
-        if (match) {
-          await adminClient.auth.admin.updateUserById(match.id, {
-            password: configuredEnvPassword,
-            email_confirm: true,
-            user_metadata: { username: "asdy", name: "asdy" },
-          });
-        } else if (isTargetAsdy) {
-          await adminClient.auth.admin.createUser({
-            email: configuredAdminEmail,
-            password: configuredEnvPassword,
-            email_confirm: true,
-            user_metadata: { username: "asdy", name: "asdy" },
-          });
-        }
-      }
-    } catch (syncErr) {
-      console.warn("[auth/login] Supabase credential sync warning:", syncErr);
-    }
+  if (!isConfiguredAdmin) {
+    // Non-sensitive constant-time rejection for unrecognized administrator usernames
+    if (backend) await recordLoginAttempt(backend, ipHash);
+    return NextResponse.json({ error: "Invalid username or password." }, { status: 401 });
   }
 
-  // Build candidate emails to try for sign-in
-  const candidateEmails: string[] = [];
-  if (isTargetAsdy) {
-    candidateEmails.push(configuredAdminEmail);
-  }
-  if (username.includes("@") && !candidateEmails.includes(username.trim())) {
-    candidateEmails.push(username.trim());
-  }
-  if (!candidateEmails.includes(username.trim())) {
-    candidateEmails.push(username.trim());
-  }
+  const targetAuthEmail = configuredAdminEmail;
 
   // Prepare response object where @supabase/ssr binds auth cookies
   const response = NextResponse.json({
     success: true,
-    username: isTargetAsdy ? "asdy" : username,
+    username: configuredAdminUsername,
   });
 
   const supabase = createRouteHandlerSupabaseClient(request, response);
@@ -176,71 +125,63 @@ export async function POST(request: Request) {
     );
   }
 
-  let authUser: { id: string; email?: string; user_metadata?: Record<string, unknown> } | null = null;
-  let lastAuthError: { message: string; status?: number; code?: string } | null = null;
+  // Authenticate exclusively against Supabase Auth
+  let authData: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["data"] | null = null;
+  let authError: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>["error"] | null = null;
 
-  for (const emailToTry of candidateEmails) {
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: emailToTry,
-        password, // Exact password as entered by the user
-      });
-
-      if (!error && data?.user) {
-        authUser = data.user;
-        break;
-      }
-      if (error) {
-        lastAuthError = {
-          message: error.message,
-          status: error.status,
-          code: (error as { code?: string }).code,
-        };
-      }
-    } catch (fetchErr) {
-      lastAuthError = {
-        message: fetchErr instanceof Error ? fetchErr.message : "Authentication network request failed",
-        status: 503,
-        code: "NETWORK_ERROR",
-      };
-    }
+  try {
+    const result = await supabase.auth.signInWithPassword({
+      email: targetAuthEmail,
+      password,
+    });
+    authData = result.data;
+    authError = result.error;
+  } catch (networkErr) {
+    console.error("[auth/login] Supabase signInWithPassword exception:", networkErr);
+    return NextResponse.json(
+      { error: "Authentication service unavailable. Please try again shortly." },
+      { status: 503 },
+    );
   }
 
-  if (!authUser) {
+  if (authError || !authData?.user) {
     if (backend) await recordLoginAttempt(backend, ipHash);
 
-    // Provide specific, actionable error messages
-    if (lastAuthError?.status === 503 || lastAuthError?.code === "NETWORK_ERROR") {
+    if (authError?.status === 503 || authError?.message?.includes("fetch failed")) {
       return NextResponse.json(
-        { error: "Supabase Authentication service is unreachable. Please verify network connectivity." },
+        { error: "Authentication service unavailable. Please verify network connectivity." },
         { status: 503 },
       );
     }
-    if (lastAuthError?.message?.toLowerCase().includes("email not confirmed")) {
+    if (authError?.message?.toLowerCase().includes("email not confirmed")) {
       return NextResponse.json(
-        { error: "The administrator email is not confirmed in Supabase Auth." },
+        { error: "Account requires administrative confirmation." },
         { status: 403 },
       );
     }
-    if (lastAuthError?.status === 429) {
+    if (authError?.status === 429) {
       return NextResponse.json(
         { error: "Too many authentication attempts. Please wait a moment and try again." },
         { status: 429 },
       );
     }
+
     return NextResponse.json(
-      { error: "Invalid username or password. Please verify your credentials." },
+      { error: "Invalid username or password." },
       { status: 401 },
     );
   }
 
-  // Server-side confirmation of the authenticated identity
-  const { data: verified, error: verifyErr } = await supabase.auth.getUser();
-  if (verifyErr || !verified?.user) {
-    console.error("[auth/login] Supabase getUser verification error:", verifyErr);
+  const authUser = authData.user;
+
+  // Verify administrator authorization in PostgreSQL user_profiles
+  const profile = await getAuthoritativeAdminProfile(authUser.id, authUser.email);
+  if (!profile || profile.role !== "admin" || profile.is_suspended || profile.is_deleted) {
+    console.warn(`[auth/login] Authorization rejected for auth user ${authUser.id}`);
+    if (backend) await recordLoginAttempt(backend, ipHash);
     return NextResponse.json(
-      { error: "Session creation could not be verified with Supabase Auth." },
-      { status: 500 },
+      { error: "Administrator authorization failed." },
+      { status: 403 },
     );
   }
 
@@ -249,21 +190,14 @@ export async function POST(request: Request) {
     await clearLoginAttempts(backend, ipHash);
   }
 
-  // Synchronize local session cookie mirror if Blob backend is available (for legacy checks)
-  if (backend) {
-    try {
-      const { sid } = await createSession(backend, 1);
-      response.cookies.set(SESSION_COOKIE_NAME, sid, {
-        path: "/",
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: ttl,
-        secure: isSecureCookie(),
-      });
-    } catch (sessionErr) {
-      console.warn("[auth/login] Non-fatal legacy session mirror warning:", sessionErr);
-    }
-  }
+  // Cleanly retire legacy session cookie to avoid competing sessions
+  response.cookies.set(SESSION_COOKIE_NAME, "", {
+    path: "/",
+    maxAge: 0,
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
 
   return response;
 }

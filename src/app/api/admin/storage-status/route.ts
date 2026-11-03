@@ -3,6 +3,7 @@ import { getBlobBackend } from "@/lib/blob/backend-factory";
 import { describeBlobConfig } from "@/lib/blob/blob-config";
 import { readIndex } from "@/lib/blob/record-store";
 import { getLoginUsername } from "@/lib/auth/account-store";
+import { getSessionTtlSeconds } from "@/lib/auth/session";
 import { isKeyEncryptionAvailable } from "@/lib/keys/key-crypto";
 import { requireAdmin } from "@/lib/auth/require-auth";
 
@@ -36,6 +37,6 @@ export async function GET(request: Request) {
     encryptionAvailable: isKeyEncryptionAvailable(),
     username,
     counts,
-    sessionTtlSeconds: Number(process.env.ADMIN_SESSION_TTL_SECONDS) || 604800,
+    sessionTtlSeconds: getSessionTtlSeconds(),
   });
 }

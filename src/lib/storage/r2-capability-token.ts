@@ -18,7 +18,13 @@ import crypto from "node:crypto";
  */
 
 export type R2BucketKind = "NEW" | "OLD";
-export type R2Operation = "upload" | "download" | "head" | "list" | "delete";
+export type R2Operation =
+  | "upload"
+  | "download"
+  | "head"
+  | "list"
+  | "delete"
+  | "batch_upload";
 
 export interface CapabilityClaims {
   iss: "youtube-discovery-web";
@@ -29,6 +35,8 @@ export interface CapabilityClaims {
   bucket_kind: R2BucketKind;
   operation: R2Operation;
   key: string;
+  batch_id?: string;
+  allowed_keys?: string[];
   max_bytes?: number;
   content_type?: string;
   iat: number;
@@ -40,6 +48,8 @@ export interface CapabilitySignOptions {
   bucketKind: R2BucketKind;
   operation: R2Operation;
   key: string;
+  batchId?: string;
+  allowedKeys?: string[];
   storageOwnerUuid?: string;
   profileId?: string;
   subject?: string;
@@ -134,6 +144,8 @@ export function signCapabilityToken(
   };
 
   if (options.profileId) claims.profile_id = options.profileId;
+  if (options.batchId) claims.batch_id = options.batchId;
+  if (options.allowedKeys) claims.allowed_keys = options.allowedKeys;
   if (options.maxBytes !== undefined) claims.max_bytes = options.maxBytes;
   if (options.contentType) claims.content_type = options.contentType;
 
@@ -200,7 +212,7 @@ export function verifyCapabilityTokenLocally(
 
     if (expectedKey) {
       const cleanExpected = expectedKey.replace(/^\/+/, "");
-      if (expectedOperation === "list") {
+      if (expectedOperation === "list" || expectedOperation === "batch_upload") {
         if (!cleanExpected.startsWith(claims.key)) {
           return {
             valid: false,

@@ -32,7 +32,11 @@ const memoryMirror = new Map<string, RateLimitState>();
 function serverSalt(): string {
   // Stable per-process salt is enough: the hash only needs to be
   // non-reversible in the store, not globally consistent.
-  return process.env.ADMIN_SESSION_SECRET?.slice(0, 16) ?? "youtube-discovery";
+  return (
+    process.env.API_KEYS_ENCRYPTION_KEY?.slice(0, 16) ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(0, 16) ||
+    "youtube-discovery"
+  );
 }
 
 export function hashIp(ip: string): string {

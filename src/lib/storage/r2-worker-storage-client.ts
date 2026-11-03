@@ -62,6 +62,28 @@ export interface WorkerHealthStatus {
   timestamp: string;
 }
 
+export interface BatchUploadItemInput {
+  key: string;
+  data: Buffer | string;
+  contentType?: string;
+  sha256?: string;
+}
+
+export interface BatchUploadReceipt {
+  key: string;
+  size: number;
+  etag: string;
+  sha256: string;
+  uploaded: string;
+}
+
+export interface BatchUploadResult {
+  ok: boolean;
+  batchId: string;
+  uploadedCount: number;
+  receipts: BatchUploadReceipt[];
+}
+
 export class R2WorkerStorageClient {
   private newWorkerUrl: string;
   private oldWorkerUrl: string;
@@ -512,6 +534,86 @@ export class R2WorkerStorageClient {
   async listOldManifests(categoryPrefix?: string, cursor?: string, limit?: number) {
     const prefix = categoryPrefix ? `asdy/old/${categoryPrefix}` : `asdy/old/`;
     return this.listObjects("OLD", prefix, { cursor, limit });
+  }
+
+  /**
+   * Upload a grouped batch of objects (e.g. Manifest + Parts + Version pointer)
+   * in a single coordinated HTTP request to the NEW Cloudflare Worker.
+   * Eliminates per-item Worker calls.
+   */
+  async uploadBatch(
+    batchId: string,
+    datasetType: string,
+    items: BatchUploadItemInput[],
+    options?: {
+      targetPrefix?: string;
+      storageOwnerUuid?: string;
+    }
+  ): Promise<BatchUploadResult> {
+    if (items.length === 0) {
+      return { ok: true, batchId, uploadedCount: 0, receipts: [] };
+    }
+
+    const cleanItems = items.map((item) => {
+      const cleanKey = item.key.replace(/^\/+/, "");
+      const buf = typeof item.data === "string" ? Buffer.from(item.data, "utf8") : item.data;
+      const sha256 = item.sha256 || this.computeSha256(buf);
+      return {
+        key: cleanKey,
+        content: buf.toString("utf8"),
+        contentType: item.contentType || "application/json",
+        sha256,
+      };
+    });
+
+    const prefix = options?.targetPrefix || cleanItems[0].key.split("/").slice(0, 3).join("/");
+    const allowedKeys = cleanItems.map((i) => i.key);
+
+    const token = signCapabilityToken({
+      bucketKind: "NEW",
+      operation: "batch_upload",
+      key: prefix,
+      batchId,
+      allowedKeys,
+      storageOwnerUuid: options?.storageOwnerUuid,
+      ttlSeconds: 180,
+    });
+
+    const url = `${this.getWorkerUrl("NEW")}/v1/batches/upload`;
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          batchId,
+          datasetType,
+          targetPrefix: prefix,
+          items: cleanItems,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        throw new BlobUnavailableError(
+          `Worker batch upload failed (${res.status}): ${errorText}`
+        );
+      }
+
+      const result = (await res.json()) as BatchUploadResult;
+      return result;
+    } catch (err) {
+      if (err instanceof BlobUnavailableError) throw err;
+      throw new BlobUnavailableError(
+        `Failed to execute batch upload to Cloudflare R2 Worker: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 }
 

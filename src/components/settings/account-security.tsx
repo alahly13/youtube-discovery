@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Loader2, LogOut, ShieldCheck, UserCog } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, KeyRound, Loader2, LogOut, ShieldCheck, UserCog } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -9,23 +9,35 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { authFetch } from "@/lib/client/auth-fetch";
 
 /**
- * Account Security — the single administrator account.
- * Username/password changes require the current password, persist to Blob,
- * invalidate all sessions, and force re-login. UI hiding is NOT the
- * security boundary: every action re-verifies server-side.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Account Security — Change Administrator Password Feature
+ * ──────────────────────────────────────────────────────────────────────────
+ * - Changes password directly in Supabase Auth (authoritative identity).
+ * - Separate accessible show/hide eye toggle buttons for every password input.
+ * - Enforces minimum length, basic strength, and confirmation match.
+ * - Re-authenticates current password before submitting change.
+ * - Refreshes current session cookies seamlessly.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 export function AccountSecurityCard() {
   const router = useRouter();
   const [username, setUsername] = useState<string | null>(null);
+
+  // Form fields
   const [currentPassword, setCurrentPassword] = useState("");
-  const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
+
+  // Visibility toggles
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  // UI state
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  /* Mount-only auth status */
   useEffect(() => {
     authFetch("/api/auth/status")
       .then((res) => (res.ok ? res.json() : null))
@@ -34,46 +46,54 @@ export function AccountSecurityCard() {
       })
       .catch(() => {});
   }, []);
-  /* Mount-only auth status (setState inside promise callback) */
 
-  const submitChange = async (kind: "username" | "password") => {
-    setBusy(kind);
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
     setSuccess(null);
+
+    if (!currentPassword) {
+      setError("Please enter your current password.");
+      return;
+    }
+    if (!newPassword || newPassword.length < 8) {
+      setError("New password must be at least 8 characters in length.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("New password and confirmation do not match.");
+      return;
+    }
+    if (currentPassword === newPassword) {
+      setError("New password must be different from current password.");
+      return;
+    }
+
+    setBusy(true);
     try {
-      const body: Record<string, string> = { currentPassword };
-      if (kind === "username") {
-        if (!newUsername.trim()) throw new Error("Enter a new username");
-        body.newUsername = newUsername.trim();
-      } else {
-        if (!newPassword) throw new Error("Enter a new password");
-        body.newPassword = newPassword;
-        body.confirmPassword = confirmPassword;
-      }
-      const res = await authFetch("/api/auth/account", {
+      const res = await authFetch("/api/auth/change-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+          confirmPassword,
+        }),
       });
+
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Account update failed");
-      setUsername(data.username ?? null);
+      if (!res.ok) {
+        throw new Error(data.error || "Password change failed. Please verify your current password.");
+      }
+
+      setSuccess("Administrator password updated successfully in Supabase Auth. Your active session has been refreshed.");
       setCurrentPassword("");
-      setNewUsername("");
       setNewPassword("");
       setConfirmPassword("");
-      setSuccess(
-        kind === "username"
-          ? `Username changed to “${data.username}”. All sessions were invalidated — please sign in again.`
-          : "Password changed. All sessions were invalidated — please sign in again.",
-      );
-      setTimeout(() => {
-        router.push("/login");
-      }, 2500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Account update failed");
+      setError(err instanceof Error ? err.message : "Password change failed.");
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -89,6 +109,7 @@ export function AccountSecurityCard() {
     <Card>
       <CardHeader title="Account Security" eyebrow="Single administrator account" />
       <div className="space-y-4 p-4">
+        {/* Administrator identity banner */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-muted/30 p-3">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary-soft text-primary">
@@ -98,7 +119,9 @@ export function AccountSecurityCard() {
               <p className="text-xs font-semibold text-foreground">
                 Signed in as: {username ?? "…"}
               </p>
-              <p className="text-[11px] text-muted">Sessions last 7 days by default, validated server-side.</p>
+              <p className="text-[11px] text-muted">
+                Authoritative authority: Supabase Auth · Sessions validated server-side.
+              </p>
             </div>
           </div>
           <Button type="button" variant="secondary" className="h-8 gap-1.5 px-3 text-xs" onClick={handleLogout}>
@@ -106,88 +129,139 @@ export function AccountSecurityCard() {
           </Button>
         </div>
 
-        {error && <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+            {error}
+          </p>
+        )}
         {success && (
           <p className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-xs text-success">
             <CheckCircle2 className="h-4 w-4 shrink-0" /> {success}
           </p>
         )}
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-lg border border-border/80 p-3.5">
-            <h4 className="mb-2 text-xs font-semibold text-foreground">Change Username</h4>
-            <div className="space-y-2">
-              <input
-                type="password"
-                placeholder="Current password (required)"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="filter-input text-xs"
-              />
-              <input
-                type="text"
-                placeholder="New username"
-                autoComplete="off"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                className="filter-input text-xs"
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-8 px-3 text-xs"
-                disabled={busy !== null}
-                onClick={() => void submitChange("username")}
-              >
-                {busy === "username" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                Save Username
-              </Button>
-            </div>
+        {/* Change Administrator Password Form */}
+        <div className="max-w-xl rounded-lg border border-border/80 p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-primary" />
+            <h4 className="text-sm font-semibold text-foreground">Change Administrator Password</h4>
           </div>
-          <div className="rounded-lg border border-border/80 p-3.5">
-            <h4 className="mb-2 text-xs font-semibold text-foreground">Change Password</h4>
-            <div className="space-y-2">
-              <input
-                type="password"
-                placeholder="Current password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                className="filter-input text-xs"
-              />
-              <input
-                type="password"
-                placeholder="New password (min 12 characters)"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="filter-input text-xs"
-              />
-              <input
-                type="password"
-                placeholder="Confirm new password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="filter-input text-xs"
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-8 px-3 text-xs"
-                disabled={busy !== null}
-                onClick={() => void submitChange("password")}
-              >
-                {busy === "password" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-                Save Password
-              </Button>
+          <p className="mb-4 text-xs text-muted">
+            Updates your password directly in Supabase Auth. No email verification or OTP is required.
+          </p>
+
+          <form onSubmit={handleChangePassword} className="space-y-3">
+            {/* Field 1: Current Password */}
+            <div>
+              <label htmlFor="sec-current-password" className="mb-1 block text-xs font-medium text-muted">
+                Current Password
+              </label>
+              <div className="relative">
+                <input
+                  id="sec-current-password"
+                  type={showCurrentPassword ? "text" : "password"}
+                  placeholder="Enter current password"
+                  autoComplete="current-password"
+                  disabled={busy}
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="filter-input pr-10 text-xs"
+                />
+                <button
+                  type="button"
+                  aria-label={showCurrentPassword ? "Hide current password" : "Show current password"}
+                  aria-pressed={showCurrentPassword}
+                  onClick={() => setShowCurrentPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-foreground focus:outline-none"
+                >
+                  {showCurrentPassword ? (
+                    <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
+
+            {/* Field 2: New Password */}
+            <div>
+              <label htmlFor="sec-new-password" className="mb-1 block text-xs font-medium text-muted">
+                New Password
+              </label>
+              <div className="relative">
+                <input
+                  id="sec-new-password"
+                  type={showNewPassword ? "text" : "password"}
+                  placeholder="Enter new password (min. 8 characters)"
+                  autoComplete="new-password"
+                  disabled={busy}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="filter-input pr-10 text-xs"
+                />
+                <button
+                  type="button"
+                  aria-label={showNewPassword ? "Hide new password" : "Show new password"}
+                  aria-pressed={showNewPassword}
+                  onClick={() => setShowNewPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-foreground focus:outline-none"
+                >
+                  {showNewPassword ? (
+                    <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Field 3: Confirm New Password */}
+            <div>
+              <label htmlFor="sec-confirm-password" className="mb-1 block text-xs font-medium text-muted">
+                Confirm New Password
+              </label>
+              <div className="relative">
+                <input
+                  id="sec-confirm-password"
+                  type={showConfirmPassword ? "text" : "password"}
+                  placeholder="Re-enter new password"
+                  autoComplete="new-password"
+                  disabled={busy}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="filter-input pr-10 text-xs"
+                />
+                <button
+                  type="button"
+                  aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                  aria-pressed={showConfirmPassword}
+                  onClick={() => setShowConfirmPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted hover:text-foreground focus:outline-none"
+                >
+                  {showConfirmPassword ? (
+                    <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              className="mt-2 h-9 px-4 text-xs"
+              disabled={busy || !currentPassword || !newPassword || !confirmPassword}
+            >
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+              {busy ? "Updating Password…" : "Update Administrator Password"}
+            </Button>
+          </form>
         </div>
+
         <p className="text-[11px] text-muted">
-          <Badge tone="neutral" className="mr-1 text-[10px]">Security</Badge>
-          Credential changes persist to private Blob storage, bump the session version, and sign out every session.
+          <Badge tone="neutral" className="mr-1 text-[10px]">Supabase Auth</Badge>
+          Password changes update directly in Supabase Auth. No email verification or OTP is required.
         </p>
       </div>
     </Card>

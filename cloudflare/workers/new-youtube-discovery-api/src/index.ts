@@ -27,8 +27,10 @@ export interface CapabilityClaims {
   profile_id?: string;
   storage_owner_uuid: string;
   bucket_kind: "NEW" | "OLD";
-  operation: "upload" | "download" | "head" | "list" | "delete";
+  operation: "upload" | "download" | "head" | "list" | "delete" | "batch_upload";
   key: string;
+  batch_id?: string;
+  allowed_keys?: string[];
   max_bytes?: number;
   content_type?: string;
   iat: number;
@@ -56,6 +58,16 @@ function base64UrlDecode(str: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+// Helper: ArrayBuffer to lowercase hex string
+function bufToHex(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex;
 }
 
 // Verify JWT Capability Token using native Web Crypto
@@ -122,10 +134,10 @@ async function verifyCapabilityToken(
     }
 
     // Key / prefix check
-    if (expectedOperation === "list") {
-      // For listing, targetKey is the prefix filter; claims.key is the authorized root prefix
+    if (expectedOperation === "list" || expectedOperation === "batch_upload") {
+      // For listing or batch upload, targetKey is the prefix filter / root; claims.key is the authorized root prefix
       if (!targetKey.startsWith(claims.key)) {
-        return { valid: false, status: 403, error: `List prefix '${targetKey}' outside authorized scope '${claims.key}'.` };
+        return { valid: false, status: 403, error: `Scope '${targetKey}' outside authorized scope '${claims.key}'.` };
       }
     } else {
       if (claims.key !== targetKey) {
@@ -262,7 +274,131 @@ export default {
       }
     }
 
-    // 2B. Single Object Operations on /v1/objects/<key>
+    // 2B. Grouped Batch Upload: POST /v1/batches/upload
+    // Executes atomic upload of multiple dataset objects (manifest + parts + version pointer)
+    if (pathname === "/v1/batches/upload" && request.method === "POST") {
+      try {
+        const body = (await request.json()) as {
+          batchId: string;
+          datasetType?: string;
+          targetPrefix?: string;
+          items: Array<{
+            key: string;
+            content: string;
+            isBase64?: boolean;
+            contentType?: string;
+            sha256: string;
+          }>;
+        };
+
+        if (!body.batchId || !Array.isArray(body.items) || body.items.length === 0) {
+          return jsonResponse({ error: "Missing required fields: batchId and non-empty items array." }, 400, cors);
+        }
+
+        const targetPrefix = body.targetPrefix || sanitizeKey(body.items[0].key.split("/").slice(0, 3).join("/"));
+
+        const authCheck = await verifyCapabilityToken(
+          request.headers.get("Authorization"),
+          env.WORKER_AUTH_SECRET,
+          "batch_upload",
+          targetPrefix
+        );
+
+        if (!authCheck.valid) {
+          return jsonResponse({ error: authCheck.error }, authCheck.status, cors);
+        }
+
+        const receipts: Array<{
+          key: string;
+          size: number;
+          etag: string;
+          sha256: string;
+          uploaded: string;
+        }> = [];
+
+        for (const item of body.items) {
+          const key = sanitizeKey(item.key);
+
+          // Verify key is in authorized scope
+          if (!key.startsWith(authCheck.claims.key)) {
+            return jsonResponse(
+              { error: `Item key '${key}' outside authorized prefix '${authCheck.claims.key}'.` },
+              403,
+              cors
+            );
+          }
+
+          if (authCheck.claims.allowed_keys && !authCheck.claims.allowed_keys.includes(key)) {
+            return jsonResponse(
+              { error: `Item key '${key}' not in token's allowed_keys list.` },
+              403,
+              cors
+            );
+          }
+
+          // Decode data
+          let bytes: Uint8Array;
+          if (item.isBase64) {
+            bytes = base64UrlDecode(item.content);
+          } else {
+            bytes = new TextEncoder().encode(item.content);
+          }
+
+          // Verify SHA-256 integrity
+          const digest = await crypto.subtle.digest("SHA-256", bytes);
+          const computedHex = bufToHex(digest);
+
+          if (computedHex.toLowerCase() !== item.sha256.toLowerCase()) {
+            return jsonResponse(
+              {
+                error: `SHA-256 integrity mismatch for key '${key}'. Computed ${computedHex}, expected ${item.sha256}.`,
+              },
+              400,
+              cors
+            );
+          }
+
+          const contentType = item.contentType || "application/json";
+          const uploadedObj = await env.NEW_BUCKET.put(key, bytes, {
+            httpMetadata: { contentType },
+            customMetadata: {
+              storage_owner_uuid: authCheck.claims.storage_owner_uuid,
+              batch_id: body.batchId,
+              dataset_type: body.datasetType || "",
+              sha256: computedHex,
+              uploaded_at: new Date().toISOString(),
+            },
+          });
+
+          receipts.push({
+            key: uploadedObj.key,
+            size: uploadedObj.size,
+            etag: uploadedObj.httpEtag,
+            sha256: computedHex,
+            uploaded: uploadedObj.uploaded.toISOString(),
+          });
+        }
+
+        return jsonResponse(
+          {
+            ok: true,
+            batchId: body.batchId,
+            uploadedCount: receipts.length,
+            receipts,
+          },
+          200,
+          cors
+        );
+      } catch (err) {
+        return jsonResponse(
+          { error: err instanceof Error ? err.message : "Batch upload failed." },
+          400,
+          cors
+        );
+      }
+    }
+
+    // 2C. Single Object Operations on /v1/objects/<key>
     if (pathname.startsWith(OBJECTS_PREFIX)) {
       const rawKey = pathname.slice(OBJECTS_PREFIX.length);
       let key: string;

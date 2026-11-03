@@ -3250,3 +3250,85 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+
+---
+
+## 2026-11-03 (Admin Password Reset Visible Input & Non-Interactive Recovery Upgrades)
+
+### Date/time
+
+2026-11-03T23:30:00+02:00
+
+### Agent/model if known
+
+Antigravity / Gemini 3.8 Flash (High)
+
+### Task summary
+
+Updated `scripts/auth-admin-reset.mjs` (`npm run auth:admin-reset`) to display password characters visibly on screen by default as the user types, eliminating terminal confusion, silent keystroke errors, and typos. Added optional `--hidden` flag for silent entry and `--password=<val>` argument for non-interactive execution.
+
+### Reason/root cause
+
+Previously, `scripts/auth-admin-reset.mjs` used a custom `promptHidden` helper that muted terminal stdout completely. Because characters, cursor movements, and backspaces were suppressed, the user could not see what they typed or whether keypresses registered, leading to confusion and password mismatches.
+
+### Files changed
+
+- `scripts/auth-admin-reset.mjs`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+- Replaced mute-only `promptHidden` with configurable `promptInput(query, { hidden = false })`.
+- Default mode uses standard Node.js `readline.createInterface({ input: process.stdin, output: process.stdout })`, allowing characters to be visibly echoed in the terminal with full native line editing (backspace, cursor keys, delete) so the user can verify what they type in real time.
+- Preserved silent input behind an optional `--hidden` (or `--silent`) flag for environments where keystroke masking is desired.
+- Added support for `--password=<val>` to allow direct non-interactive password setting.
+- Added friendly `--help` / `-h` CLI usage output.
+- Re-verified password strength validation (minimum 8 characters, at least one letter, and at least one number or special character) and double confirmation match.
+
+### Architecture impact
+
+None. Maintains single-administrator security and official Supabase Auth authority without email, OTP, or magic link dependencies.
+
+### Environment impact
+
+None.
+
+### Database/migration impact
+
+None.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `node scripts/auth-admin-reset.mjs --help`: passed with exit code 0, displaying options correctly.
+- `npm run test:auth`: passed cleanly (20/20 test scenarios passed).
+- `npm run typecheck`: passed cleanly with exit code 0.
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No. Plaintext passwords and secret keys are never printed to logs or terminal stdout after input.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

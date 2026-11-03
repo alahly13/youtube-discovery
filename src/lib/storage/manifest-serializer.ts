@@ -40,16 +40,37 @@ export interface GenerationDescriptor {
 
 /**
  * Builds the canonical physical object path for an immutable manifest part.
- * Formatted as: <storageOwnerUuid>/persistence/datasets/<datasetId>/generations/<generationId>/parts/part-<number>.json
+ * Formatted as: <storageOwnerUuid>/persistence/<datasetType>/generations/<generationId>/parts/part-<number>.json
  */
 export function buildManifestPartStoragePath(
   storageOwnerUuid: string,
-  datasetId: string,
+  datasetTypeOrId: string,
   generationId: string,
   partNumber: number
 ): string {
   const padded = String(partNumber).padStart(6, "0");
-  return `${storageOwnerUuid}/persistence/datasets/${datasetId}/generations/${generationId}/parts/part-${padded}.json`;
+  return `${storageOwnerUuid}/persistence/${datasetTypeOrId}/generations/${generationId}/parts/part-${padded}.json`;
+}
+
+/**
+ * Builds the canonical storage path for the generation manifest.json.
+ */
+export function buildGenerationManifestPath(
+  storageOwnerUuid: string,
+  datasetTypeOrId: string,
+  generationId: string
+): string {
+  return `${storageOwnerUuid}/persistence/${datasetTypeOrId}/generations/${generationId}/manifest.json`;
+}
+
+/**
+ * Builds the canonical storage path for the dataset version.json pointer.
+ */
+export function buildDatasetVersionPointerPath(
+  storageOwnerUuid: string,
+  datasetTypeOrId: string
+): string {
+  return `${storageOwnerUuid}/persistence/${datasetTypeOrId}/version.json`;
 }
 
 /**

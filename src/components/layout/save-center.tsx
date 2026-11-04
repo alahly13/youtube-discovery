@@ -11,6 +11,7 @@ import {
   Layers,
   Database,
   CloudDownload,
+  Laptop,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,7 @@ import {
   type SyncStateEvent,
 } from "@/lib/sync/sync-coordinator";
 import { useCloudHydration } from "@/lib/sync/use-cloud-hydration";
+import { getDeviceLabel } from "@/lib/device/device-identity";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -55,11 +57,13 @@ export function SaveCenter() {
   });
   const [saving, setSaving] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [deviceLabel, setDeviceLabelState] = useState("This Device");
 
   const ownerId = syncCoordinator.getOwnerId();
   const hydration = useCloudHydration(ownerId, false);
 
   useEffect(() => {
+    setDeviceLabelState(getDeviceLabel());
     const unsubscribe = syncCoordinator.subscribe((evt) => {
       setSyncEvent(evt);
     });
@@ -244,6 +248,10 @@ export function SaveCenter() {
           </div>
 
           <div className="mt-3 border-t border-border/60 pt-2 text-[11px] text-muted space-y-1">
+            <div className="flex items-center justify-between pb-1 border-b border-border/30">
+              <span className="flex items-center gap-1"><Laptop className="h-3 w-3" /> Device:</span>
+              <span className="font-semibold text-foreground truncate max-w-[140px]">{deviceLabel}</span>
+            </div>
             <div className="flex items-center justify-between">
               <span>Auto-Sync Schedule:</span>
               <span className="font-semibold text-foreground">Every 12h</span>

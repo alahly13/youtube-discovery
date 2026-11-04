@@ -75,6 +75,7 @@ const mainNavSections: NavSection[] = [
     items: [
       { href: "/manifests", label: "Storage Explorer", icon: HardDrive },
       { href: "/dashboard/local-data", label: "Local Data Center", icon: Database },
+      { href: "/other-actions", label: "Other Actions", icon: Sparkles },
       { href: "/manifests/upload", label: "Upload Manifest", icon: Upload },
       { href: "/manifests/viewer", label: "Manifest Viewer", icon: Eye },
       { href: "/manifests/export", label: "Manifest Export", icon: FolderOutput },

@@ -1,0 +1,17 @@
+{
+  "archiveTitle": "YouTube Discovery — Local Browser Data Backup",
+  "archiveTitleArabic": "النسخ الاحتياطي لبيانات المتصفح المحلية",
+  "version": "2026.1",
+  "capturedAt": "2026-11-04T15:57:31.840Z",
+  "exportedBy": "asdy",
+  "storageOwnerId": "a5dd9ec7-7345-4f84-a668-12fbdf24120c",
+  "totalFiles": 7,
+  "categoryStats": {
+    "SAVED_ITEMS": 948,
+    "PLAYLIST": 3,
+    "SEARCH_HISTORY": 100,
+    "RESEARCH_QUEUE": 0,
+    "REFERENCES": 8
+  },
+  "notes": "Authentic client-side browser storage snapshot with strict secret redaction. Zero storage mutation occurred."
+}

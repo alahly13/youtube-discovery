@@ -19,6 +19,10 @@ import {
   Trash2,
   User,
   X,
+  Laptop,
+  Edit3,
+  Save,
+  CheckCircle,
 } from "lucide-react";
 import { useEffect, useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +44,11 @@ import {
   type LocalDatasetCatalogEntry,
   type SyncJournalBatch,
 } from "@/lib/storage/indexeddb-store";
+import {
+  getDeviceRegistration,
+  setDeviceLabel,
+  type DeviceRegistration,
+} from "@/lib/device/device-identity";
 
 export function LocalDataCenterWorkspace() {
   const [metrics, setMetrics] = useState<StorageOverviewMetrics>({
@@ -64,6 +73,10 @@ export function LocalDataCenterWorkspace() {
   const [selectedEntryForPreview, setSelectedEntryForPreview] = useState<DiscoveredLocalEntry | null>(null);
   const [isDeletionModalOpen, setIsDeletionModalOpen] = useState(false);
   const [copiedPreview, setCopiedPreview] = useState(false);
+  const [deviceReg, setDeviceReg] = useState<DeviceRegistration | null>(null);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [customLabelInput, setCustomLabelInput] = useState("");
+  const [labelSavedFeedback, setLabelSavedFeedback] = useState(false);
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -97,6 +110,11 @@ export function LocalDataCenterWorkspace() {
       }
 
       if (isMounted) {
+        if (typeof window !== "undefined") {
+          const reg = getDeviceRegistration();
+          setDeviceReg(reg);
+          setCustomLabelInput(reg.deviceLabel);
+        }
         await executeScan(userId);
       }
     }
@@ -106,6 +124,17 @@ export function LocalDataCenterWorkspace() {
       isMounted = false;
     };
   }, []);
+
+  const handleSaveDeviceLabel = () => {
+    if (customLabelInput.trim()) {
+      setDeviceLabel(customLabelInput.trim());
+      const updated = getDeviceRegistration();
+      setDeviceReg(updated);
+      setEditingLabel(false);
+      setLabelSavedFeedback(true);
+      setTimeout(() => setLabelSavedFeedback(false), 2000);
+    }
+  };
 
   const executeScan = async (userId?: string) => {
     setIsScanning(true);
@@ -378,6 +407,92 @@ export function LocalDataCenterWorkspace() {
             <span className="text-[10px] text-muted block">Safe from deletion</span>
           </Card>
         </div>
+
+        {/* Device Identity Profile Card */}
+        {deviceReg && (
+          <Card className="p-4 sm:p-5 border-border/80 bg-surface/90 shadow-xs space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/60 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Laptop className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-foreground">Current Device Installation Profile</h3>
+                    <Badge tone="primary" className="text-[10px]">Non-Invasive Device UUID</Badge>
+                  </div>
+                  <p className="text-xs text-muted">
+                    Attached to local outbox mutations and cloud manifests to trace multi-device origins safely.
+                  </p>
+                </div>
+              </div>
+
+              {/* Editable Label Control */}
+              <div className="flex items-center gap-2">
+                {editingLabel ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={customLabelInput}
+                      onChange={(e) => setCustomLabelInput(e.target.value)}
+                      placeholder="Friendly Device Label..."
+                      className="h-8 rounded-md border border-border bg-surface px-2.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary w-44"
+                    />
+                    <Button variant="primary" onClick={handleSaveDeviceLabel} className="h-8 px-2.5 text-xs gap-1">
+                      <Save className="h-3.5 w-3.5" />
+                      <span>Save</span>
+                    </Button>
+                    <Button variant="ghost" onClick={() => setEditingLabel(false)} className="h-8 px-2 text-xs">
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-foreground px-2.5 py-1 rounded-md bg-surface-muted border border-border/60">
+                      {deviceReg.deviceLabel}
+                    </span>
+                    <Button variant="secondary" onClick={() => setEditingLabel(true)} className="h-8 px-2.5 text-xs gap-1">
+                      <Edit3 className="h-3.5 w-3.5" />
+                      <span>Edit Label</span>
+                    </Button>
+                    {labelSavedFeedback && (
+                      <span className="text-xs text-emerald-500 font-medium flex items-center gap-1">
+                        <CheckCircle className="h-3.5 w-3.5" /> Saved
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs pt-1">
+              <div className="p-2.5 rounded-lg bg-surface-muted/40 border border-border/40">
+                <span className="text-[11px] text-muted block">Installation Device ID</span>
+                <code className="text-primary font-mono text-[11px] font-bold block truncate" title={deviceReg.deviceId}>
+                  {deviceReg.deviceId}
+                </code>
+              </div>
+              <div className="p-2.5 rounded-lg bg-surface-muted/40 border border-border/40">
+                <span className="text-[11px] text-muted block">Platform / OS</span>
+                <span className="font-semibold text-foreground block">
+                  {deviceReg.metadata.os} ({deviceReg.metadata.browser})
+                </span>
+              </div>
+              <div className="p-2.5 rounded-lg bg-surface-muted/40 border border-border/40">
+                <span className="text-[11px] text-muted block">Device Category</span>
+                <span className="font-semibold text-foreground block capitalize">
+                  {deviceReg.metadata.category}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-lg bg-surface-muted/40 border border-border/40">
+                <span className="text-[11px] text-muted block">Installation Registered</span>
+                <span className="font-semibold text-foreground block">
+                  {new Date(deviceReg.createdAt).toLocaleDateString()}
+                </span>
+              </div>
+            </div>
+          </Card>
+        )}
       </div>
 
       {/* 3. AREA B: Browser Data Explorer */}

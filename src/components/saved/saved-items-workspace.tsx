@@ -2,26 +2,35 @@
 
 import {
   Calendar,
+  Cloud,
   ExternalLink,
   Eye,
   FileCode,
   Film,
   Flame,
+  HardDrive,
+  Laptop,
   Layers,
   ListPlus,
   ListVideo,
   Play,
+  RefreshCw,
   Search,
+  Sparkles,
   Trash2,
   Tv,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
+import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
+import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import { getDeviceLabel } from "@/lib/device/device-identity";
 import { AddToPlaylistDialog } from "@/components/library/add-to-playlist-dialog";
 import { RawJsonInspectorDialog } from "@/components/saved/raw-json-inspector-dialog";
+import { ExpandableDescription } from "@/components/youtube/expandable-description";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -31,8 +40,7 @@ type TypeFilter = "all" | "video" | "shorts" | "channel" | "playlist";
 type SortOption = "date_desc" | "date_asc" | "title_az" | "views_desc";
 
 /**
- * Normalizes an item's save timestamp to an ISO string.
- * Falls back gracefully to collectedAt or current time.
+ * Normalizes an item's save timestamp to an epoch number.
  */
 function getItemSaveTime(item: NormalizedYouTubeDiscoveryItem): number {
   if (item.savedAt) {
@@ -47,8 +55,7 @@ function getItemSaveTime(item: NormalizedYouTubeDiscoveryItem): number {
 }
 
 /**
- * Formats a timestamp into a human-readable calendar day grouping key,
- * e.g., "November 2, 2026" or "Today — November 2, 2026".
+ * Formats a timestamp into a human-readable calendar day grouping key.
  */
 function getDayGroupKey(timestampMs: number): { key: string; label: string; relative: string } {
   if (!timestampMs) {
@@ -91,26 +98,179 @@ function getDayGroupKey(timestampMs: number): { key: string; label: string; rela
   return { key: isoKey, label: `${weekday}, ${dateStr}`, relative: dateStr };
 }
 
+/**
+ * Filters and sorts an array of saved items.
+ */
+function filterAndSortItems(
+  items: NormalizedYouTubeDiscoveryItem[],
+  typeFilter: TypeFilter,
+  searchQuery: string,
+  sortOption: SortOption
+): NormalizedYouTubeDiscoveryItem[] {
+  const filtered = items.filter((item) => {
+    if (typeFilter === "video") {
+      if (item.itemType !== "video" || item.isShortsLike || (item.itemType as string) === "shorts_like") return false;
+    }
+    if (typeFilter === "shorts") {
+      if (!item.isShortsLike && (item.itemType as string) !== "shorts_like") return false;
+    }
+    if (typeFilter === "channel" && item.itemType !== "channel") return false;
+    if (typeFilter === "playlist" && item.itemType !== "playlist") return false;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const titleMatch = item.title?.toLowerCase().includes(q);
+      const channelMatch = item.channelTitle?.toLowerCase().includes(q);
+      const tagMatch = item.tags?.some((t) => t.toLowerCase().includes(q));
+      if (!titleMatch && !channelMatch && !tagMatch) return false;
+    }
+
+    return true;
+  });
+
+  switch (sortOption) {
+    case "date_desc":
+      return filtered.sort((a, b) => getItemSaveTime(b) - getItemSaveTime(a));
+    case "date_asc":
+      return filtered.sort((a, b) => getItemSaveTime(a) - getItemSaveTime(b));
+    case "title_az":
+      return filtered.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    case "views_desc":
+      return filtered.sort((a, b) => (b.viewsCount ?? 0) - (a.viewsCount ?? 0));
+    default:
+      return filtered;
+  }
+}
+
+/**
+ * Groups items into daily calendar sections.
+ */
+function groupItemsByCalendarDay(
+  sortedList: NormalizedYouTubeDiscoveryItem[],
+  sortOption: SortOption
+): Array<{ key: string; label: string; relative: string; items: NormalizedYouTubeDiscoveryItem[] }> {
+  const map = new Map<string, { label: string; relative: string; items: NormalizedYouTubeDiscoveryItem[] }>();
+
+  for (const item of sortedList) {
+    const timeMs = getItemSaveTime(item);
+    const { key, label, relative } = getDayGroupKey(timeMs);
+
+    if (!map.has(key)) {
+      map.set(key, { label, relative, items: [] });
+    }
+    map.get(key)!.items.push(item);
+  }
+
+  const groups = Array.from(map.entries()).map(([key, val]) => ({
+    key,
+    label: val.label,
+    relative: val.relative,
+    items: val.items,
+  }));
+
+  if (sortOption === "date_asc") {
+    return groups.sort((a, b) => a.key.localeCompare(b.key));
+  }
+  return groups.sort((a, b) => b.key.localeCompare(a.key));
+}
+
 export function SavedItemsWorkspace() {
-  const savedItems = useYouTubeWorkspaceStore((s) => s.savedItems);
+  const inMemorySavedItems = useYouTubeWorkspaceStore((s) => s.savedItems);
   const toggleItemSaved = useYouTubeWorkspaceStore((s) => s.toggleItemSaved);
+
+  // Authoritative merged dataset combining IndexedDB Local-First, Outbox, and Hydrated Cloud
+  const {
+    items: allItems,
+    localPendingItems,
+    cloudCommittedItems,
+    refresh,
+  } = useMergedDataset<NormalizedYouTubeDiscoveryItem>(
+    "SAVED_ITEMS",
+    inMemorySavedItems,
+    "asdy-admin"
+  );
 
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [sortOption, setSortOption] = useState<SortOption>("date_desc");
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [deviceLabel, setDeviceLabelState] = useState("This Device");
 
   // Add to playlist modal state
   const [playlistTarget, setPlaylistTarget] = useState<NormalizedYouTubeDiscoveryItem | null>(null);
   // Raw JSON inspection modal state
   const [inspectedItem, setInspectedItem] = useState<NormalizedYouTubeDiscoveryItem | null>(null);
 
-  // Type counts for quick pills
+  useEffect(() => {
+    setDeviceLabelState(getDeviceLabel());
+    const unsub = syncCoordinator.subscribe((state) => {
+      setIsSyncing(state.status === "SYNCING");
+    });
+    return unsub;
+  }, []);
+
+  const handleSaveToCloud = async () => {
+    setIsSyncing(true);
+    try {
+      await syncCoordinator.saveAll();
+      refresh();
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // Helper to identify historical "Before App Updating" items
+  const isHistorical = (item: any) =>
+    item.isBeforeAppUpdating === true ||
+    (typeof item.manifestId === "string" && (item.manifestId.includes("legacy") || item.manifestId.includes("before-app-updating"))) ||
+    (typeof item.provenance === "string" && item.provenance.includes("before-app-updating"));
+
+  const beforeUpdatingItems = useMemo(() => {
+    return allItems.filter((item) => isHistorical(item));
+  }, [allItems]);
+
+  const nonHistoricalLocalItems = useMemo(() => {
+    return localPendingItems.filter((item) => !isHistorical(item));
+  }, [localPendingItems]);
+
+  const nonHistoricalCloudItems = useMemo(() => {
+    return cloudCommittedItems.filter((item) => !isHistorical(item));
+  }, [cloudCommittedItems]);
+
+  // Filter and sort for local pending
+  const filteredLocalItems = useMemo(() => {
+    return filterAndSortItems(nonHistoricalLocalItems, typeFilter, searchQuery, sortOption);
+  }, [nonHistoricalLocalItems, typeFilter, searchQuery, sortOption]);
+
+  const localDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(filteredLocalItems, sortOption);
+  }, [filteredLocalItems, sortOption]);
+
+  // Filter and sort for cloud committed
+  const filteredCloudItems = useMemo(() => {
+    return filterAndSortItems(nonHistoricalCloudItems, typeFilter, searchQuery, sortOption);
+  }, [nonHistoricalCloudItems, typeFilter, searchQuery, sortOption]);
+
+  const cloudDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(filteredCloudItems, sortOption);
+  }, [filteredCloudItems, sortOption]);
+
+  // Filter and sort for Before App Updating historical items
+  const filteredBeforeUpdatingItems = useMemo(() => {
+    return filterAndSortItems(beforeUpdatingItems, typeFilter, searchQuery, sortOption);
+  }, [beforeUpdatingItems, typeFilter, searchQuery, sortOption]);
+
+  const beforeUpdatingDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(filteredBeforeUpdatingItems, sortOption);
+  }, [filteredBeforeUpdatingItems, sortOption]);
+
+  // Type counts across all unique deduplicated items
   const counts = useMemo(() => {
     let videos = 0;
     let shorts = 0;
     let channels = 0;
     let playlists = 0;
-    for (const item of savedItems) {
+    for (const item of allItems) {
       if (item.itemType === "channel") {
         channels++;
       } else if (item.itemType === "playlist") {
@@ -121,88 +281,10 @@ export function SavedItemsWorkspace() {
         videos++;
       }
     }
-    return { all: savedItems.length, videos, shorts, channels, playlists };
-  }, [savedItems]);
+    return { all: allItems.length, videos, shorts, channels, playlists };
+  }, [allItems]);
 
-  // Filter and sort items across the 4 explicit filters
-  const filteredItems = useMemo(() => {
-    return savedItems.filter((item) => {
-      // 4-Filter logic:
-      // 1. VIDEO: itemType === 'video' && !item.isShortsLike && itemType !== 'shorts_like'
-      // 2. SHORTS: item.isShortsLike === true || itemType === 'shorts_like'
-      // 3. CHANNELS: itemType === 'channel'
-      // 4. PLAYLISTS: itemType === 'playlist'
-      if (typeFilter === "video") {
-        if (item.itemType !== "video" || item.isShortsLike || (item.itemType as string) === "shorts_like") return false;
-      }
-      if (typeFilter === "shorts") {
-        if (!item.isShortsLike && (item.itemType as string) !== "shorts_like") return false;
-      }
-      if (typeFilter === "channel" && item.itemType !== "channel") return false;
-      if (typeFilter === "playlist" && item.itemType !== "playlist") return false;
-
-      // Query match
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const titleMatch = item.title?.toLowerCase().includes(q);
-        const channelMatch = item.channelTitle?.toLowerCase().includes(q);
-        const tagMatch = item.tags?.some((t) => t.toLowerCase().includes(q));
-        if (!titleMatch && !channelMatch && !tagMatch) return false;
-      }
-
-      return true;
-    });
-  }, [savedItems, typeFilter, searchQuery]);
-
-  // Sort items
-  const sortedItems = useMemo(() => {
-    const list = [...filteredItems];
-    switch (sortOption) {
-      case "date_desc":
-        return list.sort((a, b) => getItemSaveTime(b) - getItemSaveTime(a));
-      case "date_asc":
-        return list.sort((a, b) => getItemSaveTime(a) - getItemSaveTime(b));
-      case "title_az":
-        return list.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
-      case "views_desc":
-        return list.sort((a, b) => (b.viewsCount ?? 0) - (a.viewsCount ?? 0));
-      default:
-        return list;
-    }
-  }, [filteredItems, sortOption]);
-
-  // Daily grouping: group items by the calendar date they were saved
-  const dailyGroups = useMemo(() => {
-    const groups: Array<{
-      key: string;
-      label: string;
-      relative: string;
-      items: NormalizedYouTubeDiscoveryItem[];
-    }> = [];
-
-    const map = new Map<string, { label: string; relative: string; items: NormalizedYouTubeDiscoveryItem[] }>();
-
-    for (const item of sortedItems) {
-      const timeMs = getItemSaveTime(item);
-      const { key, label, relative } = getDayGroupKey(timeMs);
-
-      if (!map.has(key)) {
-        map.set(key, { label, relative, items: [] });
-      }
-      map.get(key)!.items.push(item);
-    }
-
-    for (const [key, val] of map.entries()) {
-      groups.push({ key, label: val.label, relative: val.relative, items: val.items });
-    }
-
-    // Keep chronological order of groups matching sortOption
-    if (sortOption === "date_asc") {
-      return groups.sort((a, b) => a.key.localeCompare(b.key));
-    }
-    // Default: newest dates first
-    return groups.sort((a, b) => b.key.localeCompare(a.key));
-  }, [sortedItems, sortOption]);
+  const hasAnyItems = allItems.length > 0;
 
   return (
     <div className="space-y-8">
@@ -328,39 +410,246 @@ export function SavedItemsWorkspace() {
         </div>
       </Card>
 
-      {/* Main Content Area — Daily Grouped Lists */}
-      {dailyGroups.length > 0 ? (
-        <div className="space-y-10">
-          {dailyGroups.map((group) => (
-            <section key={group.key} className="space-y-4">
-              {/* Distinct Visual Day Header & Divider */}
-              <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2.5 backdrop-blur-md">
-                <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary-soft text-primary shadow-xs">
-                  <Calendar className="h-4 w-4" />
+      {/* Main Content Area */}
+      {hasAnyItems ? (
+        <div className="space-y-12">
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 1: LOCAL — This Device (Amber / Gold Theme)                 */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {filteredLocalItems.length > 0 && (
+            <div className="space-y-6">
+              {/* Section Header Card with Amber / Gold Accents */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 shadow-xs">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-500 font-bold shadow-xs">
+                    <HardDrive className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-foreground tracking-tight">
+                        LOCAL — This Device
+                      </h2>
+                      <span className="inline-flex items-center rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-xs font-bold text-amber-500">
+                        {filteredLocalItems.length} {filteredLocalItems.length === 1 ? "item pending" : "items pending"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      Saved locally in browser storage on <span className="font-semibold text-foreground">{deviceLabel}</span>. Preserved offline in IndexedDB; waiting for cloud sync.
+                    </p>
+                  </div>
                 </div>
-                <h2 className="text-sm font-semibold tracking-wide text-foreground uppercase">
-                  {group.label}
-                </h2>
-                <Badge tone="neutral" className="text-xs px-2 py-0.5">
-                  {group.items.length} {group.items.length === 1 ? "item" : "items"}
-                </Badge>
-                <div className="h-px flex-1 bg-border/80" />
+
+                <div className="flex items-center gap-2 sm:self-center">
+                  <button
+                    type="button"
+                    onClick={handleSaveToCloud}
+                    disabled={isSyncing}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs px-4 py-2 shadow-xs transition hover:shadow-md disabled:opacity-50"
+                  >
+                    {isSyncing ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        <span>Saving to Cloud...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="h-3.5 w-3.5" />
+                        <span>Save to Cloud</span>
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              {/* Items Grid for this specific day */}
-              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {group.items.map((item) => (
-                  <SavedItemCard
-                    key={`${item.itemType}-${item.platformItemId}`}
-                    item={item}
-                    onRemove={() => toggleItemSaved(item)}
-                    onAddToPlaylist={() => setPlaylistTarget(item)}
-                    onInspectJson={() => setInspectedItem(item)}
-                  />
+              {/* Local Daily Groups */}
+              <div className="space-y-8 pl-1">
+                {localDailyGroups.map((group) => (
+                  <section key={`local-${group.key}`} className="space-y-4">
+                    <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                      <div className="flex h-6 w-6 items-center justify-center rounded bg-amber-500/15 text-amber-500">
+                        <Calendar className="h-3.5 w-3.5" />
+                      </div>
+                      <h3 className="text-xs font-bold tracking-wider text-amber-500 uppercase">
+                        {group.label}
+                      </h3>
+                      <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                        {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                      </span>
+                      <div className="h-px flex-1 bg-amber-500/20" />
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.items.map((item) => (
+                        <SavedItemCard
+                          key={`local-${item.itemType}-${item.platformItemId}`}
+                          item={item}
+                          isLocalPending={true}
+                          onRemove={() => toggleItemSaved(item)}
+                          onAddToPlaylist={() => setPlaylistTarget(item)}
+                          onInspectJson={() => setInspectedItem(item)}
+                        />
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
-            </section>
-          ))}
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 2: CLOUD — Synced (Emerald / Teal Theme)                   */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {filteredCloudItems.length > 0 && (
+            <div className="space-y-6">
+              {/* Section Header Card with Emerald / Teal Accents */}
+              <div className="flex items-center justify-between gap-4 p-4 sm:p-5 rounded-xl border border-emerald-500/30 bg-emerald-500/5 shadow-xs">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-500 font-bold shadow-xs">
+                    <Cloud className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-foreground tracking-tight">
+                        CLOUD — Synced
+                      </h2>
+                      <span className="inline-flex items-center rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-xs font-bold text-emerald-500">
+                        {filteredCloudItems.length} {filteredCloudItems.length === 1 ? "item committed" : "items committed"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      Confirmed multi-device persistence in Cloudflare R2 and PostgreSQL dataset registry.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cloud Daily Groups */}
+              <div className="space-y-8 pl-1">
+                {cloudDailyGroups.map((group) => (
+                  <section key={`cloud-${group.key}`} className="space-y-4">
+                    <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                      <div className="flex h-6 w-6 items-center justify-center rounded bg-emerald-500/15 text-emerald-500">
+                        <Calendar className="h-3.5 w-3.5" />
+                      </div>
+                      <h3 className="text-xs font-bold tracking-wider text-emerald-500 uppercase">
+                        {group.label}
+                      </h3>
+                      <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                        {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                      </span>
+                      <div className="h-px flex-1 bg-emerald-500/20" />
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.items.map((item) => (
+                        <SavedItemCard
+                          key={`cloud-${item.itemType}-${item.platformItemId}`}
+                          item={item}
+                          isLocalPending={false}
+                          onRemove={() => toggleItemSaved(item)}
+                          onAddToPlaylist={() => setPlaylistTarget(item)}
+                          onInspectJson={() => setInspectedItem(item)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 3: BEFORE APP UPDATING — Historical Data (Purple Theme)     */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {filteredBeforeUpdatingItems.length > 0 && (
+            <div className="space-y-6 pt-4">
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                  <div className="w-full border-t border-purple-500/30" />
+                </div>
+                <div className="relative flex justify-center">
+                  <span className="bg-background px-4 text-xs font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400">
+                    Historical Archive Divider
+                  </span>
+                </div>
+              </div>
+
+              {/* Section Header Card with Purple / Violet Accents */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-xl border border-purple-500/30 bg-purple-500/5 shadow-xs">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-500/20 text-purple-600 dark:text-purple-400 font-bold shadow-xs">
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-foreground tracking-tight">
+                        Before App Updating
+                      </h2>
+                      <span className="inline-flex items-center rounded-full bg-purple-500/15 border border-purple-500/30 px-2 py-0.5 text-xs font-bold text-purple-600 dark:text-purple-400">
+                        {filteredBeforeUpdatingItems.length} {filteredBeforeUpdatingItems.length === 1 ? "item" : "items"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted">
+                      Historical saved items preserved from previous application versions, securely stored under <code className="text-foreground">asdy/persistence/&lt;ownerId&gt;/&lt;datasetSlug&gt;/before-app-updating/...</code>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 sm:self-center">
+                  <Link href="/other-actions">
+                    <ButtonLink href="/other-actions" variant="secondary" className="gap-1.5 h-8 px-3 text-xs">
+                      <Sparkles className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                      Migration Actions
+                    </ButtonLink>
+                  </Link>
+                </div>
+              </div>
+
+              {/* Before App Updating Daily Groups */}
+              <div className="space-y-8 pl-1">
+                {beforeUpdatingDailyGroups.map((group) => (
+                  <section key={`before-updating-${group.key}`} className="space-y-4">
+                    <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                      <div className="flex h-6 w-6 items-center justify-center rounded bg-purple-500/15 text-purple-600 dark:text-purple-400">
+                        <Calendar className="h-3.5 w-3.5" />
+                      </div>
+                      <h3 className="text-xs font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase">
+                        {group.label}
+                      </h3>
+                      <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                        {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                      </span>
+                      <div className="h-px flex-1 bg-purple-500/20" />
+                    </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.items.map((item) => (
+                        <SavedItemCard
+                          key={`before-updating-${item.itemType}-${item.platformItemId}`}
+                          item={item}
+                          isLocalPending={false}
+                          onRemove={() => toggleItemSaved(item)}
+                          onAddToPlaylist={() => setPlaylistTarget(item)}
+                          onInspectJson={() => setInspectedItem(item)}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Filter produced 0 matches across local, cloud & historical */}
+          {filteredLocalItems.length === 0 && filteredCloudItems.length === 0 && filteredBeforeUpdatingItems.length === 0 && (
+            <Card className="flex flex-col items-center justify-center p-12 text-center">
+              <Layers className="h-8 w-8 text-muted/50 mb-3" />
+              <h3 className="text-sm font-semibold text-foreground">No matching saved items</h3>
+              <p className="mt-1 text-xs text-muted max-w-sm">
+                No items match your active filters ({typeFilter}) or query &ldquo;{searchQuery}&rdquo;.
+              </p>
+            </Card>
+          )}
         </div>
       ) : (
         <Card className="flex flex-col items-center justify-center p-14 text-center">
@@ -369,9 +658,7 @@ export function SavedItemsWorkspace() {
           </div>
           <h3 className="text-base font-semibold text-foreground">No saved items found</h3>
           <p className="mt-1 text-xs text-muted max-w-md">
-            {searchQuery || typeFilter !== "all"
-              ? "No saved items match your filter criteria. Try adjusting your query or filter."
-              : "You haven't saved any YouTube videos, channels, or playlists yet. Bookmark items from Search or Explorers to collect them here with daily logs."}
+            You haven&apos;t saved any YouTube videos, channels, or playlists yet. Bookmark items from Search or Explorers to collect them with daily logs and multi-device cloud synchronization.
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <ButtonLink href="/search" variant="primary" className="h-9 px-4 text-xs font-medium">
@@ -402,7 +689,6 @@ export function SavedItemsWorkspace() {
           item={inspectedItem}
           open={Boolean(inspectedItem)}
           onClose={() => setInspectedItem(null)}
-          title="Saved Item Metadata"
         />
       )}
     </div>
@@ -410,18 +696,21 @@ export function SavedItemsWorkspace() {
 }
 
 /**
- * Unified, professional item card for Saved Items supporting:
+ * Unified item card for Saved Items supporting:
  * - Videos (Standard and Shorts-like)
  * - Channels
  * - Playlists
+ * With explicit LOCAL vs CLOUD badge and Origin Device metadata display.
  */
 function SavedItemCard({
   item,
+  isLocalPending,
   onRemove,
   onAddToPlaylist,
   onInspectJson,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
+  isLocalPending?: boolean;
   onRemove: () => void;
   onAddToPlaylist: () => void;
   onInspectJson: () => void;
@@ -435,6 +724,20 @@ function SavedItemCard({
     : isPlaylist
     ? `/playlists/${item.platformItemId}`
     : `/watch/${item.platformItemId}`;
+
+  const rawItem = item as unknown as Record<string, unknown>;
+  const isLocal =
+    isLocalPending ??
+    (rawItem._localStatus === "LOCAL_PENDING" ||
+      rawItem._localStatus === "PENDING_SYNC" ||
+      (rawItem._syncStatus === "LOCAL" && rawItem._localStatus !== "COMMITTED"));
+
+  const originLabel: string | null =
+    typeof rawItem._originDeviceLabel === "string"
+      ? rawItem._originDeviceLabel
+      : typeof rawItem.originDeviceLabel === "string"
+      ? rawItem.originDeviceLabel
+      : null;
 
   return (
     <Card className="group relative flex flex-col overflow-hidden rounded-xl border border-border/80 bg-surface shadow-xs transition hover:border-border hover:shadow-md">
@@ -456,7 +759,7 @@ function SavedItemCard({
           </div>
         )}
 
-        {/* Type Badge Overlay */}
+        {/* Top-Left: Type Badge Overlay */}
         <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
           {isChannel && (
             <Badge tone="success" className="text-[10px] uppercase font-semibold tracking-wider">
@@ -472,6 +775,26 @@ function SavedItemCard({
             <Badge tone="danger" className="text-[10px] uppercase font-semibold tracking-wider">
               Shorts-like
             </Badge>
+          )}
+        </div>
+
+        {/* Top-Right: LOCAL vs CLOUD vs Before App Updating Status Badge */}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
+          {Boolean((rawItem as any).isBeforeAppUpdating) ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-600 text-white shadow-xs">
+              <Sparkles className="h-3 w-3" />
+              Before App Updating
+            </span>
+          ) : isLocal ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500 text-black shadow-xs">
+              <HardDrive className="h-3 w-3" />
+              LOCAL
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600 text-white shadow-xs">
+              <Cloud className="h-3 w-3" />
+              CLOUD
+            </span>
           )}
         </div>
 
@@ -503,11 +826,26 @@ function SavedItemCard({
         </Link>
 
         {/* Channel or Creator Information */}
-        {item.channelTitle && (
-          <p className="mt-1.5 line-clamp-1 text-xs font-medium text-muted hover:text-foreground transition-colors">
-            {item.channelTitle}
-          </p>
-        )}
+        <div className="mt-1.5 flex items-center justify-between text-xs text-muted">
+          {item.channelTitle ? (
+            <p className="line-clamp-1 font-medium hover:text-foreground transition-colors">
+              {item.channelTitle}
+            </p>
+          ) : (
+            <span />
+          )}
+
+          {/* Origin Device Label */}
+          {originLabel && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] font-medium text-muted/80 bg-surface-muted px-1.5 py-0.5 rounded"
+              title={`Saved from ${String(originLabel)}`}
+            >
+              <Laptop className="h-2.5 w-2.5" />
+              <span className="max-w-[100px] truncate">{String(originLabel)}</span>
+            </span>
+          )}
+        </div>
 
         {/* Metrics Bar */}
         <div className="mt-3 flex items-center gap-3 text-xs text-muted">
@@ -526,6 +864,9 @@ function SavedItemCard({
             </span>
           )}
         </div>
+
+        {/* Expandable and Collapsible Description */}
+        <ExpandableDescription description={item.description} />
 
         {/* Card Footer Actions */}
         <div className="mt-4 pt-3 flex items-center justify-between border-t border-border/60">

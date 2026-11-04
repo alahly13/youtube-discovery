@@ -1,0 +1,195 @@
+{
+  "id": "ls-workspace-savedSearches",
+  "name": "Saved Search Titles & Queries (from workspace store)",
+  "category": "REFERENCES",
+  "mechanism": "localStorage",
+  "storageKey": "youtube-discovery-workspace::savedSearches",
+  "recordCount": 8,
+  "exportedAt": "2026-11-04T15:57:31.840Z",
+  "data": [
+    {
+      "title": "افراح شعبيه ونجوم الرقص الرقص +18",
+      "query": "افراح شعبيه ونجوم الرقص الرقص +18",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افراح شعبيه ونجوم الرقص الرقص +18",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791818298545-s46eo",
+      "createdAt": "2026-10-12T15:18:18.545Z"
+    },
+    {
+      "title": "https://www.dailymotion.com/user/anghamelfayoum",
+      "query": "https://www.dailymotion.com/user/anghamelfayoum",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "https://www.dailymotion.com/user/anghamelfayoum",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791818269043-3p25m",
+      "createdAt": "2026-10-12T15:17:49.043Z"
+    },
+    {
+      "title": "https://www.dailymotion.com/user/lsulli282",
+      "query": "https://www.dailymotion.com/user/lsulli282",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "https://www.dailymotion.com/user/lsulli282",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791818214777-8kaml",
+      "createdAt": "2026-10-12T15:16:54.777Z"
+    },
+    {
+      "title": "راقصة سكسية اووي وحركات مثيرة على المسرح اخر دلع نار نسوان شارع الهرم حصري 2015 راقصات بلقاس",
+      "query": "راقصة سكسية اووي وحركات مثيرة على المسرح اخر دلع نار نسوان شارع الهرم حصري 2015 راقصات بلقاس",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "راقصة سكسية اووي وحركات مثيرة على المسرح اخر دلع نار نسوان شارع الهرم حصري 2015 راقصات بلقاس",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791818013763-d8f23",
+      "createdAt": "2026-10-12T15:13:33.763Z"
+    },
+    {
+      "title": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+      "query": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791817839636-jo0kw",
+      "createdAt": "2026-10-12T15:10:39.636Z"
+    },
+    {
+      "title": "Belly Dancer | رقص شرقي - Dance Pop Egypt منوعات رقص شرقى فى فرح شعبى 2",
+      "query": "Belly Dancer | رقص شرقي - Dance Pop Egypt منوعات رقص شرقى فى فرح شعبى 2",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "Belly Dancer | رقص شرقي - Dance Pop Egypt منوعات رقص شرقى فى فرح شعبى 2",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791815239992-239id",
+      "createdAt": "2026-10-12T14:27:19.992Z"
+    },
+    {
+      "title": "افجر راقصات مصر ونوم ع المسرح 17راقصه وتسونامى احمد ميمو وتامر شريعه وشغل فاجر شاهد بنفسك",
+      "query": "افجر راقصات مصر ونوم ع المسرح 17راقصه وتسونامى احمد ميمو وتامر شريعه وشغل فاجر شاهد بنفسك",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افجر راقصات مصر ونوم ع المسرح 17راقصه وتسونامى احمد ميمو وتامر شريعه وشغل فاجر شاهد بنفسك",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791237753222-6hc36",
+      "createdAt": "2026-10-05T22:02:33.222Z"
+    },
+    {
+      "title": "افجر راقصات مصر ونوم ع المسرح 17راقصه وتسونامى احمد ميمو وتامر شريعه وشغل فاجر شاهد بنفسك",
+      "query": "افجر راقصات مصر ونوم ع المسرح 17راقصه وتسونامى احمد ميمو وتامر شريعه وشغل فاجر شاهد بنفسك",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افجر راقصات مصر ونوم ع المسرح 17راقصه وتسونامى احمد ميمو وتامر شريعه وشغل فاجر شاهد بنفسك",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "id": "search-1791237723094-js9l1",
+      "createdAt": "2026-10-05T22:02:03.094Z"
+    }
+  ]
+}

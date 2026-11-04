@@ -22,6 +22,8 @@ import {
   getPendingOperationsSummary,
   setOperationsStatus,
   pruneCommittedOperations,
+  markEntitiesCommitted,
+  reconcileInterruptedSyncJournal,
   exportLocalDisasterRecoveryBackup,
   acquireSyncLease,
   releaseSyncLease,
@@ -31,6 +33,7 @@ import {
   type PendingOperationsSummary,
   type CanonicalDatasetType,
 } from "../storage/indexeddb-store";
+import { getOriginDeviceMeta } from "../device/device-identity";
 import { cloudHydrationService } from "./cloud-hydration-service";
 
 export type SyncStatus = "IDLE" | "SYNCING" | "SYNCED" | "FAILED" | "OFFLINE";
@@ -84,6 +87,9 @@ class SyncCoordinator {
       this.initTabProtection();
       this.initNetworkListeners();
       this.autoResolveOwnerId();
+      reconcileInterruptedSyncJournal(this.ownerId).catch((err) => {
+        console.warn("[sync] Interrupted sync journal reconciliation check deferred:", err);
+      });
     }
   }
 
@@ -439,14 +445,20 @@ class SyncCoordinator {
         dbCommitStatus: "PENDING",
       });
 
+      const deviceMeta = getOriginDeviceMeta();
+
       const datasetsPayload = Array.from(datasetGroups.entries()).map(([datasetType, ops]) => ({
         datasetType,
         idempotencyKey: `idemp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+        originDeviceId: deviceMeta.originDeviceId,
+        originDeviceLabel: deviceMeta.originDeviceLabel,
         operations: ops.map((op) => ({
           operationId: op.operationId,
           entityId: op.entityId,
           operationType: op.operationType,
           payload: op.payload,
+          originDeviceId: op.originDeviceId || deviceMeta.originDeviceId,
+          originDeviceLabel: op.originDeviceLabel || deviceMeta.originDeviceLabel,
         })),
       }));
 
@@ -455,6 +467,8 @@ class SyncCoordinator {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           batchId,
+          originDeviceId: deviceMeta.originDeviceId,
+          originDeviceLabel: deviceMeta.originDeviceLabel,
           datasets: datasetsPayload,
         }),
       });
@@ -478,10 +492,20 @@ class SyncCoordinator {
           if (r.generationId && !primaryGenerationId) {
             primaryGenerationId = r.generationId;
           }
+          // Mark local entities committed and update catalog/revision
+          if (Array.isArray(r.syncedEntityIds) && r.syncedEntityIds.length > 0) {
+            await markEntitiesCommitted(this.ownerId, r.datasetType as CanonicalDatasetType, r.syncedEntityIds, {
+              generationId: r.generationId,
+              revision: r.revision || 1,
+              syncedAt: new Date().toISOString(),
+              originDeviceId: deviceMeta.originDeviceId,
+              originDeviceLabel: deviceMeta.originDeviceLabel,
+            });
+          }
         }
       }
 
-      // Prune confirmed committed operations from IndexedDB Outbox
+      // ONLY AFTER entity state transition, prune confirmed committed operations from IndexedDB Outbox
       if (committedOpIds.length > 0) {
         await pruneCommittedOperations(committedOpIds);
       } else {

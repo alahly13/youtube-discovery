@@ -32,16 +32,22 @@ export interface SyncDatasetPayload {
   datasetType: "SAVED_ITEMS" | "PLAYLIST" | "SEARCH_HISTORY" | "RESEARCH_QUEUE" | "REFERENCES";
   idempotencyKey: string;
   expectedRevision?: number;
+  originDeviceId?: string;
+  originDeviceLabel?: string;
   operations: Array<{
     operationId: string;
     entityId: string;
     operationType: "UPSERT" | "APPEND" | "DELETE";
     payload: Record<string, unknown>;
+    originDeviceId?: string;
+    originDeviceLabel?: string;
   }>;
 }
 
 export interface SaveAllRequestBody {
   batchId?: string;
+  originDeviceId?: string;
+  originDeviceLabel?: string;
   datasets: SyncDatasetPayload[];
 }
 
@@ -71,6 +77,7 @@ export async function POST(request: Request) {
       recordsCount: number;
       partsCount: number;
       syncedOperationIds: string[];
+      syncedEntityIds: string[];
     }> = [];
 
     // Resolve or find authoritative user profile in PostgreSQL
@@ -207,6 +214,9 @@ export async function POST(request: Request) {
             const nextRevision = Number(ds.current_revision) + 1;
             committedRevision = nextRevision;
 
+            const batchOriginDeviceId = datasetInput.originDeviceId || body.originDeviceId || null;
+            const batchOriginDeviceLabel = datasetInput.originDeviceLabel || body.originDeviceLabel || null;
+
             // Record sync batch
             const syncBatch = await tx.saveSyncBatch.create({
               data: {
@@ -216,6 +226,8 @@ export async function POST(request: Request) {
                 request_sha256: crypto.createHash("sha256").update(rawBody).digest("hex"),
                 expected_revision: ds.current_revision,
                 committed_revision: BigInt(nextRevision),
+                origin_device_id: batchOriginDeviceId,
+                origin_device_label: batchOriginDeviceLabel,
                 state: "COMMITTED",
               },
             });
@@ -232,6 +244,8 @@ export async function POST(request: Request) {
                 total_records: generationDesc.totalRecords,
                 total_bytes: BigInt(generationDesc.totalBytes),
                 aggregate_sha256: generationDesc.aggregateSha256,
+                origin_device_id: batchOriginDeviceId,
+                origin_device_label: batchOriginDeviceLabel,
                 committed_at: new Date(),
               },
             });
@@ -271,6 +285,8 @@ export async function POST(request: Request) {
                   });
                 } else if (op.payload.title) {
                   const p = op.payload;
+                  const itemOriginDeviceId = (p._originDeviceId as string) || (p.originDeviceId as string) || op.originDeviceId || batchOriginDeviceId;
+                  const itemOriginDeviceLabel = (p._originDeviceLabel as string) || (p.originDeviceLabel as string) || op.originDeviceLabel || batchOriginDeviceLabel;
                   await tx.savedItemIndex.upsert({
                     where: {
                       id: (p.id as string) || crypto.randomUUID(),
@@ -285,12 +301,16 @@ export async function POST(request: Request) {
                       thumbnail_url: p.thumbnailUrl ? String(p.thumbnailUrl) : null,
                       is_shorts_like: Boolean(p.isShortsLike || p.entityType === "SHORTS"),
                       views_count: p.viewCount ? BigInt(p.viewCount as number) : null,
+                      origin_device_id: itemOriginDeviceId,
+                      origin_device_label: itemOriginDeviceLabel,
                       generation_id: gen.id,
                     },
                     update: {
                       title: String(p.title || ""),
                       channel_title: p.channelTitle ? String(p.channelTitle) : null,
                       thumbnail_url: p.thumbnailUrl ? String(p.thumbnailUrl) : null,
+                      origin_device_id: itemOriginDeviceId,
+                      origin_device_label: itemOriginDeviceLabel,
                       generation_id: gen.id,
                     },
                   });
@@ -310,6 +330,7 @@ export async function POST(request: Request) {
         recordsCount: generationDesc.totalRecords,
         partsCount: generationDesc.parts.length,
         syncedOperationIds: operations.map((op) => op.operationId),
+        syncedEntityIds: operations.map((op) => op.entityId),
       });
     }
 

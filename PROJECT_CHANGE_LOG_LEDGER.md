@@ -3818,3 +3818,125 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+---
+
+## 2026-11-04 (Complete Playlist Management System, Full-Stack Integration & Legacy Migration)
+
+### Date/time
+
+2026-11-04 ~19:30 UTC
+
+### Agent/model if known
+
+Antigravity (Google DeepMind)
+
+### Task summary
+
+Completed the full-stack Playlist Management System, description separation, legacy migration workflow, part records inspector, and full verification test suite:
+1. **Full-Stack Playlist Database Service (`src/lib/playlists/playlist-db-service.ts`)**:
+   - Integrated PostgreSQL models `user_playlists`, `user_playlist_groups`, and `user_playlist_entries` with multi-user isolation.
+   - Built deterministic UUID resolution (`toPlaylistUuid`, `toGroupUuid`, `toEntryUuid`) mapping string IDs to RFC 4122 UUIDs idempotently.
+   - Built transactional synchronization (`syncPlaylistToDb`), deletion (`deletePlaylistFromDb`), and index listing (`listPlaylistsFromDb`) with graceful offline fallback.
+2. **Updated API Routes (`/api/playlists`, `/api/playlists/[id]`)**:
+   - `GET /api/playlists` queries PostgreSQL first with fallback to R2 archive.
+   - `POST /api/playlists` synchronizes new playlists to both R2 archive and PostgreSQL.
+   - `PUT /api/playlists/[id]` supports both meta patch and full manifest replace, updating both R2 and PostgreSQL.
+   - `DELETE /api/playlists/[id]` removes playlist and cascaded groups/entries from both R2 and PostgreSQL without touching Saved Items.
+3. **Multiline Description Support & Strict Field Separation**:
+   - Created reusable `<ExpandableDescription>` component with progressive disclosure ("Show more / Show less") preserving all whitespace, paragraphs, and indentation.
+   - Upgraded `PlaylistCard`, `PlaylistDetailWorkspace`, and `AddToPlaylistDialog` to support multiline playlist descriptions.
+   - Strictly decoupled playlist descriptions (`manifest.playlist.description`) from YouTube entity descriptions (`item.snapshot.description`) so neither ever overwrites the other.
+4. **Duplicate Prevention & Non-Destructive Item Operations**:
+   - Added canonical key duplicate checking (`canonicalYoutubeKey(kind, platformItemId)`) in playlist operations with user-facing warnings.
+   - Removal of an item from a playlist deletes playlist membership only, with zero mutation of global Saved Items (`SAVED_ITEMS`).
+5. **Legacy Data Migration & Part Records Inspector**:
+   - Created `src/lib/migration/legacy-migration-service.ts` to scan local browser storage, normalize 5 canonical datasets, deduplicate strictly, and preserve zero-value stats.
+   - Created `src/app/api/migration/upload/route.ts` to upload migrated legacy data under `before-app-updating` in Cloudflare R2.
+   - Created `src/components/migration/other-actions-workspace.tsx` and routes `/other-actions` and `/dashboard/other-actions`.
+   - Created `src/app/api/manifests/part-records/route.ts` and Part Records Inspector modal in `ManifestStorageExplorer`.
+6. **Automated Verification Suites**:
+   - Created `scripts/test-complete-playlist-system.mjs` (30 unit & integration tests, all passed).
+   - Created `scripts/test-legacy-migration-and-item-cards.mjs` (14 unit & integration tests, all passed).
+
+### Reason/root cause
+
+User requested a complete, production-grade playlist management system integrated with PostgreSQL and R2, multiline description support with strict separation from video descriptions, duplicate prevention, non-destructive removal, legacy data reorganization, and clear deployment instructions.
+
+### Files changed
+
+- `src/lib/playlists/playlist-db-service.ts` (created PostgreSQL playlist sync service with deterministic UUID mapping and offline fallback)
+- `src/app/api/playlists/route.ts` (synchronized GET and POST with PostgreSQL and R2)
+- `src/app/api/playlists/[id]/route.ts` (synchronized PUT and DELETE with PostgreSQL and R2)
+- `src/components/youtube/expandable-description.tsx` (created multiline description disclosure component)
+- `src/components/library/playlist-manager-workspace.tsx` (added multiline description input and expandable cards)
+- `src/components/library/playlist-detail-workspace.tsx` (added multiline description editor, expandable playlist desc, and expandable item desc)
+- `src/components/library/add-to-playlist-dialog.tsx` (added inline multiline description and duplicate prevention notice)
+- `src/lib/storage/canonical-paths.ts` (added before-app-updating path support and parsing)
+- `src/app/api/manifests/tree/route.ts` (indexed before-app-updating prefix)
+- `src/app/api/manifests/part-records/route.ts` (created part inspection endpoint)
+- `src/components/manifests/manifest-storage-explorer.tsx` (integrated part records inspector modal and before-app-updating badges)
+- `src/lib/migration/legacy-migration-service.ts` (created non-destructive legacy scan and normalization service)
+- `src/app/api/migration/upload/route.ts` (created legacy migration R2 upload endpoint)
+- `src/components/migration/other-actions-workspace.tsx` (created migration workspace)
+- `src/app/other-actions/page.tsx` (created public route)
+- `src/app/dashboard/other-actions/page.tsx` (created dashboard route)
+- `src/components/layout/navigation.tsx` (added other-actions navigation link)
+- `src/components/saved/saved-items-workspace.tsx` (added Before App Updating section)
+- `scripts/test-complete-playlist-system.mjs` (created 30-assertion playlist test suite)
+- `scripts/test-legacy-migration-and-item-cards.mjs` (created 14-assertion migration test suite)
+- `package.json` (registered test:playlists and test:legacy-migration scripts)
+- `youtube_discovery_ledger.md` (updated current-state ledger and verification results)
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended this dated entry)
+
+### Architecture impact
+
+Consolidates playlist management across all three tiers:
+1. Client: Zustand cache (`src/lib/state/user-playlists-store.ts`) + UI workspaces with multiline description support.
+2. Object Storage: Cloudflare R2 private bucket (`new-youtube-discovery-private`) via Worker / disk archive.
+3. Database: Supabase PostgreSQL via Prisma 7 (`user_playlists`, `user_playlist_groups`, `user_playlist_entries`) with deterministic UUID mapping and offline fallback.
+
+### Environment impact
+
+None. No new environment variables required.
+
+### Database/migration impact
+
+Used existing canonical Prisma models (`user_playlists`, `user_playlist_groups`, `user_playlist_entries`) from migration 1 (`20261102000000_canonical_v1_4_foundation`). No new database migration was required.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run typecheck`: Passed with exit code 0 (zero errors).
+- `npm run test:playlists`: Passed with exit code 0 (30/30 tests passed across all 7 test groups).
+- `npm run test:legacy-migration`: Passed with exit code 0 (14/14 tests passed across all 4 test groups).
+- `node scripts/test-unified-saved-lifecycle.mjs`: Passed with exit code 0 (25/25 tests passed).
+- `node scripts/test-complete-storage-pipeline.mjs`: Passed with exit code 0 (10/10 tests passed).
+- `node scripts/db-migrations/cli.mjs --mode=local`: Passed with exit code 0 (5/5 local migrations validated).
+
+### Blocked checks, if any
+
+Direct connection to remote Supabase DB was unreachable in this offline environment (`getaddrinfo ENOTFOUND db.qrsjlyminkpfcqpsnrxj.supabase.co`), which was handled transparently by the offline fallback mechanism in `playlist-db-service.ts`.
+
+### Remaining risks/limitations
+
+None.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No new migrations required. All models pre-exist in migration 1.
+
+### Whether `db:apply` was run
+
+No.

@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-04 (Complete Storage Pipeline Integration, Cloudflare Workers & R2 Hardening, Decoupling and Deletion of Legacy Blob Code, 100% Client-Local 'I Will Search For' Research Reminders Feature, Tab Unload Protection, and Automated Pipeline Test Suite)
+Last updated: 2026-11-04 (Complete Playlist Management System, Full-Stack Database & R2 Integration, Multiline Description Preservation & Isolation, Legacy Data Migration Engine, Part Records Inspector & Comprehensive Automated Test Suite)
 
 ## Project Identity And Mission
 
@@ -95,9 +95,10 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/dashboard/settings/security`: **FULL DEDICATED** Account Security & Administrator Password Change workspace, providing accessible show/hide eye toggle controls for Current Password, New Password, and Confirm New Password, password strength validation, and direct in-app password update via Supabase Auth without email dependencies.
 - `/`: dashboard with product posture, system boundaries, quick actions, and manifest overview.
 - `/saved`: **FULL DEDICATED** Saved Items page supporting all 3 YouTube entity types (Videos, Channels, Playlists) with **Daily Grouping** by calendar date (e.g., "November 2, 2026", newer first, clear visual separators), type filters (All, Videos, Channels, Playlists), search, sort, add-to-playlist actions, and **Phase 1.6 UI Readability Upgrades** (spacious 3-column responsive grid `grid gap-5 sm:grid-cols-2 lg:grid-cols-3`, crisp 16:9 thumbnail containers, centered circular channel artwork, and prominent 2-line title typography `line-clamp-2 text-base font-bold`).
-- `/playlist-manager`: **FULL DEDICATED** Personal Playlist Manager workspace for creating, editing, renaming, deleting, and reviewing personal playlists, featuring prominent video thumbnail galleries, bold multi-line titles (`line-clamp-2 text-base font-bold`), item count badges, section badges, and direct links to `/saved/[playlistId]`.
+- `/playlist-manager`: **FULL DEDICATED** Personal Playlist Manager workspace for creating, editing, renaming, deleting, and reviewing personal playlists, featuring multiline description support with expandable progressive disclosure, prominent video thumbnail galleries, bold multi-line titles (`line-clamp-2 text-base font-bold`), item count badges, section badges, full database synchronization (`user_playlists`), and direct links to `/saved/[playlistId]`.
 - `/saved-searches`: **FULL DEDICATED** Saved Searches workspace for pinned search titles, quick rerun links (`/search?q=...`), copyable titles with enhanced readability (`line-clamp-2 text-base font-bold`), and research notes.
-- `/saved/[playlistId]`: **FULL** personal-playlist workspace — enlarged media thumbnails (`h-20 w-36 sm:h-22 sm:w-40`), multi-line wrapped titles (`line-clamp-2 text-base font-bold`), in-playlist FlexSearch search, content-type/date/views filters, 12 transient sort modes plus canonical manual order, user sections/groups (create/rename/note/collapse/reorder/delete keep-or-delete), custom items/notes, HTML5 drag-and-drop with Move Up/Down alternatives, multi-select bulk move/copy/group/remove, Undo, and self-contained JSON export. Zero YouTube API calls.
+- `/saved/[playlistId]`: **FULL** personal-playlist workspace — enlarged media thumbnails (`h-20 w-36 sm:h-22 sm:w-40`), multi-line wrapped titles (`line-clamp-2 text-base font-bold`), in-playlist FlexSearch search, content-type/date/views filters, 12 transient sort modes plus canonical manual order, user sections/groups (create/rename/note/collapse/reorder/delete keep-or-delete), custom items/notes, HTML5 drag-and-drop with Move Up/Down alternatives, multi-select bulk move/copy/group/remove, Undo, and self-contained JSON export. Includes multiline editable playlist description and item-level expandable description with strict description isolation. Zero YouTube API calls.
+- `/other-actions` / `/dashboard/other-actions`: **FULL DEDICATED** Legacy Data Migration & Other Actions workspace allowing scanning, previewing, and migrating legacy browser storage records into canonical datasets under `before-app-updating` in Cloudflare R2 and reviewing historical archives.
 - `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control. The three query-utility buttons (Shuffle Words, Trim Spaces, Shuffle One Word) rewrite the visible input ONLY — they never submit, call the API, or record history; the user presses Search explicitly.
 - `/search-guide`: static Search Guide 2026 reference (documented vs experimental vs structured-filter labels, Arabic explanations, copyable examples, official doc links).
 - `/ai-search`: AI Search / AI Discovery workspace and safety contract.
@@ -164,12 +165,14 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `POST /api/youtube/keys`: registers a new custom YouTube API key server-side.
 - `POST /api/youtube/keys/select`: selects the active YouTube API key for provider requests.
 - `DELETE /api/youtube/keys/[keyId]`: deletes a custom key with safe fallback to environment key.
-- `GET /api/playlists`: lightweight user-playlist index (never full contents).
-- `POST /api/playlists`: creates a user playlist + its dedicated manifest file (Zod-validated).
+- `GET /api/playlists`: lightweight user-playlist index querying PostgreSQL first (`user_playlists`) with fallback to R2/disk archive.
+- `POST /api/playlists`: creates a user playlist with validated name and multiline description, synchronizing to both R2 archive and PostgreSQL `user_playlists`.
 - `GET /api/playlists/[id]`: full self-contained playlist manifest; 404 recovery object for missing/corrupt files.
-- `PUT /api/playlists/[id]`: meta patch (`{name?, description?}`) or full-manifest replace (Zod-validated, atomic write).
-- `DELETE /api/playlists/[id]`: removes only that playlist's file; global saved entities untouched.
+- `PUT /api/playlists/[id]`: meta patch (`{name?, description?}`) or full-manifest replace, synchronizing to R2 archive and PostgreSQL (`user_playlists`, `user_playlist_groups`, `user_playlist_entries`).
+- `DELETE /api/playlists/[id]`: removes playlist record from PostgreSQL and R2; global saved entities untouched.
 - Playlist manifests persist permanently (no TTL, independent of `SEARCH_STORAGE_TTL_HOURS`).
+- `GET /api/manifests/part-records`: parses and returns individual record previews from generation part envelopes (`parts/part-XXXXXX.json`) with owner isolation and R2 download.
+- `POST /api/migration/upload`: uploads reorganized legacy data under `before-app-updating` in Cloudflare R2, generating canonical generation manifest, parts, and registering with `storage_datasets`.
 - `GET /api/search-storage`: returns lightweight search archive index and TTL metadata for fast History filtering.
 - `POST /api/search-storage`: archives complete search record with full rawJson to dedicated disk file.
 - `DELETE /api/search-storage`: clears search archive.
@@ -362,6 +365,14 @@ Forbidden public secrets:
 - `src/components/library/playlist-detail-workspace.tsx`: individual playlist workspace (search/filter/sort/groups/drag-drop/notes/export/undo).
 - `src/app/saved/[playlistId]/page.tsx`: dedicated user-playlist page (distinct from YouTube explorer `/playlists/[playlistId]`).
 - `src/app/api/playlists/route.ts` + `src/app/api/playlists/[id]/route.ts`: playlist index/manifest CRUD API.
+- `src/lib/playlists/playlist-db-service.ts`: authoritative PostgreSQL synchronization service for user playlists (`user_playlists`, `user_playlist_groups`, `user_playlist_entries`) with deterministic UUID resolution, multiline description preservation, and transparent offline fallback.
+- `src/components/youtube/expandable-description.tsx`: reusable multiline description component with progressive disclosure (Show more / Show less) and whitespace preservation.
+- `src/lib/migration/legacy-migration-service.ts`: legacy browser data scan and canonical dataset normalization engine with strict deduplication and zero-mutation guarantees.
+- `src/components/migration/other-actions-workspace.tsx`: dedicated workspace for migrating local legacy data and reviewing before-app-updating archives.
+- `src/app/api/manifests/part-records/route.ts`: part records inspection endpoint.
+- `src/app/api/migration/upload/route.ts`: legacy upload endpoint targeting `before-app-updating`.
+- `scripts/test-complete-playlist-system.mjs`: 30-assertion automated test suite for playlist creation, multiline description preservation, UUID mapping, deduplication, and non-destructive removal.
+- `scripts/test-legacy-migration-and-item-cards.mjs`: 14-assertion automated test suite for legacy data migration, item cards, and canonical before-app-updating storage paths.
 - `src/types/library.ts`: discriminated user-playlist data model (youtube video/shorts/yt-playlist/channel + custom), groups, manifest v1, canonical video≡shorts identity.
 - `src/lib/validation/library-schemas.ts`: Zod contracts for playlist API (no secrets accepted/echoed).
 - `src/lib/playlists/playlist-archive.ts`: server-only file archive (`data/playlists/`, atomic writes, lightweight index, no TTL).
@@ -553,4 +564,14 @@ Latest verification results on 2026-11-04 (Cloud Hydration, Canonical Storage Pa
 - 9-state Cloud Hydration recovery engine: verified with SHA-256 integrity, outbox safety, and automatic reactive UI refresh.
 - 12-hour scheduler: verified with zero-op bypass, Web Locks + IndexedDB mutex fallback, 60-second ticker, and exponential backoff retry.
 - Storage Reconciliation: `GET /api/manifests/reconcile` verified with PostgreSQL and R2 parity detection.
+
+Latest verification results on 2026-11-04 (Complete Playlist Management System, Full-Stack Database & R2 Integration, Description Separation & Legacy Migration):
+
+- `npm run typecheck`: passed (0 errors across the entire application).
+- `npm run test:playlists`: passed (30/30 assertions pass across all 7 test groups covering multiline description preservation, deterministic UUID mapping, duplicate prevention, non-destructive removal, reordering, and offline fallback).
+- `npm run test:legacy-migration`: passed (14/14 assertions pass across all 4 test groups covering canonical before-app-updating paths, zero-value metadata preservation, deduplication, and non-destructive scan).
+- `npm run test:saved-lifecycle`: passed (25/25 assertions pass).
+- `node scripts/test-complete-storage-pipeline.mjs`: passed (10/10 assertions pass).
+- Full database integration: `playlist-db-service.ts` synchronizes with Prisma models `user_playlists`, `user_playlist_groups`, and `user_playlist_entries` with multi-user isolation and offline fallback.
+
 

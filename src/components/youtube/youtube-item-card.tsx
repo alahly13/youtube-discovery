@@ -5,6 +5,7 @@ import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { AddToPlaylistDialog } from "@/components/library/add-to-playlist-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ExpandableDescription } from "@/components/youtube/expandable-description";
 import { useResearchReminders } from "@/lib/storage/use-research-reminders";
 import {
   formatCompactCount,
@@ -217,6 +218,9 @@ function VideoCard({
           />
         </div>
 
+        {/* Expandable and Collapsible Description */}
+        <ExpandableDescription description={item.description} />
+
         {/* Actions — pushed to bottom */}
         <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
           <Button
@@ -365,12 +369,8 @@ function ChannelCard({
           </div>
         </div>
 
-        {/* Description excerpt */}
-        {item.description && (
-          <p className="line-clamp-2 text-xs leading-relaxed text-muted">
-            {item.description}
-          </p>
-        )}
+        {/* Expandable and Collapsible Description */}
+        <ExpandableDescription description={item.description} />
 
         {/* Channel stats */}
         <div className="flex flex-wrap gap-1.5">
@@ -534,12 +534,8 @@ function PlaylistCard({
           </p>
         </div>
 
-        {/* Description */}
-        {item.description && (
-          <p className="line-clamp-2 text-xs leading-relaxed text-muted">
-            {item.description}
-          </p>
-        )}
+        {/* Expandable and Collapsible Description */}
+        <ExpandableDescription description={item.description} />
 
         {/* Stats */}
         <div className="flex flex-wrap gap-1.5">

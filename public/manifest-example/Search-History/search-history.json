@@ -1,0 +1,3531 @@
+{
+  "id": "ls-workspace-searchHistory",
+  "name": "Search History Records (from workspace store)",
+  "category": "SEARCH_HISTORY",
+  "mechanism": "localStorage",
+  "storageKey": "youtube-discovery-workspace::searchHistory",
+  "recordCount": 100,
+  "exportedAt": "2026-11-04T15:57:31.840Z",
+  "data": [
+    {
+      "id": "search-1793573972278-bpgipt",
+      "title": "من فرح حسن نجم شهد وكركر والسيد عوض بيرقصوا حسن نجم.mp4",
+      "query": "من فرح حسن نجم شهد وكركر والسيد عوض بيرقصوا حسن نجم.mp4",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "من فرح حسن نجم شهد وكركر والسيد عوض بيرقصوا حسن نجم.mp4",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 74,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_f8940752-c7df-4bc1-9cec-dd22efabb0d3",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/7GWZxK7ng0Y/sddefault.jpg",
+        "https://i.ytimg.com/vi/4BgT23_0vYk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/41ZiaGjYqxI/sddefault.jpg",
+        "https://i.ytimg.com/vi/J1idmDjYcLc/sddefault.jpg"
+      ],
+      "timestamp": "2026-11-01T22:59:32.353Z"
+    },
+    {
+      "id": "search-1793405859378-fmlj5a",
+      "title": "فرح ابراهيم عوض بلمنصورة",
+      "query": "فرح ابراهيم عوض بلمنصورة",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرح ابراهيم عوض بلمنصورة",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 73,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_1cfebbf1-c33b-4694-8f8c-f5c9580c619d",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Q2Wl7Cd99gM/hqdefault.jpg",
+        "https://i.ytimg.com/vi/-rKJrHDmrkg/hqdefault.jpg",
+        "https://i.ytimg.com/vi/F30cLnlQwcY/hqdefault.jpg",
+        "https://i.ytimg.com/vi/NMUiT6I2de0/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-31T00:17:39.432Z"
+    },
+    {
+      "id": "search-1793405103033-m3ke5q",
+      "title": "رقص الموزه والحميدى.mp4",
+      "query": "رقص الموزه والحميدى.mp4",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص الموزه والحميدى.mp4",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 33,
+      "videoCount": 33,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_895271fd-332a-4a09-8da0-70c6097dcf2a",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/9Wqcu4cOVLU/hqdefault.jpg",
+        "https://i.ytimg.com/vi/XH06RsmsxII/hqdefault.jpg",
+        "https://i.ytimg.com/vi/vsFGm1CQ5P4/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/k_mIIIyb5QY/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-31T00:05:03.080Z"
+    },
+    {
+      "id": "search-1793404441448-epwa0n",
+      "title": "افراح ولد ابو عرام دمياط",
+      "query": "افراح ولد ابو عرام دمياط",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افراح ولد ابو عرام دمياط",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 61,
+      "videoCount": 57,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_e60a0a3d-c75d-4b81-9ab9-d3a9fe6616a9",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/nRi48aeimPA/hqdefault.jpg",
+        "https://i.ytimg.com/vi/Lscg5Qed2ZE/hqdefault.jpg",
+        "https://i.ytimg.com/vi/JQY3nma-wEE/hqdefault.jpg",
+        "https://i.ytimg.com/vi/FmrK0FfT_xg/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-30T23:54:01.494Z"
+    },
+    {
+      "id": "search-1793396536087-1s0085",
+      "title": "فيديو٠٥٥.mp4",
+      "query": "فيديو٠٥٥.mp4",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فيديو٠٥٥.mp4",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 73,
+      "videoCount": 72,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_e4e00d92-7017-4f7e-a8a2-8b47c63790f0",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/qbVQHzew2a8/hqdefault.jpg",
+        "https://i.ytimg.com/vi/vJSJ-nBy9YY/hqdefault.jpg",
+        "https://i.ytimg.com/vi/ZfcW6AU3taI/hqdefault.jpg",
+        "https://yt3.ggpht.com/ytc/AIdro_lDbWdUF_g_YxIZXIxsilkykQSBYdZYLUda5OL456kqLZs=s800-c-k-c0x00ffffff-no-rj"
+      ],
+      "timestamp": "2026-10-30T21:42:16.540Z"
+    },
+    {
+      "id": "search-1793395923435-azuj4w",
+      "title": " الفنان عماد السيد مش باقي غير اشواقي شيبه الجيزة",
+      "query": " الفنان عماد السيد مش باقي غير اشواقي شيبه الجيزة",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": " الفنان عماد السيد مش باقي غير اشواقي شيبه الجيزة",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 18,
+      "videoCount": 18,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_f976a1d6-e9ee-490c-8a22-4794058a989d",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/IA5ChtvF1XU/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/qbOXWV1m2k8/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/2vpDBuf3CO8/sddefault.jpg",
+        "https://i.ytimg.com/vi/qFl8H4qfo5I/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-30T21:32:03.465Z"
+    },
+    {
+      "id": "search-1793394842859-ddpknj",
+      "title": "البوب إيهاب الشعراوى والنجم احمد كركر",
+      "query": "البوب إيهاب الشعراوى والنجم احمد كركر",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "البوب إيهاب الشعراوى والنجم احمد كركر",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 60,
+      "videoCount": 59,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_10c2a118-7fa9-486c-b9d6-fd99b68ee1b5",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/yhPZbN2TBNQ/sddefault.jpg",
+        "https://i.ytimg.com/vi/-U_PCgkXFTw/sddefault.jpg",
+        "https://i.ytimg.com/vi/Q8qO1RAINTw/hqdefault.jpg",
+        "https://i.ytimg.com/vi/jvMrsD_dZVI/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-30T21:14:02.912Z"
+    },
+    {
+      "id": "search-1793393101453-csio1i",
+      "title": "اسمع اغنية (بما أن القلوب سودا) الفنان عمرو زكي من افراح مدينة نصر",
+      "query": "اسمع اغنية (بما أن القلوب سودا) الفنان عمرو زكي من افراح مدينة نصر",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "اسمع اغنية (بما أن القلوب سودا) الفنان عمرو زكي من افراح مدينة نصر",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 5,
+      "videoCount": 4,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_7c27f027-78d6-45f9-a63d-0950f05957ac",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/bOCM4WYhqJ8/maxresdefault.jpg",
+        "https://yt3.ggpht.com/ytc/AIdro_nL-BgvOUhD9AAs2GR5QC97qYESxK8njdx88tDFBoo=s800-c-k-c0x00ffffff-no-rj",
+        "https://i.ytimg.com/vi/rJvlWrRw1o0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/sICd8bLn3ys/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-30T20:45:01.505Z"
+    },
+    {
+      "id": "search-1793393079496-cty7f7",
+      "title": "فرح عادل اغنيه جااااااااااااااااااااامده اوى بواسطه محمد ايجو",
+      "query": "فرح عادل اغنيه جااااااااااااااااااااامده اوى بواسطه محمد ايجو",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرح عادل اغنيه جااااااااااااااااااااامده اوى بواسطه محمد ايجو",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 2,
+      "videoCount": 2,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_131fb903-eecd-4a72-9261-f7ba1317f0bd",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/HukbHh-gpUs/hqdefault.jpg",
+        "https://i.ytimg.com/vi/kf2psoCH-N0/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-30T20:44:39.514Z"
+    },
+    {
+      "id": "search-1793301898108-s6bhvf",
+      "title": "موعود محمدزكي والفنانه نورا |Mohamed Sabry|",
+      "query": "موعود محمدزكي والفنانه نورا |Mohamed Sabry|",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "موعود محمدزكي والفنانه نورا |Mohamed Sabry|",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 27,
+      "videoCount": 27,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_f3e46f13-4574-4846-be56-24d0e7f61102",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/DC2aMXeRDNM/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/tL8ujAg7MGE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/CNAPTBbCyP8/sddefault.jpg",
+        "https://i.ytimg.com/vi/kwvAg-PIVfY/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T19:24:58.139Z"
+    },
+    {
+      "id": "search-1793301511612-znslp3",
+      "title": "مزماربلدي الريس هاني حمزه افراح مدينه سخا",
+      "query": "مزماربلدي الريس هاني حمزه افراح مدينه سخا",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "مزماربلدي الريس هاني حمزه افراح مدينه سخا",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 74,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_41b13f46-6796-48a1-899c-21fae23351bf",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/WCTQNjFiSrg/hqdefault.jpg",
+        "https://i.ytimg.com/vi/8ZczOuIoqHk/hqdefault.jpg",
+        "https://i.ytimg.com/vi/7PHDp3si-X8/hqdefault.jpg",
+        "https://i.ytimg.com/vi/NVAMvf7Z7Sk/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T19:18:31.673Z"
+    },
+    {
+      "id": "search-1793300981346-p1i21s",
+      "title": "لسة فاكر حسن ضيف حظ الغلابه",
+      "query": "لسة فاكر حسن ضيف حظ الغلابه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "لسة فاكر حسن ضيف حظ الغلابه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 10,
+      "videoCount": 10,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_eaea3571-c1cc-43c1-9c75-9732c70c81a4",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/ihxenUQfOMw/sddefault.jpg",
+        "https://i.ytimg.com/vi/WFFsiBiZdkI/hqdefault.jpg",
+        "https://i.ytimg.com/vi/R8MYo6Z7frE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/LX3vwZ78eZ0/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T19:09:41.372Z"
+    },
+    {
+      "id": "search-1793300930185-4pgyen",
+      "title": "للكبار فقط+ وائل المرسى 🎹والدلوعه🎤 وسلام كركركرشوية حظ💥 فى كفرالشيخ 💥",
+      "query": "للكبار فقط+ وائل المرسى 🎹والدلوعه🎤 وسلام كركركرشوية حظ💥 فى كفرالشيخ 💥",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "للكبار فقط+ وائل المرسى 🎹والدلوعه🎤 وسلام كركركرشوية حظ💥 فى كفرالشيخ 💥",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 3,
+      "videoCount": 3,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_ec1bf6c6-b793-4282-8fb6-637aee05b33b",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/ymzi2EW1VoQ/hqdefault.jpg",
+        "https://i.ytimg.com/vi/GStP_kbZ_Hg/hqdefault.jpg",
+        "https://i.ytimg.com/vi/dgZ_JPpmJV0/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T19:08:50.217Z"
+    },
+    {
+      "id": "search-1793300172733-9ixh7m",
+      "title": "الموسيقار محمدسمير واللورد وائل المرسى مولعين 01006889272",
+      "query": "الموسيقار محمدسمير واللورد وائل المرسى مولعين 01006889272",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار محمدسمير واللورد وائل المرسى مولعين 01006889272",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 46,
+      "videoCount": 44,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_9c3c74ca-37d3-4f81-9803-8f4a658ddb90",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/dI7hxv43RVs/sddefault.jpg",
+        "https://i.ytimg.com/vi/V_jjtk1AQtE/sddefault.jpg",
+        "https://i.ytimg.com/vi/I6vIvfEMzT8/sddefault.jpg",
+        "https://i.ytimg.com/vi/2ePpWhSM_e4/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:56:12.772Z"
+    },
+    {
+      "id": "search-1793300159363-lfia97",
+      "title": "الموسيقار محمدسمير 🎶واللورد وائل المرسى مولعين🔥 فى الفرح شغل جامد 01006889272",
+      "query": "الموسيقار محمدسمير 🎶واللورد وائل المرسى مولعين🔥 فى الفرح شغل جامد 01006889272",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار محمدسمير 🎶واللورد وائل المرسى مولعين🔥 فى الفرح شغل جامد 01006889272",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 1,
+      "videoCount": 1,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_bb3e8a54-ed95-4a31-b13f-91613735beb9",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Lhvpy_KgcXU/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:55:59.383Z"
+    },
+    {
+      "id": "search-1793299970854-ijc4sw",
+      "title": "فرجة سيد نظرية وصبرى نظرية بشبرا الخيمة   YouTube 8 New1",
+      "query": "فرجة سيد نظرية وصبرى نظرية بشبرا الخيمة   YouTube 8 New1",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرجة سيد نظرية وصبرى نظرية بشبرا الخيمة   YouTube 8 New1",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 25,
+      "videoCount": 23,
+      "channelCount": 0,
+      "playlistCount": 2,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_a65136bc-cf00-4095-bfa0-e085ea36d2e4",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/95mLmAcWOKc/hqdefault.jpg",
+        "https://i.ytimg.com/vi/prol-47OWwQ/hqdefault.jpg",
+        "https://i.ytimg.com/vi/Fen-psMY5Gw/hqdefault.jpg",
+        "https://i.ytimg.com/vi/2ZxYCRIJ-BQ/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:52:50.888Z"
+    },
+    {
+      "id": "search-1793299716031-71zoek",
+      "title": "ايمن الشوري والنجم تامر حسن من فرحة فؤش كوم الحجر الحامول",
+      "query": "ايمن الشوري والنجم تامر حسن من فرحة فؤش كوم الحجر الحامول",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "ايمن الشوري والنجم تامر حسن من فرحة فؤش كوم الحجر الحامول",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 22,
+      "videoCount": 21,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_20f01722-2e28-46a0-be7a-2eb188c32fbc",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/sNDnK2lfejA/hqdefault.jpg",
+        "https://i.ytimg.com/vi/IHSkXxyIjwU/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/FNMoD42StN8/sddefault.jpg",
+        "https://i.ytimg.com/vi/kg650BtjBVE/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:48:36.061Z"
+    },
+    {
+      "id": "search-1793299265570-1diqu6",
+      "title": "احمد شيبه من افراح النجم حسن الصعيدى 01224937149",
+      "query": "احمد شيبه من افراح النجم حسن الصعيدى 01224937149",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "احمد شيبه من افراح النجم حسن الصعيدى 01224937149",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 14,
+      "videoCount": 13,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_cfff1c88-89ce-4e46-93e7-f5d4192ade1a",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/lTWTKjyG0WU/sddefault.jpg",
+        "https://i.ytimg.com/vi/OehH-6Bmmt4/hqdefault.jpg",
+        "https://i.ytimg.com/vi/CvbeQGNj4hM/sddefault.jpg",
+        "https://i.ytimg.com/vi/U_EF5kf-Tjo/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:41:05.594Z"
+    },
+    {
+      "id": "search-1793299080013-n7cfa0",
+      "title": "مولد ابراهيم هندى ابو تريكه النجم اسماعيل الليثى بنوته حلوه تحياتى فيديو ميشو 01060857174",
+      "query": "مولد ابراهيم هندى ابو تريكه النجم اسماعيل الليثى بنوته حلوه تحياتى فيديو ميشو 01060857174",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "مولد ابراهيم هندى ابو تريكه النجم اسماعيل الليثى بنوته حلوه تحياتى فيديو ميشو 01060857174",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 14,
+      "videoCount": 14,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_ab6b0bdc-d8d7-4d60-885f-8ce721395c76",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Q6ZLEemtRbE/hqdefault.jpg",
+        "https://i.ytimg.com/vi/PbtbZQ4z4WI/hqdefault.jpg",
+        "https://i.ytimg.com/vi/ZC_djBM8-O0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/TffQO_YM1vM/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:38:00.039Z"
+    },
+    {
+      "id": "search-1793298804288-po95ca",
+      "title": "الموسيقار سامح اسماعيل والنجم ايمن نعناعا",
+      "query": "الموسيقار سامح اسماعيل والنجم ايمن نعناعا",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار سامح اسماعيل والنجم ايمن نعناعا",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 17,
+      "videoCount": 17,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_f5e04392-cdd2-45ff-9308-4e50a760b929",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/9e25gAR33_E/hqdefault.jpg",
+        "https://i.ytimg.com/vi/o6B32SzfL7I/hqdefault.jpg",
+        "https://i.ytimg.com/vi/dOaJemX-1_o/sddefault.jpg",
+        "https://i.ytimg.com/vi/QXLX3fJEfHQ/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:33:24.317Z"
+    },
+    {
+      "id": "search-1793298789250-xqj8n8",
+      "title": "النجم عادل عباس والنجم السيد شقاوة وولعت 2015",
+      "query": "النجم عادل عباس والنجم السيد شقاوة وولعت 2015",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "النجم عادل عباس والنجم السيد شقاوة وولعت 2015",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 21,
+      "videoCount": 21,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_5776d59f-bda1-490c-bdde-d2537df0e0f1",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/peWHVHpV6R8/sddefault.jpg",
+        "https://i.ytimg.com/vi/SHx1Ja5-smQ/sddefault.jpg",
+        "https://i.ytimg.com/vi/_6B9frGsx-U/hqdefault.jpg",
+        "https://i.ytimg.com/vi/SdyUnT-dAD8/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:33:09.282Z"
+    },
+    {
+      "id": "search-1793297987368-k21evx",
+      "title": "النجم عادل عباس والنجم السيد شقاوة وولعت 2015",
+      "query": "النجم عادل عباس والنجم السيد شقاوة وولعت 2015",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "النجم عادل عباس والنجم السيد شقاوة وولعت 2015",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 21,
+      "videoCount": 21,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_65f6e2af-ce1b-4cf0-8f55-a05564881c4b",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/peWHVHpV6R8/sddefault.jpg",
+        "https://i.ytimg.com/vi/SHx1Ja5-smQ/sddefault.jpg",
+        "https://i.ytimg.com/vi/_6B9frGsx-U/hqdefault.jpg",
+        "https://i.ytimg.com/vi/SdyUnT-dAD8/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:19:47.393Z"
+    },
+    {
+      "id": "search-1793297801356-anu3ej",
+      "title": "الموسيقار مصطفى عبداللة والنجمة نانا اغنية بشويش عليا مهرجان اولاد رضوان بالفشن 01140240012",
+      "query": "الموسيقار مصطفى عبداللة والنجمة نانا اغنية بشويش عليا مهرجان اولاد رضوان بالفشن 01140240012",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار مصطفى عبداللة والنجمة نانا اغنية بشويش عليا مهرجان اولاد رضوان بالفشن 01140240012",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 5,
+      "videoCount": 5,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_0366e7f3-249f-4398-9207-c26085477564",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/NR2R1DIDLYQ/sddefault.jpg",
+        "https://i.ytimg.com/vi/_zFJsFKjxcU/hqdefault.jpg",
+        "https://i.ytimg.com/vi/9KYHQGyhCbU/sddefault.jpg",
+        "https://i.ytimg.com/vi/FvS5lsrtHqs/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-29T18:16:41.376Z"
+    },
+    {
+      "title": "نجم المسارح ربيع ابو دنيا والنجم عماد السمنودى مولعينهااااااا وخربينهاااا (الفشن)01140240012 [HD]",
+      "query": "نجم المسارح ربيع ابو دنيا والنجم عماد السمنودى مولعينهااااااا وخربينهاااا (الفشن)01140240012 [HD]",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "نجم المسارح ربيع ابو دنيا والنجم عماد السمنودى مولعينهااااااا وخربينهاااا (الفشن)01140240012 [HD]",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1793296631588-6jkto",
+      "timestamp": "2026-10-29T17:57:11.588Z"
+    },
+    {
+      "id": "search-1793218907244-os0jt1",
+      "title": "افراح شعبى فيسبوك اكتوبر 2013",
+      "query": "افراح شعبى فيسبوك اكتوبر 2013",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افراح شعبى فيسبوك اكتوبر 2013",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 71,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_a6d28647-e046-44bf-9f71-58b357d491de",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Z9m9u26yyPY/hqdefault.jpg",
+        "https://i.ytimg.com/vi/vkW24QrymLw/hqdefault.jpg",
+        "https://i.ytimg.com/vi/ixjaNvHt-H0/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/Zyx7McH1MLg/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-28T20:21:47.323Z"
+    },
+    {
+      "id": "search-1793218748228-b6n6yx",
+      "title": "يخرابي ع الرقصات وع الي عمالوه",
+      "query": "يخرابي ع الرقصات وع الي عمالوه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "يخرابي ع الرقصات وع الي عمالوه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 14,
+      "videoCount": 13,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_82f0f4ca-d6dc-45c3-ac3b-a56a15864514",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/AZb_1keCiMo/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/ClCPSzohd5o/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/cbYRMgB-MJM/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/tHI3cQu83Ao/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-28T20:19:08.266Z"
+    },
+    {
+      "id": "search-1793218424131-zw1e6n",
+      "title": "رضا الغمراوى 2017 تصوير شركه همس للفيديو افراح شعبى",
+      "query": "رضا الغمراوى 2017 تصوير شركه همس للفيديو افراح شعبى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رضا الغمراوى 2017 تصوير شركه همس للفيديو افراح شعبى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 28,
+      "videoCount": 28,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_e78ee113-1190-4c38-a2e4-c6f2ac8a70bc",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/4pAcDvNLP04/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/hBKMUJ4WmB0/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/1MY_I_8JQ4Q/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/87IZnEuf6gY/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-28T20:13:44.165Z"
+    },
+    {
+      "id": "search-1793042171283-zoof47",
+      "title": "فرح محمد صلاح جمعة ابن عابدين فى فيلا حسن فهمى",
+      "query": "فرح محمد صلاح جمعة ابن عابدين فى فيلا حسن فهمى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرح محمد صلاح جمعة ابن عابدين فى فيلا حسن فهمى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 25,
+      "videoCount": 25,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_580fb547-6f5f-4546-a89e-fe08f35aec4d",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/cRUpFwhEAgE/hqdefault.jpg",
+        "https://i.ytimg.com/vi/zF_O6Em3wTg/hqdefault.jpg",
+        "https://i.ytimg.com/vi/zn9liubTaOQ/hqdefault.jpg",
+        "https://i.ytimg.com/vi/5LyX6p3K5KQ/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-26T19:16:11.444Z"
+    },
+    {
+      "id": "search-1793040915775-0dryjf",
+      "title": "ابو غالى عالم غريب مع الحسينى.wmv",
+      "query": "ابو غالى عالم غريب مع الحسينى.wmv",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "ابو غالى عالم غريب مع الحسينى.wmv",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 69,
+      "videoCount": 67,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_58ead6a8-3220-4b79-8214-76573edcc177",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/EZGUF86lioY/hqdefault.jpg",
+        "https://i.ytimg.com/vi/Bov_m4ZbY0Y/hqdefault.jpg",
+        "https://i.ytimg.com/vi/kMuixWKG8e4/hqdefault.jpg",
+        "https://i.ytimg.com/vi/gCEXmFKF93Y/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-26T18:55:15.838Z"
+    },
+    {
+      "id": "search-1793040130229-infncs",
+      "title": "النجم ابو لمونه مولع الفرح مع نجم المزيكا احمد عثمان احمد عثمان",
+      "query": "النجم ابو لمونه مولع الفرح مع نجم المزيكا احمد عثمان احمد عثمان",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "النجم ابو لمونه مولع الفرح مع نجم المزيكا احمد عثمان احمد عثمان",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 30,
+      "videoCount": 30,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_bb0fb48e-0c68-4aa5-b9b3-cc8d51d9307e",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Ie76xBqc98Q/hqdefault.jpg",
+        "https://i.ytimg.com/vi/waP9tUqwXgo/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/RKZGYRNznso/hqdefault.jpg",
+        "https://i.ytimg.com/vi/sTup3e0vzgo/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-26T18:42:10.258Z"
+    },
+    {
+      "id": "search-1792894708744-nen4ce",
+      "title": "ماجد الليثى يولع فرح صلاح محمود (2)",
+      "query": "ماجد الليثى يولع فرح صلاح محمود (2)",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "ماجد الليثى يولع فرح صلاح محمود (2)",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 39,
+      "videoCount": 38,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 202,
+      "status": "complete",
+      "manifestId": "mft_1b9f448f-dadb-43a0-89b0-914bd69e23f0",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/-VRFR2Gm4ac/hqdefault.jpg",
+        "https://i.ytimg.com/vi/RYDxHwp5G38/hqdefault.jpg",
+        "https://i.ytimg.com/vi/QWDulO9pHqs/hqdefault.jpg",
+        "https://i.ytimg.com/vi/ZQoCX1jHHxI/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-25T02:18:28.781Z"
+    },
+    {
+      "id": "search-1792894628465-1gwbdt",
+      "title": "محمد على و روماريو ابص لروحي ٠١٠٠٦٨١٤٨٧٨.flv",
+      "query": "محمد على و روماريو ابص لروحي ٠١٠٠٦٨١٤٨٧٨.flv",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "محمد على و روماريو ابص لروحي ٠١٠٠٦٨١٤٨٧٨.flv",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 7,
+      "videoCount": 7,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_da45fff7-ed24-4f41-b33c-5e89a4f5c4ae",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/7j9xpUk0dM8/hqdefault.jpg",
+        "https://i.ytimg.com/vi/yc_0W0HXaqE/hqdefault.jpg",
+        "https://i.ytimg.com/vi/fJVhvmp-toE/hqdefault.jpg",
+        "https://i.ytimg.com/vi/RhddUebA26Q/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-25T02:17:08.483Z"
+    },
+    {
+      "id": "search-1792894209037-t2fmpk",
+      "title": "سحر الجرحى الدنيا غدارة",
+      "query": "سحر الجرحى الدنيا غدارة",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "سحر الجرحى الدنيا غدارة",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 43,
+      "videoCount": 43,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_d5681f58-5119-48cb-81f7-16392a113372",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/FXEg4GH5yQI/hqdefault.jpg",
+        "https://i.ytimg.com/vi/FXTUykWblhg/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/VdB1_dIaUpc/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/EZl75rxzgSU/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-25T02:10:09.078Z"
+    },
+    {
+      "id": "search-1792893946942-3e4e2g",
+      "title": "محمد علي_زعلانه منك.mp4",
+      "query": "محمد علي_زعلانه منك.mp4",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "محمد علي_زعلانه منك.mp4",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 72,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_f5e41e0b-9a46-419e-88c0-193206332240",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/XsH-2kYPNlU/hqdefault.jpg",
+        "https://i.ytimg.com/vi/bmY79wKsKE0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/b3OP9ZGr5mQ/hqdefault.jpg",
+        "https://i.ytimg.com/vi/WGiRF14UEfI/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-25T02:05:47.004Z"
+    },
+    {
+      "id": "search-1792893577545-nqqd28",
+      "title": "مزمار كلبش 2 وتشكيله غياارات وشغل فاجر مووت ووصف الصبيه واوشه دغدغ القاعه فى سمنود 2019",
+      "query": "مزمار كلبش 2 وتشكيله غياارات وشغل فاجر مووت ووصف الصبيه واوشه دغدغ القاعه فى سمنود 2019",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "مزمار كلبش 2 وتشكيله غياارات وشغل فاجر مووت ووصف الصبيه واوشه دغدغ القاعه فى سمنود 2019",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 44,
+      "videoCount": 43,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_7f3c532e-6001-487e-a163-76e9cbe79dcd",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/3RmL1VhJS4k/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/BMH3u4EWlGY/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/CftW_Ud7F3o/sddefault.jpg",
+        "https://i.ytimg.com/vi/N3-uAdk4xi4/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-25T01:59:37.599Z"
+    },
+    {
+      "id": "search-1792893257359-8s396a",
+      "title": "مزمار عريض الدبابه من اوشه ونجمه مصر نهى الجمال 15 رقاصه والفرح والع",
+      "query": "مزمار عريض الدبابه من اوشه ونجمه مصر نهى الجمال 15 رقاصه والفرح والع",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "مزمار عريض الدبابه من اوشه ونجمه مصر نهى الجمال 15 رقاصه والفرح والع",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 67,
+      "videoCount": 66,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_6e95cc9f-67b3-4085-8bef-f5b68dc0da0f",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/rlrtYVXxfRk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/96yFHutnStw/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/YYczbktE_A8/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/eTVCxEEneUs/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-25T01:54:17.416Z"
+    },
+    {
+      "id": "search-1792893068974-iep4ld",
+      "title": "رضا الغمراوى 2017 همس",
+      "query": "رضا الغمراوى 2017 همس",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رضا الغمراوى 2017 همس",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 74,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_bd18aa8b-8f19-4761-9b8c-83944e5f1590",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Bpa7sH_j3Zo/sddefault.jpg",
+        "https://i.ytimg.com/vi/CvTqNp6BCiE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/uJfAUAPL2_A/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/3vBuxV3fOjE/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-25T01:51:09.061Z"
+    },
+    {
+      "id": "search-1792789832558-evxbgs",
+      "title": "اوشه بيرقص على لسه فاكر و15 رقاصه خربين الفرح",
+      "query": "اوشه بيرقص على لسه فاكر و15 رقاصه خربين الفرح",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "اوشه بيرقص على لسه فاكر و15 رقاصه خربين الفرح",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 23,
+      "videoCount": 23,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_bff6441d-d615-47a0-9785-990052053521",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/wdkiYDgO20U/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/eTVCxEEneUs/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/Ag_guihoLKs/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/__r7MN25780/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-23T21:10:34.877Z"
+    },
+    {
+      "id": "search-1792789303571-4zskne",
+      "title": "فرحة الشيف محمود حجاج",
+      "query": "فرحة الشيف محمود حجاج",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرحة الشيف محمود حجاج",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 71,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_9e27d2d4-002a-48bb-b602-c38e4ab65e5a",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/MMdu4i8xENM/sddefault.jpg",
+        "https://i.ytimg.com/vi/Z2THffL91WM/sddefault.jpg",
+        "https://i.ytimg.com/vi/RNMD4BZaMc4/sddefault.jpg",
+        "https://i.ytimg.com/vi/jVvBtDHVD3U/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-23T21:01:43.613Z"
+    },
+    {
+      "id": "search-1792788926948-zri2x4",
+      "title": "شركه ابوسنه للتصوير م ابراهيم ابوسنه 01005095882(3)",
+      "query": "شركه ابوسنه للتصوير م ابراهيم ابوسنه 01005095882(3)",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "شركه ابوسنه للتصوير م ابراهيم ابوسنه 01005095882(3)",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 23,
+      "videoCount": 23,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_b4afa973-7db3-436b-ac30-873ed9c88dae",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/VSzU5o0ESYA/sddefault.jpg",
+        "https://i.ytimg.com/vi/iCje5TN3Oos/sddefault.jpg",
+        "https://i.ytimg.com/vi/kEtnCYFuh6Q/sddefault.jpg",
+        "https://i.ytimg.com/vi/OIOMvbQpYlc/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-23T20:55:26.971Z"
+    },
+    {
+      "id": "search-1792788201080-bwgesk",
+      "title": "رقص شرقي حظ ايه ده يا عبسلام يا مرقص الصبايا",
+      "query": "رقص شرقي حظ ايه ده يا عبسلام يا مرقص الصبايا",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص شرقي حظ ايه ده يا عبسلام يا مرقص الصبايا",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 60,
+      "videoCount": 60,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_9e850f74-7116-408c-bebf-51e507a426ac",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/XOYgRFEJBCE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/0z3m7TQXtHU/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/rrKRqvkAD04/hqdefault.jpg",
+        "https://i.ytimg.com/vi/XlTLy3lXdNM/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-23T20:43:21.144Z"
+    },
+    {
+      "id": "search-1792787700046-mbr12j",
+      "title": "حلله واتس السيد حسن وفشخ الواقع مع الرقاصه شوف بنفسك",
+      "query": "حلله واتس السيد حسن وفشخ الواقع مع الرقاصه شوف بنفسك",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "حلله واتس السيد حسن وفشخ الواقع مع الرقاصه شوف بنفسك",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 6,
+      "videoCount": 6,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_5ba40502-f643-47b5-817c-1cebfb14e019",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/l0P5OJicM-I/hqdefault.jpg",
+        "https://i.ytimg.com/vi/KYZ2hCaEyqw/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/cC3qmYSBwhk/sddefault.jpg",
+        "https://i.ytimg.com/vi/zk6g6eBV4DE/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-23T20:35:00.058Z"
+    },
+    {
+      "id": "search-1792784749798-xm0p4v",
+      "title": "السيد حسن بيدلع جوز رقصات على الكراسى والدنيه خربانه واجمد مزمار بلدى من نجم مصر محمد اوشه",
+      "query": "السيد حسن بيدلع جوز رقصات على الكراسى والدنيه خربانه واجمد مزمار بلدى من نجم مصر محمد اوشه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "السيد حسن بيدلع جوز رقصات على الكراسى والدنيه خربانه واجمد مزمار بلدى من نجم مصر محمد اوشه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 31,
+      "videoCount": 31,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_20ab608a-e3be-4b3d-bb71-2a22b242a0d1",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/YSTPpSWUxjc/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/n-W0Rfp_AAA/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/-sXumVc_dNY/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/9_KYoVEKDj0/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-23T19:45:49.826Z"
+    },
+    {
+      "id": "search-1792698814611-h2fdho",
+      "title": "النجم احمد ميمو والنجم تامر شريعه وربابه سكرانه1",
+      "query": "النجم احمد ميمو والنجم تامر شريعه وربابه سكرانه1",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "النجم احمد ميمو والنجم تامر شريعه وربابه سكرانه1",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 73,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_ffc9cd90-7e2c-4fa0-a22f-23812226a87c",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/sbJwfHoqOfM/hqdefault.jpg",
+        "https://i.ytimg.com/vi/n0_iVfRziyQ/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/Tm0aHWnwVtk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/LMXQu0LsvHo/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-22T19:53:34.883Z"
+    },
+    {
+      "id": "search-1792696886090-zsdyx9",
+      "title": "النجم تامر شريعه الموسيقار محمد ويوي",
+      "query": "النجم تامر شريعه الموسيقار محمد ويوي",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "النجم تامر شريعه الموسيقار محمد ويوي",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 69,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_0255db0c-e468-4ce3-bacc-ef70aa875ed1",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/6xa6Mz2MGI0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/iEuaz8L_nN0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/Tm0aHWnwVtk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/jtYJymYmEfg/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-22T19:21:26.129Z"
+    },
+    {
+      "id": "search-1792696858422-loxjwh",
+      "title": " حفلات محمد سفينه 01026522734",
+      "query": " حفلات محمد سفينه 01026522734",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": " حفلات محمد سفينه 01026522734",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 8,
+      "videoCount": 7,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_03896e9a-1846-4529-a97e-1aa2862490f0",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/N95puww1NrQ/sddefault.jpg",
+        "https://i.ytimg.com/vi/0YM5640PpfU/sddefault.jpg",
+        "https://i.ytimg.com/vi/BdVP4zxDAk4/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/yLAKJqucmyw/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-22T19:20:58.434Z"
+    },
+    {
+      "id": "search-1792696311692-avlogd",
+      "title": "عبسلام والسيد حسن وموال ومجنن 4 رقاصات الراقصة تحضن سيد حسن فى دمياط مليونية توفيق القزاز",
+      "query": "عبسلام والسيد حسن وموال ومجنن 4 رقاصات الراقصة تحضن سيد حسن فى دمياط مليونية توفيق القزاز",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "عبسلام والسيد حسن وموال ومجنن 4 رقاصات الراقصة تحضن سيد حسن فى دمياط مليونية توفيق القزاز",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 66,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_58b794d1-d0e0-4f22-8f81-c799d733801c",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/gQKVnTPoaPo/hqdefault.jpg",
+        "https://i.ytimg.com/vi/qSNnEN26BOs/sddefault.jpg",
+        "https://i.ytimg.com/vi/O0pLpJfFNT8/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/WdnAPrc1Muk/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-22T19:11:51.750Z"
+    },
+    {
+      "id": "search-1792692078775-20bfxh",
+      "title": "رقص افراح اولاد تصوير فرح شعبى ",
+      "query": "رقص افراح اولاد تصوير فرح شعبى ",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص افراح اولاد تصوير فرح شعبى ",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 66,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_e0ff7af0-2010-4aee-b6f2-98d2ce6d12c3",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/TDcvSnLqoZg/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/rIKsihvpYp8/hqdefault.jpg",
+        "https://i.ytimg.com/vi/eHyB97NtRiA/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/P0vZ0T_9wZc/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-22T18:01:18.831Z"
+    },
+    {
+      "id": "search-1792691254131-dn220m",
+      "title": "رقص جامد نيك فى الفرح الشعبى",
+      "query": "رقص جامد نيك فى الفرح الشعبى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص جامد نيك فى الفرح الشعبى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 25,
+      "videoCount": 17,
+      "channelCount": 3,
+      "playlistCount": 5,
+      "quotaCostEstimate": 203,
+      "status": "complete",
+      "manifestId": "mft_b08bc1df-f299-4657-bbcc-aa7658b72eda",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/_f_7fWgbay0/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/7r2iO2WvM7g/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/zR3g4jUWT-8/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/WQShxpc3KLA/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-22T17:47:34.160Z"
+    },
+    {
+      "title": "رقص",
+      "query": "رقص",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1792164250416-g5kki",
+      "timestamp": "2026-10-16T15:24:10.416Z"
+    },
+    {
+      "title": "رقاصه تركب صاحبتها عل المسرح +18",
+      "query": "رقاصه تركب صاحبتها عل المسرح +18",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصه تركب صاحبتها عل المسرح +18",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1792164174986-ppqsw",
+      "timestamp": "2026-10-16T15:22:54.986Z"
+    },
+    {
+      "title": "رقاصه تنيك وتركب صاحبتها فرح ",
+      "query": "رقاصه تنيك وتركب صاحبتها فرح ",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصه تنيك وتركب صاحبتها فرح ",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1792164126805-z6yyo",
+      "timestamp": "2026-10-16T15:22:06.805Z"
+    },
+    {
+      "title": "رقص افراح  مصرى رقاصات هايجه",
+      "query": "رقص افراح  مصرى رقاصات هايجه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص افراح  مصرى رقاصات هايجه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1792163605838-ckl32",
+      "timestamp": "2026-10-16T15:13:25.838Z"
+    },
+    {
+      "id": "search-1792163084399-esnj03",
+      "title": "رقص افراح شعبى مصرى ",
+      "query": "رقص افراح شعبى مصرى ",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص افراح شعبى مصرى ",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2020-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 70,
+      "channelCount": 0,
+      "playlistCount": 2,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_f483fe9e-6ae2-47cb-9c73-cc2c67d18067",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/0-rZpiKhGYM/sddefault.jpg",
+        "https://i.ytimg.com/vi/zpKYyyWrAdk/sddefault.jpg",
+        "https://i.ytimg.com/vi/oQiLbWp9-jw/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/PFrYNDLNg4k/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T15:04:44.508Z"
+    },
+    {
+      "id": "search-1792162905066-99i5k1",
+      "title": "افراح مصرى 2013",
+      "query": "افراح مصرى 2013",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افراح مصرى 2013",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any",
+        "publishedBefore": "2018-12-31T00:00:00.000Z"
+      },
+      "resultsCount": 75,
+      "videoCount": 69,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_897cd8f4-0d78-4d5d-ade8-eb2c62a8e017",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Hqw2qq4tk6A/hqdefault.jpg",
+        "https://i.ytimg.com/vi/Q0BT3SwAJvY/sddefault.jpg",
+        "https://i.ytimg.com/vi/VoecXUmTKME/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/PpXF94nSLt4/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T15:01:45.141Z"
+    },
+    {
+      "id": "search-1792162431047-1p4blm",
+      "title": "افجر فرح مصرى والرقاصات وحظ الموسيقار والنجمه",
+      "query": "افجر فرح مصرى والرقاصات وحظ الموسيقار والنجمه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افجر فرح مصرى والرقاصات وحظ الموسيقار والنجمه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 66,
+      "channelCount": 3,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_6760e1b9-5010-48e6-87b0-291771907519",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/h2ed2tucd6g/hqdefault.jpg",
+        "https://i.ytimg.com/vi/EZl6SHvcs2I/sddefault.jpg",
+        "https://i.ytimg.com/vi/Wl5KMcNmjDE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/BK24NVav5hk/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:53:51.109Z"
+    },
+    {
+      "id": "search-1792162316630-3o0j15",
+      "title": "الموسيقار/سامح المصري والتعلب -احمد عامر في قريه اولاد خلف",
+      "query": "الموسيقار/سامح المصري والتعلب -احمد عامر في قريه اولاد خلف",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار/سامح المصري والتعلب -احمد عامر في قريه اولاد خلف",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 2,
+      "videoCount": 2,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_72a0f444-c147-4500-8ee2-b7687cc48daa",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/BfF2r4_cY7Y/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/6FU0arz-Qro/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:51:56.643Z"
+    },
+    {
+      "id": "search-1792162120810-zjj8qq",
+      "title": "الموسيقار رزق ابراهيم وحودة البرنس فرح البورى 3 تصوير ابو ليالى",
+      "query": "الموسيقار رزق ابراهيم وحودة البرنس فرح البورى 3 تصوير ابو ليالى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار رزق ابراهيم وحودة البرنس فرح البورى 3 تصوير ابو ليالى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 16,
+      "videoCount": 16,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_e8229c79-3feb-4fc9-9bcd-4311ebd17f1a",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/PKDrSVg73FM/sddefault.jpg",
+        "https://i.ytimg.com/vi/FLEXLf_eUck/sddefault.jpg",
+        "https://i.ytimg.com/vi/solIxIaBjnA/sddefault.jpg",
+        "https://i.ytimg.com/vi/sbaodGJgFeQ/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:48:40.827Z"
+    },
+    {
+      "id": "search-1792160937120-4kpmbc",
+      "title": "فرح مصرى 2014 الموسيقار  تصوير",
+      "query": "فرح مصرى 2014 الموسيقار  تصوير",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرح مصرى 2014 الموسيقار  تصوير",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 70,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_7d34906e-86d8-47a8-8184-af10069d17cc",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/2mEeTY3qeZE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/PKDrSVg73FM/sddefault.jpg",
+        "https://i.ytimg.com/vi/koGzbkKmjUw/hqdefault.jpg",
+        "https://i.ytimg.com/vi/Y3EHO7Bw7OQ/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:28:57.169Z"
+    },
+    {
+      "id": "search-1792160070530-op7vab",
+      "title": "افجر فرح شعبى والرقاصات شفاف نااار 2011",
+      "query": "افجر فرح شعبى والرقاصات شفاف نااار 2011",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افجر فرح شعبى والرقاصات شفاف نااار 2011",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 72,
+      "channelCount": 3,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_225fcbd0-9ca4-466a-be70-07e6f23b8de2",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/BK24NVav5hk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/h2ed2tucd6g/hqdefault.jpg",
+        "https://i.ytimg.com/vi/D3GF1iurUYA/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/vB6mAmv8oVA/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:14:31.724Z"
+    },
+    {
+      "id": "search-1792160004613-xlppg5",
+      "title": " حظ رقاصه عريانه والبنات فرح شعبى",
+      "query": " حظ رقاصه عريانه والبنات فرح شعبى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": " حظ رقاصه عريانه والبنات فرح شعبى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 25,
+      "videoCount": 19,
+      "channelCount": 3,
+      "playlistCount": 3,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_7e05df49-7308-4f7f-b3f0-84bf2671a2e9",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/BK24NVav5hk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/WQShxpc3KLA/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/-B9_MxOhJnE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/-JhQxVcee7U/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:13:24.663Z"
+    },
+    {
+      "id": "search-1792159974429-tp0d40",
+      "title": "رقاقصه عريانه والبنات فرح شعبى",
+      "query": "رقاقصه عريانه والبنات فرح شعبى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاقصه عريانه والبنات فرح شعبى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 25,
+      "videoCount": 21,
+      "channelCount": 1,
+      "playlistCount": 3,
+      "quotaCostEstimate": 203,
+      "status": "complete",
+      "manifestId": "mft_e79ed165-7f10-456e-acb4-56057d455e2c",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/BK24NVav5hk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/WQShxpc3KLA/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/-B9_MxOhJnE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/Igt3BND09zk/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:12:54.470Z"
+    },
+    {
+      "id": "search-1792159960021-se4zex",
+      "title": "شفاف فرح رقااتص نيك عريانه شعبى هايهج كس طيز فى",
+      "query": "شفاف فرح رقااتص نيك عريانه شعبى هايهج كس طيز فى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "شفاف فرح رقااتص نيك عريانه شعبى هايهج كس طيز فى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 1000,
+      "status": "empty",
+      "manifestId": "mft_3d2b3282-363f-4d71-84f2-c08539403a4f",
+      "topThumbnails": [],
+      "timestamp": "2026-10-16T14:12:40.031Z"
+    },
+    {
+      "id": "search-1792159936740-eqfscu",
+      "title": "رقااتص هايهج نيك عريانه شفاف كس طيز فى فرح شعبى",
+      "query": "رقااتص هايهج نيك عريانه شفاف كس طيز فى فرح شعبى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقااتص هايهج نيك عريانه شفاف كس طيز فى فرح شعبى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 1000,
+      "status": "empty",
+      "manifestId": "mft_8a284918-f15f-4deb-8711-c1e1ee8ce993",
+      "topThumbnails": [],
+      "timestamp": "2026-10-16T14:12:16.748Z"
+    },
+    {
+      "id": "search-1792159920353-l6l8dn",
+      "title": "رقااتص هايهج نيك عريانه شفاف كس طيز فى فرح شعبى ",
+      "query": "رقااتص هايهج نيك عريانه شفاف كس طيز فى فرح شعبى ",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقااتص هايهج نيك عريانه شفاف كس طيز فى فرح شعبى ",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 1200,
+      "status": "empty",
+      "manifestId": "mft_0c528bb6-6943-403c-9e9c-fdf50c7a9216",
+      "topThumbnails": [],
+      "timestamp": "2026-10-16T14:12:00.363Z"
+    },
+    {
+      "id": "search-1792159906665-90jntm",
+      "title": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى ",
+      "query": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى ",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى ",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 1200,
+      "status": "empty",
+      "manifestId": "mft_0c48dcd0-c2e5-4560-b337-7ecbac76c3de",
+      "topThumbnails": [],
+      "timestamp": "2026-10-16T14:11:46.675Z"
+    },
+    {
+      "id": "search-1792159893790-g77ch0",
+      "title": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى سكس",
+      "query": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى سكس",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى سكس",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 1200,
+      "status": "empty",
+      "manifestId": "mft_e4925489-080b-49db-8a73-b11f0781473e",
+      "topThumbnails": [],
+      "timestamp": "2026-10-16T14:11:33.800Z"
+    },
+    {
+      "id": "search-1792159829814-9bdqg9",
+      "title": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى سكسى",
+      "query": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى سكسى",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصات هايجه نيك عريانه شفاف كس طيز فى فرح شعبى سكسى",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 1200,
+      "status": "empty",
+      "manifestId": "mft_4c73c77b-434a-4e68-97c3-d332d99f00d8",
+      "topThumbnails": [],
+      "timestamp": "2026-10-16T14:10:29.828Z"
+    },
+    {
+      "id": "search-1792159588563-rw8hbr",
+      "title": "افراح الهوارى وشركة تصوبر ",
+      "query": "افراح الهوارى وشركة تصوبر ",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افراح الهوارى وشركة تصوبر ",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 71,
+      "channelCount": 1,
+      "playlistCount": 1,
+      "quotaCostEstimate": 304,
+      "status": "complete",
+      "manifestId": "mft_603bd7c3-6bd8-47af-a15a-eb8937a6edac",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/iHnRJ0gZM2k/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/ZB_g5MwHe-8/hqdefault.jpg",
+        "https://i.ytimg.com/vi/4GlOH4dmpN4/hqdefault.jpg",
+        "https://i.ytimg.com/vi/KogUbeefC14/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-16T14:06:28.641Z"
+    },
+    {
+      "id": "search-1791818299203-curbmr",
+      "title": "افراح شعبيه ونجوم الرقص الرقص +18",
+      "query": "افراح شعبيه ونجوم الرقص الرقص +18",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افراح شعبيه ونجوم الرقص الرقص +18",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 21,
+      "videoCount": 21,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 301,
+      "status": "complete",
+      "manifestId": "mft_ec4a5456-d54a-40ec-b048-35efe5b29162",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/mY_syHrsa7I/sddefault.jpg",
+        "https://i.ytimg.com/vi/dYB2IrPhxH0/sddefault.jpg",
+        "https://i.ytimg.com/vi/CEyxGe3Cn1Y/sddefault.jpg",
+        "https://i.ytimg.com/vi/0AA_fvrIlLM/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-12T15:18:19.232Z"
+    },
+    {
+      "id": "search-1791818017671-4np1x9",
+      "title": "راقصة سكسية اووي وحركات مثيرة على المسرح اخر دلع نار نسوان شارع الهرم حصري 2015 راقصات بلقاس",
+      "query": "راقصة سكسية اووي وحركات مثيرة على المسرح اخر دلع نار نسوان شارع الهرم حصري 2015 راقصات بلقاس",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "راقصة سكسية اووي وحركات مثيرة على المسرح اخر دلع نار نسوان شارع الهرم حصري 2015 راقصات بلقاس",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 2,
+      "videoCount": 2,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_490fc92e-6613-4e87-a1c7-21ed6ca7da57",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/AbKfFjmtOsU/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/eq3zcxdqdBA/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-12T15:13:37.697Z"
+    },
+    {
+      "id": "search-1791817840541-lxw5on",
+      "title": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+      "query": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 25,
+      "videoCount": 25,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 501,
+      "status": "complete",
+      "manifestId": "mft_01d880c8-39cf-4f3d-a9a7-37321b7dc5bb",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/VjzFoPBladg/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/PkSi3wSbiDk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/NMaaOINQBE4/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/SsN9agduMfU/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-12T15:10:40.569Z"
+    },
+    {
+      "title": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+      "query": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "جومانا نايمه على المسرح وبتقول الاطفال بطلت ارضع فيديو للكبار فقط +18",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1791817785070-ro4x8",
+      "timestamp": "2026-10-12T15:09:45.070Z"
+    },
+    {
+      "title": "رقاصة بصدر عاري - رقص فراح شعبية مثيرة - رقص افراح مصرية مسخرة - رقص افراح قليل الادب 2014",
+      "query": "رقاصة بصدر عاري - رقص فراح شعبية مثيرة - رقص افراح مصرية مسخرة - رقص افراح قليل الادب 2014",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصة بصدر عاري - رقص فراح شعبية مثيرة - رقص افراح مصرية مسخرة - رقص افراح قليل الادب 2014",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1791817771689-1gtgp",
+      "timestamp": "2026-10-12T15:09:31.689Z"
+    },
+    {
+      "title": "رقاصة بصدر عاري - رقص فراح شعبية مثيرة - رقص افراح مصرية مسخرة - رقص افراح قليل الادب 2014",
+      "query": "رقاصة بصدر عاري - رقص فراح شعبية مثيرة - رقص افراح مصرية مسخرة - رقص افراح قليل الادب 2014",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقاصة بصدر عاري - رقص فراح شعبية مثيرة - رقص افراح مصرية مسخرة - رقص افراح قليل الادب 2014",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 0,
+      "status": "failed",
+      "id": "hist-1791817734759-dn6r5",
+      "timestamp": "2026-10-12T15:08:54.759Z"
+    },
+    {
+      "id": "search-1791814929513-u9940h",
+      "title": "Belly Dancer | رقص شرقي - Dance Pop Egypt منوعات رقص شرقى فى فرح شعبى 2",
+      "query": "Belly Dancer | رقص شرقي - Dance Pop Egypt منوعات رقص شرقى فى فرح شعبى 2",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "Belly Dancer | رقص شرقي - Dance Pop Egypt منوعات رقص شرقى فى فرح شعبى 2",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 69,
+      "channelCount": 2,
+      "playlistCount": 2,
+      "quotaCostEstimate": 304,
+      "status": "complete",
+      "manifestId": "mft_3da5d829-5cd8-4e88-8c33-32f27f548dc1",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/C12QGrssybY/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/7TpnMPAscZk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/uLvLvwlfNzY/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/sp52FA2OWYg/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-12T14:22:09.590Z"
+    },
+    {
+      "id": "search-1791758596712-t60t1s",
+      "title": "ســمارة حظت جمهور القليوبية ليا كوكب المريخ شوف بنفسك",
+      "query": "ســمارة حظت جمهور القليوبية ليا كوكب المريخ شوف بنفسك",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "ســمارة حظت جمهور القليوبية ليا كوكب المريخ شوف بنفسك",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 1,
+      "videoCount": 0,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_7fe92898-ebc1-41d3-bee9-7ad07b58201c",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/9vwF-lMbHbg/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-11T22:43:16.723Z"
+    },
+    {
+      "id": "search-1791573480251-3ndyfi",
+      "title": "ســمارة حظت جمهور القليوبية الي كوكب المريخ شوف بنفسك",
+      "query": "ســمارة حظت جمهور القليوبية الي كوكب المريخ شوف بنفسك",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "ســمارة حظت جمهور القليوبية الي كوكب المريخ شوف بنفسك",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 39,
+      "videoCount": 8,
+      "channelCount": 0,
+      "playlistCount": 31,
+      "quotaCostEstimate": 202,
+      "status": "complete",
+      "manifestId": "mft_3f5087f8-8694-4e19-9ee2-7d74777cb895",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/5hnpXvMjWm4/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/9vwF-lMbHbg/hqdefault.jpg",
+        "https://i.ytimg.com/vi/5hnpXvMjWm4/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/UZEPaUQhgx8/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-09T19:18:30.341Z"
+    },
+    {
+      "id": "search-1791573120732-cega3j",
+      "title": "ســـــــــمارة غنت مــــــــــوال ازهل كل الغربية مع كريم ناعوس شاهد بنفسك🔞",
+      "query": "ســـــــــمارة غنت مــــــــــوال ازهل كل الغربية مع كريم ناعوس شاهد بنفسك🔞",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "ســـــــــمارة غنت مــــــــــوال ازهل كل الغربية مع كريم ناعوس شاهد بنفسك🔞",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 25,
+      "videoCount": 24,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 502,
+      "status": "complete",
+      "manifestId": "mft_f9ce7dfc-dc82-42ed-b3c8-65b3f3d80ed8",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/syRx1-8jKJM/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/gEjeeBtAWfI/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/HV8BKNFcsWc/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/SRu7mDGQyvM/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-09T19:12:00.810Z"
+    },
+    {
+      "id": "search-1791572107948-j11lh8",
+      "title": "احمد حسين الدمعة صعبة تصوير صقر للتصوير السينمائي. . كمارا متعهد حفلات وفنانين 01224529880",
+      "query": "احمد حسين الدمعة صعبة تصوير صقر للتصوير السينمائي. . كمارا متعهد حفلات وفنانين 01224529880",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "احمد حسين الدمعة صعبة تصوير صقر للتصوير السينمائي. . كمارا متعهد حفلات وفنانين 01224529880",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 5,
+      "videoCount": 3,
+      "channelCount": 0,
+      "playlistCount": 2,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_ac3b1ca0-dd3c-4626-a4f4-f9e4e3f1ecae",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/jBjMcEyV4j0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/jBjMcEyV4j0/hqdefault.jpg",
+        "https://i.ytimg.com/vi/guix7x_LA7M/hqdefault.jpg",
+        "https://i.ytimg.com/vi/fu6qT-wJeD0/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-09T18:55:07.970Z"
+    },
+    {
+      "id": "search-1791571322330-t5pqo7",
+      "title": "فيفتى و السادات ولعوها ناااااااااااااار  فرح شعبى والرقاصات",
+      "query": "فيفتى و السادات ولعوها ناااااااااااااار  فرح شعبى والرقاصات",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فيفتى و السادات ولعوها ناااااااااااااار  فرح شعبى والرقاصات",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 71,
+      "channelCount": 1,
+      "playlistCount": 1,
+      "quotaCostEstimate": 304,
+      "status": "complete",
+      "manifestId": "mft_723699e5-2922-41d7-9272-706c46215ff9",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/YOKvuFvPpyE/sddefault.jpg",
+        "https://i.ytimg.com/vi/u4_AuKXU3Dc/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/By6JOqfYw1c/sddefault.jpg",
+        "https://i.ytimg.com/vi/yilf4D31WGI/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-09T18:42:02.414Z"
+    },
+    {
+      "id": "search-1791568890828-ynlsg1",
+      "title": "النجم عماد الأسمر وأغنية مش باقى وفرقة عمرو حجازى نحن كمارا متعهد حفلات وفنانين 01224529880",
+      "query": "النجم عماد الأسمر وأغنية مش باقى وفرقة عمرو حجازى نحن كمارا متعهد حفلات وفنانين 01224529880",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "النجم عماد الأسمر وأغنية مش باقى وفرقة عمرو حجازى نحن كمارا متعهد حفلات وفنانين 01224529880",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 8,
+      "videoCount": 5,
+      "channelCount": 0,
+      "playlistCount": 3,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_a9cd825f-63a4-4829-9fe6-1ce7160cf24f",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/vODe0pM-g_M/hqdefault.jpg",
+        "https://i.ytimg.com/vi/5ssG9AOTJq4/sddefault.jpg",
+        "https://i.ytimg.com/vi/DMIryO2pgNY/sddefault.jpg",
+        "https://i.ytimg.com/vi/f9esZa7F2xM/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-09T18:01:30.839Z"
+    },
+    {
+      "id": "search-1791565394877-tx5hfj",
+      "title": "الموسيقار عرفه هاني صانع الحظ وسلطان النغم tvp",
+      "query": "الموسيقار عرفه هاني صانع الحظ وسلطان النغم tvp",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "الموسيقار عرفه هاني صانع الحظ وسلطان النغم tvp",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 71,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_bb043334-d537-4c23-a9e1-fa6fd8021fe1",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Yg0EA5odQ5Q/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/i3Fp_t0dBoc/sddefault.jpg",
+        "https://i.ytimg.com/vi/y2ElmQO_TX4/sddefault.jpg",
+        "https://i.ytimg.com/vi/CbnivSxqdU4/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-09T17:03:15.236Z"
+    },
+    {
+      "id": "search-1791565249452-j782kg",
+      "title": "قصر ابو عوف للحفلات",
+      "query": "قصر ابو عوف للحفلات",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "قصر ابو عوف للحفلات",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 73,
+      "channelCount": 2,
+      "playlistCount": 0,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_5e147bcd-aa64-4ed7-9e69-fbd19ffd2a3f",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/S-XexoZjRRA/hqdefault.jpg",
+        "https://yt3.ggpht.com/ytc/AIdro_mK5fATgbP4RQUu6K4IEoTeEymBKUI1d74WA5RtsLCulA=s800-c-k-c0x00ffffff-no-rj",
+        "https://i.ytimg.com/vi/SDoUeDIk6LQ/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/vVYZ2RUzoJ0/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-09T17:00:49.493Z"
+    },
+    {
+      "id": "search-1791486059396-xk4ykx",
+      "title": "فرحة اولا عكيل اوشه والسيد حسن(1)",
+      "query": "فرحة اولا عكيل اوشه والسيد حسن(1)",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرحة اولا عكيل اوشه والسيد حسن(1)",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 17,
+      "videoCount": 15,
+      "channelCount": 1,
+      "playlistCount": 1,
+      "quotaCostEstimate": 103,
+      "status": "complete",
+      "manifestId": "mft_6b39a748-4775-4a1a-bcb1-d76110e48493",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/QSQFjzBaoHk/sddefault.jpg",
+        "https://i.ytimg.com/vi/frm9tfjHAgE/sddefault.jpg",
+        "https://i.ytimg.com/vi/Nopy_O1nzys/sddefault.jpg",
+        "https://i.ytimg.com/vi/h3GfCyLVW2k/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-08T19:00:59.410Z"
+    },
+    {
+      "id": "search-1791485929996-x2hssx",
+      "title": "من فرحه ميت غمر ويا صحبي عيب مش كدا   الدقهليه نورا",
+      "query": "من فرحه ميت غمر ويا صحبي عيب مش كدا   الدقهليه نورا",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "من فرحه ميت غمر ويا صحبي عيب مش كدا   الدقهليه نورا",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 50,
+      "videoCount": 44,
+      "channelCount": 1,
+      "playlistCount": 1,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_edc2cd42-f82c-41d5-91d9-cf1ab8d5f008",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/_iKvzz2AMXk/sddefault.jpg",
+        "https://i.ytimg.com/vi/fUqxxcVBi_0/sddefault.jpg",
+        "https://i.ytimg.com/vi/HYeCH9HNYuk/maxresdefault.jpg",
+        "https://yt3.ggpht.com/ytc/AIdro_mRrsGgYK_hV0Uh-cHrrRXigO350x6F4yQxCOl5Y9hs9A=s800-c-k-c0x00ffffff-no-rj"
+      ],
+      "timestamp": "2026-10-08T18:58:50.046Z"
+    },
+    {
+      "id": "search-1791485911029-a92qyn",
+      "title": "من فرحه ميت غمر ويا صحبي عيب مش كدا  شفيقه الدقهليه نورا القناوي",
+      "query": "من فرحه ميت غمر ويا صحبي عيب مش كدا  شفيقه الدقهليه نورا القناوي",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "من فرحه ميت غمر ويا صحبي عيب مش كدا  شفيقه الدقهليه نورا القناوي",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 2,
+      "videoCount": 1,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_b87be244-caa1-463a-87da-4981bdfd7b16",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/_iKvzz2AMXk/sddefault.jpg",
+        "https://yt3.ggpht.com/ytc/AIdro_mRrsGgYK_hV0Uh-cHrrRXigO350x6F4yQxCOl5Y9hs9A=s800-c-k-c0x00ffffff-no-rj"
+      ],
+      "timestamp": "2026-10-08T18:58:31.043Z"
+    },
+    {
+      "id": "search-1791485816720-9397w9",
+      "title": "مزمار عبد السلام في مركز فاقوس",
+      "query": "مزمار عبد السلام في مركز فاقوس",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "مزمار عبد السلام في مركز فاقوس",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 74,
+      "videoCount": 65,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_1abdab93-3395-4270-b4e4-b9479212cd64",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/Ef-YoyaydSw/hqdefault.jpg",
+        "https://i.ytimg.com/vi/r2vzBf6KKDE/sddefault.jpg",
+        "https://i.ytimg.com/vi/O3Go6nwKF80/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/A2Q5WjEQD94/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-08T18:56:56.768Z"
+    },
+    {
+      "id": "search-1791485601190-wj52lr",
+      "title": "افرح الشرقيه للدخان اولاد فكري",
+      "query": "افرح الشرقيه للدخان اولاد فكري",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "افرح الشرقيه للدخان اولاد فكري",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 49,
+      "videoCount": 48,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 202,
+      "status": "complete",
+      "manifestId": "mft_3a57cc06-2f0d-41b0-a387-a1dbecd16608",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/mYE022K3MdM/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/vQzCiQ1pkrk/sddefault.jpg",
+        "https://i.ytimg.com/vi/WQP_FavjDD8/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/DGgz34PiM8k/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-08T18:53:21.277Z"
+    },
+    {
+      "id": "search-1791484855148-pa50cs",
+      "title": "محمد عبدالسلام والسيد ابو الرجاله في السنه الجديده2017 حظ جامد 01067265199",
+      "query": "محمد عبدالسلام والسيد ابو الرجاله في السنه الجديده2017 حظ جامد 01067265199",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "محمد عبدالسلام والسيد ابو الرجاله في السنه الجديده2017 حظ جامد 01067265199",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 44,
+      "videoCount": 43,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 202,
+      "status": "complete",
+      "manifestId": "mft_d13b6473-c96c-4593-8635-650d22716a31",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/u_Efw4XRk2c/hqdefault.jpg",
+        "https://i.ytimg.com/vi/HYnnm_8BQLE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/u8ayqyLGzo4/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/w0XOt0t0pSc/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-08T18:40:55.183Z"
+    },
+    {
+      "id": "search-1791482607521-2pxgag",
+      "title": "عماد علام مولع في مليونية الانه",
+      "query": "عماد علام مولع في مليونية الانه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "عماد علام مولع في مليونية الانه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 25,
+      "videoCount": 25,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 201,
+      "status": "complete",
+      "manifestId": "mft_ca5e1964-176a-45aa-bd86-8373f4fcad3a",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/injbx8Jcvt8/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/YsnuclcAIQ0/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/blw8EKY-g18/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/IT8lJzQ_4HQ/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-08T18:03:27.683Z"
+    },
+    {
+      "id": "search-1791482055583-bz2tcx",
+      "title": "السيد غزال والنجم يوسف عسليه بيدلع دنيا على الاخر",
+      "query": "السيد غزال والنجم يوسف عسليه بيدلع دنيا على الاخر",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "السيد غزال والنجم يوسف عسليه بيدلع دنيا على الاخر",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 64,
+      "channelCount": 2,
+      "playlistCount": 4,
+      "quotaCostEstimate": 304,
+      "status": "complete",
+      "manifestId": "mft_914ed04d-3ee5-4e5b-8923-03f649d7c37f",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/A5FbLGjgMeI/hqdefault.jpg",
+        "https://i.ytimg.com/vi/iJlIPt03YQs/hqdefault.jpg",
+        "https://i.ytimg.com/vi/WDHVPmuC0IU/hqdefault.jpg",
+        "https://i.ytimg.com/vi/mNnSqIrLWYg/hqdefault.jpg"
+      ],
+      "timestamp": "2026-10-08T17:54:15.709Z"
+    },
+    {
+      "id": "search-1791405457235-vfpsqt",
+      "title": "فرحة كفرالحاج عمر رقص مسخرة",
+      "query": "فرحة كفرالحاج عمر رقص مسخرة",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرحة كفرالحاج عمر رقص مسخرة",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 37,
+      "videoCount": 28,
+      "channelCount": 1,
+      "playlistCount": 1,
+      "quotaCostEstimate": 203,
+      "status": "complete",
+      "manifestId": "mft_8331ffdb-1bae-4a70-8644-9cda9e97374f",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/VUA5dNrw_ZM/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/E4IkxiwtDYM/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/L08bs9mVk34/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/Z83EZybDBrM/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-07T20:37:37.253Z"
+    },
+    {
+      "id": "search-1791404200524-ql4bv3",
+      "title": "عيسوي القطار داس الرقاصه",
+      "query": "عيسوي القطار داس الرقاصه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "عيسوي القطار داس الرقاصه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 7,
+      "videoCount": 6,
+      "channelCount": 1,
+      "playlistCount": 0,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_ddab15f4-e127-4350-8f4d-f9ae11e45395",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/b-syuy_468Q/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/RWjGlwEFuyI/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/7F7FDycsEkY/maxresdefault.jpg",
+        "https://yt3.ggpht.com/ytc/AIdro_liB1D_8gpisbyPKy3OPMDdTZQIn29hBZ74BTZ16r4=s800-c-k-c0x00ffffff-no-rj"
+      ],
+      "timestamp": "2026-10-07T20:16:40.536Z"
+    },
+    {
+      "id": "search-1791403701426-jio76b",
+      "title": "استقبال بنزينه في فرحت العربه الرقاصه بتلاغي بنزينه",
+      "query": "استقبال بنزينه في فرحت العربه الرقاصه بتلاغي بنزينه",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "استقبال بنزينه في فرحت العربه الرقاصه بتلاغي بنزينه",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 15,
+      "videoCount": 14,
+      "channelCount": 0,
+      "playlistCount": 1,
+      "quotaCostEstimate": 102,
+      "status": "complete",
+      "manifestId": "mft_0a2545df-484c-4caa-b71f-7cb066d22685",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/idWOkZs5Ayw/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/wYsIrav1MKE/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/b-syuy_468Q/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/G2kvoRKn6Ho/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-07T20:08:21.443Z"
+    },
+    {
+      "id": "search-1791402266268-5cnvxv",
+      "title": "فرحة شكشك الزاوية الحمراء",
+      "query": "فرحة شكشك الزاوية الحمراء",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "فرحة شكشك الزاوية الحمراء",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 68,
+      "channelCount": 0,
+      "playlistCount": 2,
+      "quotaCostEstimate": 303,
+      "status": "complete",
+      "manifestId": "mft_c791c6d1-38c9-4b67-80a7-523ff3f0e247",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/jBXFH32vk5c/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/zcP4uoQbyU8/hqdefault.jpg",
+        "https://i.ytimg.com/vi/F_i-tnZCO9M/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/iPyb2aBQaVk/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-07T19:44:26.307Z"
+    },
+    {
+      "id": "search-1791318142687-7w9kvv",
+      "title": "رقص فاجر الرقاصة نزلت تحت ع الطربيظه وسط الناس وخربهاااااااااااا",
+      "query": "رقص فاجر الرقاصة نزلت تحت ع الطربيظه وسط الناس وخربهاااااااااااا",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقص فاجر الرقاصة نزلت تحت ع الطربيظه وسط الناس وخربهاااااااااااا",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 25,
+      "videoCount": 15,
+      "channelCount": 0,
+      "playlistCount": 10,
+      "quotaCostEstimate": 202,
+      "status": "complete",
+      "manifestId": "mft_47a3df6c-03ec-4dfd-baab-5dbe991ebc7d",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/C7H7w7zn0Wo/sddefault.jpg",
+        "https://i.ytimg.com/vi/00Pa8puuXlk/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/xYoB-_J5EDc/hqdefault.jpg",
+        "https://i.ytimg.com/vi/UB_J6QrJ5MA/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-06T20:22:22.699Z"
+    },
+    {
+      "id": "search-1791316230909-fjddst",
+      "title": "Hot belly Dance Egyptian 2017 رقص ساخن جداً 14 Channel Sido",
+      "query": "Hot belly Dance Egyptian 2017 رقص ساخن جداً 14 Channel Sido",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "Hot belly Dance Egyptian 2017 رقص ساخن جداً 14 Channel Sido",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 65,
+      "channelCount": 2,
+      "playlistCount": 3,
+      "quotaCostEstimate": 304,
+      "status": "complete",
+      "manifestId": "mft_c6847813-84ca-4874-aa3f-49d9e01e1a92",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/9pJ63UXHXrc/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/3Fpa38Wfcjo/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/-PB--wfTFKQ/hqdefault.jpg",
+        "https://i.ytimg.com/vi/1nRLEfMYRNs/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-06T19:50:30.979Z"
+    },
+    {
+      "id": "search-1791314021126-9cld12",
+      "title": "احلى رقص حجالات بدويات اتحدى شوف بنفسك واحكم",
+      "query": "احلى رقص حجالات بدويات اتحدى شوف بنفسك واحكم",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "احلى رقص حجالات بدويات اتحدى شوف بنفسك واحكم",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 13,
+      "videoCount": 13,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 101,
+      "status": "complete",
+      "manifestId": "mft_21c480c2-8ba2-462a-9626-b7a7f0e59836",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/HHDE5wZS8Eg/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/FCCnXlL310g/hqdefault.jpg",
+        "https://i.ytimg.com/vi/88x3GzOJys4/hqdefault.jpg",
+        "https://i.ytimg.com/vi/xwP2rWW2R7c/maxresdefault.jpg"
+      ],
+      "timestamp": "2026-10-06T19:13:41.135Z"
+    },
+    {
+      "id": "search-1791313082454-7eaye1",
+      "title": "رقصتين بيعملوا حركات صايعه والرقص اصيع في فرح شعبي",
+      "query": "رقصتين بيعملوا حركات صايعه والرقص اصيع في فرح شعبي",
+      "resourceSelection": "ALL",
+      "settings": {
+        "query": "رقصتين بيعملوا حركات صايعه والرقص اصيع في فرح شعبي",
+        "types": [
+          "video"
+        ],
+        "pageSize": 25,
+        "maxPages": 3,
+        "maxItems": 150,
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "",
+        "videoDuration": "any",
+        "videoDefinition": "any",
+        "videoCaption": "any",
+        "videoEmbeddable": "any"
+      },
+      "resultsCount": 75,
+      "videoCount": 61,
+      "channelCount": 0,
+      "playlistCount": 0,
+      "quotaCostEstimate": 302,
+      "status": "complete",
+      "manifestId": "mft_ea884927-94ea-4536-bdb0-0739ae210e70",
+      "topThumbnails": [
+        "https://i.ytimg.com/vi/CYeGOWpC1U4/hqdefault.jpg",
+        "https://i.ytimg.com/vi/2bLJr8ByNQg/sddefault.jpg",
+        "https://i.ytimg.com/vi/iTCdTNQDA4g/sddefault.jpg",
+        "https://i.ytimg.com/vi/iHqbegXR5Ic/sddefault.jpg"
+      ],
+      "timestamp": "2026-10-06T18:58:02.507Z"
+    }
+  ]
+}

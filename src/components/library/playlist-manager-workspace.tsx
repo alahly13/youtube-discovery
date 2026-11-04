@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils/format";
+import { ExpandableDescription } from "@/components/youtube/expandable-description";
 
 type PlaylistSortOption = "updated_desc" | "created_desc" | "name_az" | "items_desc";
 
@@ -522,14 +523,8 @@ function PlaylistCard({
           </div>
         </div>
 
-        {/* Description */}
-        {entry.description ? (
-          <p className="mt-1.5 line-clamp-2 text-xs text-muted leading-relaxed">
-            {entry.description}
-          </p>
-        ) : (
-          <p className="mt-1.5 text-xs italic text-muted/60">No description provided</p>
-        )}
+        {/* Expandable Description */}
+        <ExpandableDescription description={entry.description} />
 
         {/* Content Tags / Breakdowns */}
         <div className="mt-3 flex flex-wrap items-center gap-1.5">

@@ -65,6 +65,7 @@ export async function GET(request: Request) {
             state: string;
             totalBytes: number;
             aggregateSha256: string | null;
+            isBeforeAppUpdating?: boolean;
             parts: Array<{
               id: string;
               partNumber: number;
@@ -128,6 +129,7 @@ export async function GET(request: Request) {
             state: "COMMITTED",
             totalBytes: 0,
             aggregateSha256: null,
+            isBeforeAppUpdating: parsed.isBeforeAppUpdating,
             parts: [],
           });
         }

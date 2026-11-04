@@ -6,6 +6,10 @@ import {
   replaceUserPlaylist,
 } from "@/lib/playlists/playlist-archive";
 import {
+  syncPlaylistToDb,
+  deletePlaylistFromDb,
+} from "@/lib/playlists/playlist-db-service";
+import {
   updatePlaylistMetaSchema,
   userPlaylistManifestSchema,
 } from "@/lib/validation/library-schemas";
@@ -14,14 +18,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
  * GET /api/playlists/[id] — full self-contained manifest.
  * PUT accepts either a full manifest (validated) or a meta patch
- * ({name?, description?}). DELETE removes only this playlist's file.
- * A missing/corrupt manifest returns 404/410 — never a whole-library crash.
+ * ({name?, description?}).
+ * DELETE removes only this playlist's record from DB and R2.
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
+
   try {
     const { id } = await params;
     const found = await readUserPlaylist(id);
@@ -43,7 +50,9 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (csrf) return csrf;
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
+
   try {
+    const storageOwnerUuid = guard.admin.userId || "00000000-0000-0000-0000-000000000001";
     const { id } = await params;
     const body: unknown = await request.json();
 
@@ -54,6 +63,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       body !== null &&
       !("manifestVersion" in body) &&
       !("items" in body);
+
     if (looksLikeMetaPatch) {
       if (
         !metaPatch.success ||
@@ -68,6 +78,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       if (!found) {
         return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
       }
+
       const next = {
         ...found.manifest,
         playlist: {
@@ -80,10 +91,15 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
           updatedAt: new Date().toISOString(),
         },
       };
+
       const saved = await replaceUserPlaylist(id, next);
       if (!saved) {
         return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
       }
+
+      // Synchronize to PostgreSQL
+      await syncPlaylistToDb(storageOwnerUuid, saved.manifest);
+
       return NextResponse.json({ success: true, manifest: saved.manifest });
     }
 
@@ -101,6 +117,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         { status: 400 },
       );
     }
+
     const saved = await replaceUserPlaylist(id, {
       ...parsed.data,
       playlist: {
@@ -108,9 +125,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
         updatedAt: new Date().toISOString(),
       },
     });
+
     if (!saved) {
       return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
     }
+
+    // Synchronize to PostgreSQL
+    await syncPlaylistToDb(storageOwnerUuid, saved.manifest);
+
     return NextResponse.json({ success: true, manifest: saved.manifest });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to update playlist";
@@ -123,12 +145,20 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (csrf) return csrf;
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
+
   try {
+    const storageOwnerUuid = guard.admin.userId || "00000000-0000-0000-0000-000000000001";
     const { id } = await params;
+
+    // 1. Delete from R2 / storage backend
     const ok = await deleteUserPlaylist(id);
     if (!ok) {
       return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
     }
+
+    // 2. Delete from PostgreSQL
+    await deletePlaylistFromDb(storageOwnerUuid, id);
+
     // Deleting a playlist never deletes global saved entities or searches.
     return NextResponse.json({ success: true, id });
   } catch (err) {

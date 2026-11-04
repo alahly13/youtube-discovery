@@ -1,0 +1,33 @@
+{
+  "id": "ls-user-playlists-index",
+  "name": "User Playlists Index (1 playlists)",
+  "category": "PLAYLIST",
+  "mechanism": "localStorage",
+  "storageKey": "youtube-discovery-user-playlists::index",
+  "recordCount": 1,
+  "exportedAt": "2026-11-04T15:57:31.840Z",
+  "data": [
+    {
+      "counts": {
+        "channels": 0,
+        "custom": 0,
+        "shorts": 1,
+        "videos": 2,
+        "youtubePlaylists": 0
+      },
+      "createdAt": "2026-10-10T13:07:13.554Z",
+      "description": null,
+      "groupCount": 0,
+      "id": "upl_mv2esdn6_zrrx2q",
+      "itemCount": 3,
+      "manifestFile": "youtube-discovery/v1/playlists/records/upl_mv2esdn6_zrrx2q.json",
+      "name": "General",
+      "thumbnails": [
+        "https://i.ytimg.com/vi/LOpsdgh4Qbg/maxresdefault.jpg",
+        "https://i.ytimg.com/vi/_3XNhvuYSJg/hqdefault.jpg",
+        "https://i.ytimg.com/vi/sT5hSp0hUEw/maxresdefault.jpg"
+      ],
+      "updatedAt": "2026-10-10T13:09:29.701Z"
+    }
+  ]
+}

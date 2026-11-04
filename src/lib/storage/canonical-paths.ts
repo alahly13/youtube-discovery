@@ -213,6 +213,70 @@ export function buildVersionPointerKey(
 }
 
 /**
+ * Returns the canonical historical dataset prefix for legacy data migration:
+ * `asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/`
+ */
+export function buildHistoricalDatasetPrefix(
+  ownerId: string,
+  datasetType: CanonicalDatasetType | string
+): string {
+  const base = buildDatasetPrefix(ownerId, datasetType);
+  return `${base}before-app-updating/`;
+}
+
+/**
+ * Returns the canonical historical generation prefix for legacy data migration:
+ * `asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/generations/<generationId>/`
+ */
+export function buildHistoricalGenerationPrefix(
+  ownerId: string,
+  datasetType: CanonicalDatasetType | string,
+  generationId: string
+): string {
+  const base = buildHistoricalDatasetPrefix(ownerId, datasetType);
+  const cleanGen = sanitizeId(generationId, "generationId");
+  return `${base}generations/${cleanGen}/`;
+}
+
+/**
+ * Returns the canonical historical manifest.json key:
+ * `asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/generations/<generationId>/manifest.json`
+ */
+export function buildHistoricalManifestKey(
+  ownerId: string,
+  datasetType: CanonicalDatasetType | string,
+  generationId: string
+): string {
+  return `${buildHistoricalGenerationPrefix(ownerId, datasetType, generationId)}manifest.json`;
+}
+
+/**
+ * Returns the canonical historical part key:
+ * `asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/generations/<generationId>/parts/part-<number>.json`
+ */
+export function buildHistoricalPartKey(
+  ownerId: string,
+  datasetType: CanonicalDatasetType | string,
+  generationId: string,
+  partNumber: number
+): string {
+  const genPrefix = buildHistoricalGenerationPrefix(ownerId, datasetType, generationId);
+  const padded = String(Math.max(1, Math.floor(partNumber))).padStart(6, "0");
+  return `${genPrefix}parts/part-${padded}.json`;
+}
+
+/**
+ * Returns the canonical historical version.json pointer key:
+ * `asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/version.json`
+ */
+export function buildHistoricalVersionPointerKey(
+  ownerId: string,
+  datasetType: CanonicalDatasetType | string
+): string {
+  return `${buildHistoricalDatasetPrefix(ownerId, datasetType)}version.json`;
+}
+
+/**
  * Returns the canonical temporary staging prefix for a sync batch:
  * `asdy/temp/<ownerId>/<syncBatchId>/[<datasetSlug>/]`
  */
@@ -253,6 +317,7 @@ export interface ParsedStoragePath {
   isCanonical: boolean;
   isLegacy: boolean;
   isTemp: boolean;
+  isBeforeAppUpdating: boolean;
   ownerId: string;
   datasetType: CanonicalDatasetType | null;
   datasetSlug: string | null;
@@ -286,7 +351,39 @@ export function parseStorageKey(key: string): ParsedStoragePath | null {
   if (!key || typeof key !== "string") return null;
   const clean = key.replace(/^\/+/, "");
 
-  // 1. Canonical Persistence: asdy/persistence/<ownerId>/<datasetSlug>/...
+  // 1a. Canonical Historical Persistence: asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/...
+  // OR asdy/persistence/<ownerId>/before-app-updating/<datasetSlug>/...
+  const canonicalHistoricalMatch =
+    clean.match(
+      /^asdy\/persistence\/([^/]+)\/([^/]+)\/before-app-updating\/(?:version\.json|generations\/([^/]+)\/(manifest\.json|parts\/part-(\d+)\.json))/
+    ) ||
+    clean.match(
+      /^asdy\/persistence\/([^/]+)\/before-app-updating\/([^/]+)\/(?:version\.json|generations\/([^/]+)\/(manifest\.json|parts\/part-(\d+)\.json))/
+    );
+
+  if (canonicalHistoricalMatch) {
+    const [, ownerId, slug, generationId, fileType, partNumStr] = canonicalHistoricalMatch;
+    const isManifest = fileType === "manifest.json";
+    const isVersion = clean.endsWith("/version.json");
+    const partNumber = partNumStr ? parseInt(partNumStr, 10) : null;
+    return {
+      isCanonical: true,
+      isLegacy: false,
+      isTemp: false,
+      isBeforeAppUpdating: true,
+      ownerId,
+      datasetType: slugToDatasetType(slug),
+      datasetSlug: slug,
+      generationId: generationId || null,
+      partNumber,
+      isManifest,
+      isVersionPointer: isVersion,
+      syncBatchId: null,
+      originalKey: clean,
+    };
+  }
+
+  // 1b. Canonical Persistence: asdy/persistence/<ownerId>/<datasetSlug>/...
   const canonicalPersistMatch = clean.match(
     /^asdy\/persistence\/([^/]+)\/([^/]+)\/(?:version\.json|generations\/([^/]+)\/(manifest\.json|parts\/part-(\d+)\.json))/
   );
@@ -300,6 +397,7 @@ export function parseStorageKey(key: string): ParsedStoragePath | null {
       isCanonical: true,
       isLegacy: false,
       isTemp: false,
+      isBeforeAppUpdating: false,
       ownerId,
       datasetType: slugToDatasetType(slug),
       datasetSlug: slug,
@@ -320,6 +418,7 @@ export function parseStorageKey(key: string): ParsedStoragePath | null {
       isCanonical: true,
       isLegacy: false,
       isTemp: true,
+      isBeforeAppUpdating: false,
       ownerId,
       datasetType: slug ? slugToDatasetType(slug) : null,
       datasetSlug: slug || null,
@@ -346,6 +445,7 @@ export function parseStorageKey(key: string): ParsedStoragePath | null {
       isCanonical: false,
       isLegacy: true,
       isTemp: false,
+      isBeforeAppUpdating: clean.includes("before-app-updating"),
       ownerId,
       datasetType: slugToDatasetType(slugOrType),
       datasetSlug: slugOrType,
@@ -366,6 +466,7 @@ export function parseStorageKey(key: string): ParsedStoragePath | null {
       isCanonical: false,
       isLegacy: true,
       isTemp: true,
+      isBeforeAppUpdating: false,
       ownerId,
       datasetType: null,
       datasetSlug: null,

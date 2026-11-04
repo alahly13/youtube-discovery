@@ -1,0 +1,139 @@
+{
+  "id": "ls-youtube-discovery-user-playlists-full",
+  "name": "youtube-discovery-user-playlists (complete playlists store)",
+  "category": "PLAYLIST",
+  "mechanism": "localStorage",
+  "storageKey": "youtube-discovery-user-playlists",
+  "recordCount": 1,
+  "exportedAt": "2026-11-04T15:57:31.840Z",
+  "data": {
+    "state": {
+      "index": [
+        {
+          "counts": {
+            "channels": 0,
+            "custom": 0,
+            "shorts": 1,
+            "videos": 2,
+            "youtubePlaylists": 0
+          },
+          "createdAt": "2026-10-10T13:07:13.554Z",
+          "description": null,
+          "groupCount": 0,
+          "id": "upl_mv2esdn6_zrrx2q",
+          "itemCount": 3,
+          "manifestFile": "youtube-discovery/v1/playlists/records/upl_mv2esdn6_zrrx2q.json",
+          "name": "General",
+          "thumbnails": [
+            "https://i.ytimg.com/vi/LOpsdgh4Qbg/maxresdefault.jpg",
+            "https://i.ytimg.com/vi/_3XNhvuYSJg/hqdefault.jpg",
+            "https://i.ytimg.com/vi/sT5hSp0hUEw/maxresdefault.jpg"
+          ],
+          "updatedAt": "2026-10-10T13:09:29.701Z"
+        }
+      ],
+      "manifests": {
+        "upl_mv2esdn6_zrrx2q": {
+          "manifestVersion": 1,
+          "type": "youtube-discovery-playlist",
+          "playlist": {
+            "id": "upl_mv2esdn6_zrrx2q",
+            "name": "General",
+            "description": null,
+            "createdAt": "2026-10-10T13:07:13.554Z",
+            "updatedAt": "2026-10-10T13:09:29.701Z"
+          },
+          "groups": [],
+          "items": [
+            {
+              "entryId": "yt-video:LOpsdgh4Qbg",
+              "position": 2,
+              "groupId": null,
+              "addedAt": "2026-10-10T13:08:04.508Z",
+              "updatedAt": "2026-10-10T13:09:29.392Z",
+              "note": null,
+              "kind": "youtube",
+              "youtubeKind": "video",
+              "snapshot": {
+                "platformItemId": "LOpsdgh4Qbg",
+                "title": "السبكي الإنتاج الفني مكتشف النجوم 2021",
+                "description": null,
+                "thumbnailUrl": "https://i.ytimg.com/vi/LOpsdgh4Qbg/maxresdefault.jpg",
+                "channelId": "UCLs2LPYhjxFzjggqdH7gRYg",
+                "channelTitle": "بوسي الاسكندراني",
+                "publishedAt": "2020-12-17T22:40:35Z",
+                "viewsCount": 1935,
+                "likesCount": 18,
+                "commentsCount": 2,
+                "durationSeconds": 167,
+                "itemCount": null,
+                "url": "https://www.youtube.com/watch?v=LOpsdgh4Qbg",
+                "sourceItemType": "video",
+                "isShortsLike": false,
+                "isAgeRestricted": false
+              }
+            },
+            {
+              "entryId": "yt-video:_3XNhvuYSJg",
+              "position": 0,
+              "groupId": null,
+              "addedAt": "2026-10-10T13:08:41.465Z",
+              "updatedAt": "2026-10-10T13:09:29.392Z",
+              "note": null,
+              "kind": "youtube",
+              "youtubeKind": "shorts",
+              "snapshot": {
+                "platformItemId": "_3XNhvuYSJg",
+                "title": "الفنانه خلود بوسي",
+                "description": null,
+                "thumbnailUrl": "https://i.ytimg.com/vi/_3XNhvuYSJg/hqdefault.jpg",
+                "channelId": "UCV4bayQVO3A8OMs-m5N-RHA",
+                "channelTitle": "BODY MAN",
+                "publishedAt": "2021-06-03T15:32:24Z",
+                "viewsCount": 232,
+                "likesCount": 6,
+                "commentsCount": 0,
+                "durationSeconds": 53,
+                "itemCount": null,
+                "url": "https://www.youtube.com/watch?v=_3XNhvuYSJg",
+                "sourceItemType": "shorts_like",
+                "isShortsLike": true,
+                "isAgeRestricted": false
+              }
+            },
+            {
+              "entryId": "yt-video:sT5hSp0hUEw",
+              "position": 1,
+              "groupId": null,
+              "addedAt": "2026-10-10T13:08:51.813Z",
+              "updatedAt": "2026-10-10T13:09:29.392Z",
+              "note": null,
+              "kind": "youtube",
+              "youtubeKind": "video",
+              "snapshot": {
+                "platformItemId": "sT5hSp0hUEw",
+                "title": "تحدي التوينز بين بوسي واختها خوخه علي العصفوره",
+                "description": "اذا اعجبك الفديو ادعمني بااشتراكك واضغط لايك  ❤️ لو عجبكوا الفيديو ماتنسوش اللايك يا أحلى ناس ف الدنيا وابعته لأصحابك \n\n\n• لو عندك أفكار وحابب تشاركها  تواصل معايا على اللينكات دي 👇🏻",
+                "thumbnailUrl": "https://i.ytimg.com/vi/sT5hSp0hUEw/maxresdefault.jpg",
+                "channelId": "UCMOeF1hEfipykrMUrhr8hhQ",
+                "channelTitle": "الحظ والحظيظه ",
+                "publishedAt": "2020-12-17T07:00:12Z",
+                "viewsCount": 97856,
+                "likesCount": 686,
+                "commentsCount": 19,
+                "durationSeconds": 66,
+                "itemCount": null,
+                "url": "https://www.youtube.com/watch?v=sT5hSp0hUEw",
+                "sourceItemType": "video",
+                "isShortsLike": false,
+                "isAgeRestricted": false
+              }
+            }
+          ]
+        }
+      },
+      "activeId": null
+    },
+    "version": 0
+  }
+}

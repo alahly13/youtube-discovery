@@ -1,3 +1,5 @@
+import { getOriginDeviceMeta } from "../device/device-identity";
+
 /**
  * ═══════════════════════════════════════════════════════════════════════════
  * YouTube Discovery — IndexedDB Local-First Database (2026 Canonical)
@@ -55,6 +57,8 @@ export interface PendingOperation {
   createdAt: string;
   status: "PENDING" | "IN_FLIGHT" | "SYNCED" | "FAILED";
   errorMessage?: string;
+  originDeviceId?: string;
+  originDeviceLabel?: string;
 }
 
 export interface LocalSyncMetadata {
@@ -301,6 +305,7 @@ export async function saveEntityLocally(
   const db = await openLocalDatabase();
   const storeName = getStoreNameForDataset(datasetType);
 
+  const deviceMeta = getOriginDeviceMeta();
   const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const fullOp: PendingOperation = {
     operationId,
@@ -311,6 +316,8 @@ export async function saveEntityLocally(
     payload,
     createdAt: new Date().toISOString(),
     status: "PENDING",
+    originDeviceId: deviceMeta.originDeviceId,
+    originDeviceLabel: deviceMeta.originDeviceLabel,
   };
 
   return new Promise((resolve, reject) => {
@@ -322,7 +329,10 @@ export async function saveEntityLocally(
     const entityRecord: Record<string, unknown> = {
       ...payload,
       ownerId,
-      _localStatus: "PENDING_SYNC",
+      _localStatus: "LOCAL_PENDING",
+      _syncStatus: "LOCAL",
+      _originDeviceId: deviceMeta.originDeviceId,
+      _originDeviceLabel: deviceMeta.originDeviceLabel,
       _updatedAt: fullOp.createdAt,
     };
 
@@ -336,7 +346,16 @@ export async function saveEntityLocally(
     entityStore.put(entityRecord);
     outboxStore.add(fullOp);
 
-    tx.oncomplete = () => resolve({ ok: true, operationId });
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType, entityId, operationType: "UPSERT" },
+          })
+        );
+      }
+      resolve({ ok: true, operationId });
+    };
     tx.onerror = () => reject(tx.error || new Error(`Failed to commit local ${datasetType} operation`));
   });
 }
@@ -352,6 +371,7 @@ export async function deleteEntityLocally(
   const db = await openLocalDatabase();
   const storeName = getStoreNameForDataset(datasetType);
 
+  const deviceMeta = getOriginDeviceMeta();
   const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const fullOp: PendingOperation = {
     operationId,
@@ -362,6 +382,8 @@ export async function deleteEntityLocally(
     payload: { entityId },
     createdAt: new Date().toISOString(),
     status: "PENDING",
+    originDeviceId: deviceMeta.originDeviceId,
+    originDeviceLabel: deviceMeta.originDeviceLabel,
   };
 
   return new Promise((resolve, reject) => {
@@ -377,7 +399,16 @@ export async function deleteEntityLocally(
 
     outboxStore.add(fullOp);
 
-    tx.oncomplete = () => resolve({ ok: true, operationId });
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType, entityId, operationType: "DELETE" },
+          })
+        );
+      }
+      resolve({ ok: true, operationId });
+    };
     tx.onerror = () => reject(tx.error || new Error(`Failed to commit local delete on ${datasetType}`));
   });
 }
@@ -748,7 +779,14 @@ export async function bulkHydrateDatasetEntities(
 
     let inserted = 0;
     for (const raw of entities) {
-      const item = { ...raw, ownerId } as any;
+      const item = {
+        ...raw,
+        ownerId,
+        _localStatus: "COMMITTED",
+        _syncStatus: "CLOUD",
+        _generationId: generationId,
+        _revision: revision,
+      } as Record<string, unknown>;
       // Ensure key fields exist
       if (datasetType === "SAVED_ITEMS" && !item.platformItemId && item.id) {
         item.platformItemId = item.id;
@@ -786,7 +824,190 @@ export async function bulkHydrateDatasetEntities(
     };
     metaStore.put(metaEntry);
 
-    tx.oncomplete = () => resolve({ insertedCount: inserted });
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-hydration-changed", {
+            detail: { datasetType, insertedCount: inserted, generationId, revision },
+          })
+        );
+      }
+      resolve({ insertedCount: inserted });
+    };
     tx.onerror = () => reject(tx.error || new Error("Failed to bulk hydrate entities"));
+  });
+}
+
+/**
+ * Transitions local entities from LOCAL_PENDING to COMMITTED after verified cloud acknowledgement.
+ * Updates local catalog and sync metadata.
+ */
+export async function markEntitiesCommitted(
+  ownerId: string,
+  datasetType: CanonicalDatasetType,
+  entityIds: string[],
+  syncMeta: {
+    generationId: string;
+    revision: number;
+    syncedAt: string;
+    originDeviceId?: string;
+    originDeviceLabel?: string;
+  }
+): Promise<number> {
+  if (entityIds.length === 0) return 0;
+  const db = await openLocalDatabase();
+  const storeName = getStoreNameForDataset(datasetType);
+
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [
+      storeName,
+      IDB_STORES.DATASET_CATALOG,
+      IDB_STORES.LOCAL_SYNC_METADATA,
+    ]);
+    const entityStore = tx.objectStore(storeName);
+    const catStore = tx.objectStore(IDB_STORES.DATASET_CATALOG);
+    const metaStore = tx.objectStore(IDB_STORES.LOCAL_SYNC_METADATA);
+
+    let updatedCount = 0;
+    for (const id of entityIds) {
+      const key = datasetType === "SAVED_ITEMS" ? [ownerId, id] : id;
+      const req = entityStore.get(key);
+      req.onsuccess = () => {
+        let item = req.result as Record<string, unknown> | undefined;
+        if (!item && datasetType === "SAVED_ITEMS") {
+          const directReq = entityStore.get(id);
+          directReq.onsuccess = () => {
+            if (directReq.result) {
+              const rec = directReq.result as Record<string, unknown>;
+              rec._localStatus = "COMMITTED";
+              rec._syncStatus = "CLOUD";
+              rec._generationId = syncMeta.generationId;
+              rec._revision = syncMeta.revision;
+              rec._syncedAt = syncMeta.syncedAt;
+              if (syncMeta.originDeviceId) rec._originDeviceId = syncMeta.originDeviceId;
+              if (syncMeta.originDeviceLabel) rec._originDeviceLabel = syncMeta.originDeviceLabel;
+              entityStore.put(rec);
+              updatedCount++;
+            }
+          };
+          return;
+        }
+
+        if (item) {
+          item._localStatus = "COMMITTED";
+          item._syncStatus = "CLOUD";
+          item._generationId = syncMeta.generationId;
+          item._revision = syncMeta.revision;
+          item._syncedAt = syncMeta.syncedAt;
+          if (syncMeta.originDeviceId) item._originDeviceId = syncMeta.originDeviceId;
+          if (syncMeta.originDeviceLabel) item._originDeviceLabel = syncMeta.originDeviceLabel;
+          entityStore.put(item);
+          updatedCount++;
+        }
+      };
+    }
+
+    // Update catalog entry
+    const catEntry: LocalDatasetCatalogEntry = {
+      ownerId,
+      datasetType,
+      localRevision: syncMeta.revision,
+      remoteRevision: syncMeta.revision,
+      currentLocalGenerationId: syncMeta.generationId,
+      lastHydratedGenerationId: syncMeta.generationId,
+      lastHydratedRevision: syncMeta.revision,
+      pendingOperationCount: 0,
+      estimatedBytes: 0,
+      lastLocalMutationAt: syncMeta.syncedAt,
+      lastSuccessfulSyncAt: syncMeta.syncedAt,
+      syncStatus: "SYNCED",
+      schemaVersion: 1,
+    };
+    catStore.put(catEntry);
+
+    // Update sync metadata
+    const metaEntry: LocalSyncMetadata = {
+      ownerId,
+      datasetType,
+      lastCommittedRevision: syncMeta.revision,
+      lastCommittedGenerationId: syncMeta.generationId,
+      lastSuccessfulSyncAt: syncMeta.syncedAt,
+      updatedAt: syncMeta.syncedAt,
+    };
+    metaStore.put(metaEntry);
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-committed", {
+            detail: { datasetType, entityIds, syncMeta },
+          })
+        );
+      }
+      resolve(updatedCount);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to mark entities committed"));
+  });
+}
+
+/**
+ * Reconciles any interrupted sync batches or hanging IN_FLIGHT operations on startup.
+ * Guarantees zero data loss if a tab closed or browser crashed during cloud sync.
+ */
+export async function reconcileInterruptedSyncJournal(ownerId: string): Promise<{
+  recoveredOps: number;
+  interruptedBatches: number;
+}> {
+  const db = await openLocalDatabase();
+
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [
+      IDB_STORES.PENDING_OPERATIONS,
+      IDB_STORES.SYNC_JOURNAL,
+    ]);
+    const outboxStore = tx.objectStore(IDB_STORES.PENDING_OPERATIONS);
+    const journalStore = tx.objectStore(IDB_STORES.SYNC_JOURNAL);
+
+    let recoveredOps = 0;
+    let interruptedBatches = 0;
+    const now = Date.now();
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+    // 1. Reset any hanging IN_FLIGHT outbox ops back to PENDING
+    const outboxReq = outboxStore.getAll();
+    outboxReq.onsuccess = () => {
+      const ops = (outboxReq.result as PendingOperation[]) || [];
+      for (const op of ops) {
+        if (op.ownerId === ownerId && op.status === "IN_FLIGHT") {
+          const opTime = new Date(op.createdAt).getTime();
+          if (now - opTime > STALE_THRESHOLD_MS) {
+            op.status = "PENDING";
+            outboxStore.put(op);
+            recoveredOps++;
+          }
+        }
+      }
+    };
+
+    // 2. Mark any dangling UPLOADING journal batches as FAILED
+    const journalReq = journalStore.getAll();
+    journalReq.onsuccess = () => {
+      const batches = (journalReq.result as SyncJournalBatch[]) || [];
+      for (const batch of batches) {
+        if (batch.ownerId === ownerId && batch.batchStatus === "UPLOADING") {
+          const bTime = new Date(batch.createdAt).getTime();
+          if (now - bTime > STALE_THRESHOLD_MS) {
+            batch.batchStatus = "FAILED";
+            batch.lastErrorCode = "INTERRUPTED_SESSION_RECOVERED";
+            batch.recoveryState = "Interrupted sync session recovered on startup";
+            journalStore.put(batch);
+            interruptedBatches++;
+          }
+        }
+      }
+    };
+
+    tx.oncomplete = () => resolve({ recoveredOps, interruptedBatches });
+    tx.onerror = () => reject(tx.error || new Error("Failed to reconcile sync journal"));
   });
 }

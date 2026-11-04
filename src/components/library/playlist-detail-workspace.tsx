@@ -44,6 +44,7 @@ import {
 } from "@/lib/playlists/playlist-query";
 import { useUserPlaylistsStore } from "@/lib/state/user-playlists-store";
 import { formatCount, formatDate, formatDuration } from "@/lib/utils/format";
+import { ExpandableDescription } from "@/components/youtube/expandable-description";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Playlist Detail Workspace — /saved/[playlistId]
@@ -468,49 +469,63 @@ function DetailBody({
                 </span>
               )}
               {editingDesc ? (
-                <span className="mt-2 flex gap-2">
-                  <input
+                <div className="mt-2 space-y-2">
+                  <textarea
+                    rows={3}
                     value={descValue}
                     onChange={(e) => setDescValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                    placeholder="Playlist description / general notes (multiline supported)..."
+                    aria-label="Playlist description"
+                    className="w-full rounded-lg border border-border bg-surface p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="primary"
+                      className="h-8 px-3 text-xs gap-1"
+                      onClick={() =>
                         void updatePlaylistDescription(id, descValue.trim() || null).then(() =>
                           setEditingDesc(false),
-                        );
+                        )
                       }
-                      if (e.key === "Escape") {
+                    >
+                      <Check className="h-3.5 w-3.5" /> Save Description
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="h-8 px-3 text-xs"
+                      onClick={() => {
                         setDescValue(manifest.playlist.description ?? "");
                         setEditingDesc(false);
-                      }
-                    }}
-                    placeholder="Playlist description / general notes…"
-                    aria-label="Playlist description"
-                    className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-xs"
-                  />
-                  <Button
-                    variant="primary"
-                    className="h-9 px-3 text-xs"
-                    onClick={() =>
-                      void updatePlaylistDescription(id, descValue.trim() || null).then(() =>
-                        setEditingDesc(false),
-                      )
-                    }
-                  >
-                    <Check className="h-3.5 w-3.5" /> Save
-                  </Button>
-                </span>
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDescValue(manifest.playlist.description ?? "");
-                    setEditingDesc(true);
-                  }}
-                  className="mt-1 block max-w-full truncate text-left text-xs text-muted hover:text-foreground"
-                  title="Edit description"
-                >
-                  {manifest.playlist.description || "Add a description or general notes…"}
-                </button>
+                <div className="mt-2 flex flex-col gap-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1">
+                      {manifest.playlist.description ? (
+                        <ExpandableDescription description={manifest.playlist.description} />
+                      ) : (
+                        <p className="text-xs italic text-muted/60">No playlist description provided.</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDescValue(manifest.playlist.description ?? "");
+                        setEditingDesc(true);
+                      }}
+                      className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-primary hover:underline mt-1"
+                      title="Edit playlist description"
+                    >
+                      <Pencil className="h-3 w-3" />
+                      {manifest.playlist.description ? "Edit" : "Add description"}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -1225,6 +1240,12 @@ function ItemRow({ item, flat, ...shared }: { item: LibraryPlaylistItem; flat?: 
             <span className="italic">views unknown</span>
           )}
         </div>
+
+        {/* Expandable item description (YouTube video/channel/playlist) */}
+        {item.kind === "youtube" && (
+          <ExpandableDescription description={item.snapshot.description} />
+        )}
+
         {note && !editingNote && (
           <p className="mt-1.5 line-clamp-2 rounded-md bg-surface-muted/60 px-2 py-1 text-xs italic text-muted">
             {note}

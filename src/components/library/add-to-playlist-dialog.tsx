@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, FolderPlus, ListPlus, Loader2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, FolderPlus, ListPlus, Loader2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { canonicalYoutubeKey } from "@/types/library";
@@ -15,8 +15,9 @@ import { Button } from "@/components/ui/button";
  * playlist detail pages without leaving the current page.
  * ──────────────────────────────────────────────────────────────────────────
  * Lists every user playlist with membership state for the current item,
- * allows inline creation, and prevents duplicate membership per playlist
- * while freely allowing the same entity in different playlists.
+ * allows inline creation with optional multiline description, and prevents
+ * duplicate membership per playlist while freely allowing the same entity
+ * across different playlists.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -37,6 +38,8 @@ export function AddToPlaylistDialog({
   const createPlaylist = useUserPlaylistsStore((s) => s.createPlaylist);
 
   const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [showDescInput, setShowDescInput] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -46,6 +49,8 @@ export function AddToPlaylistDialog({
     if (open) {
       setNotice(null);
       setNewName("");
+      setNewDescription("");
+      setShowDescInput(false);
       void fetchIndex();
     }
   }, [open, fetchIndex]);
@@ -107,12 +112,15 @@ export function AddToPlaylistDialog({
     const name = newName.trim();
     if (!name || creating) return;
     setCreating(true);
-    const manifest = await createPlaylist(name);
+    const desc = newDescription.trim() || null;
+    const manifest = await createPlaylist(name, desc);
     if (manifest && item) {
       await addYoutubeItem(manifest.playlist.id, item);
     }
     setCreating(false);
     setNewName("");
+    setNewDescription("");
+    setShowDescInput(false);
   };
 
   return (
@@ -127,7 +135,7 @@ export function AddToPlaylistDialog({
         className="w-full max-w-md rounded-xl border border-border bg-surface p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-1 flex items-start justify-between gap-3">
+        <div className="mb-2 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
               Add to Playlist
@@ -192,21 +200,30 @@ export function AddToPlaylistDialog({
           )}
         </div>
 
-        <div className="mt-4 border-t border-border/60 pt-3">
+        {/* Inline Playlist Creation */}
+        <div className="mt-4 border-t border-border/60 pt-3 space-y-2">
           <div className="flex gap-2">
             <input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void handleCreate();
+                if (e.key === "Enter" && !showDescInput) void handleCreate();
               }}
               placeholder="+ Create new playlist"
               aria-label="New playlist name"
               className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
             />
             <Button
+              variant="secondary"
+              className="h-9 px-2 text-xs"
+              onClick={() => setShowDescInput(!showDescInput)}
+              title={showDescInput ? "Hide description" : "Add description"}
+            >
+              {showDescInput ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            </Button>
+            <Button
               variant="primary"
-              className="h-9 px-3 text-xs"
+              className="h-9 px-3 text-xs gap-1.5"
               disabled={!newName.trim() || creating}
               onClick={() => void handleCreate()}
             >
@@ -214,6 +231,16 @@ export function AddToPlaylistDialog({
               Create
             </Button>
           </div>
+
+          {showDescInput && (
+            <textarea
+              rows={2}
+              value={newDescription}
+              onChange={(e) => setNewDescription(e.target.value)}
+              placeholder="Optional multiline playlist description..."
+              className="w-full rounded-lg border border-border bg-surface p-2 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)] animate-in fade-in"
+            />
+          )}
         </div>
       </div>
     </div>

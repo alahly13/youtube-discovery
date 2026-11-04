@@ -95,6 +95,30 @@ function validatePasswordStrength(pw) {
   return null;
 }
 
+/**
+ * Create a Supabase admin client configured for CLI durability.
+ * Uses Connection: 'close' to prevent undici socket pool hang-ups after
+ * long interactive terminal readline pauses.
+ */
+function getAdminSupabaseClient(supabaseUrl, secretKey) {
+  return createClient(supabaseUrl, secretKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+    global: {
+      fetch: (resource, init = {}) => {
+        const headers = new Headers(init.headers || {});
+        headers.set("Connection", "close");
+        return fetch(resource, {
+          ...init,
+          headers,
+        });
+      },
+    },
+  });
+}
+
 async function main() {
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
     console.log("Usage: npm run auth:admin-reset [options]\n");
@@ -124,12 +148,7 @@ async function main() {
     process.exit(1);
   }
 
-  const supabase = createClient(supabaseUrl, secretKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  const supabase = getAdminSupabaseClient(supabaseUrl, secretKey);
 
   console.log(`Auditing Supabase Auth for administrator account: ${adminEmail}...`);
   const { data: usersData, error: listErr } = await supabase.auth.admin.listUsers();
@@ -204,23 +223,52 @@ async function main() {
 
   console.log("\nUpdating administrator credentials in Supabase Auth...");
 
-  // Update password and ensure email confirmation in Supabase Auth
-  const { data: updateData, error: updateErr } = await supabase.auth.admin.updateUserById(
-    existingAdmin.id,
-    {
-      password: newPassword,
-      email_confirm: true,
-      user_metadata: {
-        ...(existingAdmin.user_metadata || {}),
-        username: defaultUsername,
-        name: defaultUsername,
-        email_verified: true,
-      },
-    }
-  );
+  // Update password and ensure email confirmation in Supabase Auth with fresh client & auto-retry
+  let updateData = null;
+  let updateErr = null;
 
-  if (updateErr) {
-    console.error(`Failed to update password in Supabase Auth: ${updateErr.message}`);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const activeClient = getAdminSupabaseClient(supabaseUrl, secretKey);
+      const res = await activeClient.auth.admin.updateUserById(
+        existingAdmin.id,
+        {
+          password: newPassword,
+          email_confirm: true,
+          user_metadata: {
+            ...(existingAdmin.user_metadata || {}),
+            username: defaultUsername,
+            name: defaultUsername,
+            email_verified: true,
+          },
+        }
+      );
+
+      if (res.error) {
+        updateErr = res.error;
+        const msg = String(res.error.message || "").toLowerCase();
+        if (attempt < 3 && (msg.includes("fetch") || msg.includes("network") || msg.includes("timeout") || msg.includes("econnreset"))) {
+          console.log(`  [Notice] Network retry attempt ${attempt} of 3...`);
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
+      } else {
+        updateData = res.data;
+        updateErr = null;
+        break;
+      }
+    } catch (err) {
+      updateErr = err;
+      if (attempt < 3) {
+        console.log(`  [Notice] Network retry attempt ${attempt} of 3...`);
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+    }
+  }
+
+  if (updateErr || !updateData) {
+    console.error(`Failed to update password in Supabase Auth: ${updateErr?.message || "Unknown error"}`);
     process.exit(1);
   }
 

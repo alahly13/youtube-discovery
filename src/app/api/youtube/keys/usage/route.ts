@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { getSafeApiKeysList } from "@/lib/platforms/youtube/youtube-api-keys";
 import {
   nextPacificMidnightIso,
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
   try {
-    const backend = getBlobBackend();
+    const backend = getNewStorageBackend();
     const [keysData, pools, usage]: [
       Awaited<ReturnType<typeof getSafeApiKeysList>>,
       QuotaPoolsDoc,

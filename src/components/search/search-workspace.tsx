@@ -46,7 +46,6 @@ import { YouTubeItemCard } from "@/components/youtube/youtube-item-card";
 import { BackToTop } from "@/components/ui/back-to-top";
 import { applyYouTubeResultPipeline } from "@/lib/filters/youtube-result-filters";
 import { authFetch } from "@/lib/client/auth-fetch";
-import { saveSearchRecord } from "@/lib/client/blob-upload";
 import { isSubmittableQuery } from "@/lib/search/query-pipeline";
 import {
   shuffleOneWord,
@@ -357,20 +356,7 @@ export function SearchWorkspace() {
           searchedAt,
         });
 
-        // Also persist complete record with full rawJson to server Blob archive
-        // (direct POST for small records, staged chunked upload when large).
-        saveSearchRecord({
-          id: searchRecordId,
-          query: activeQuery,
-          resourceSelection: activeResource,
-          settings: { ...activeSettings },
-          filters,
-          manifest: newManifest,
-        }).catch((archiveErr: unknown) => {
-          console.error("Failed to archive search on server:", archiveErr);
-        });
-
-        // Record successful search in persistent history with clean query title
+        // Record successful search in persistent history with clean query title (Local-First IndexedDB + Outbox)
         const items = newManifest.normalizedItems ?? [];
         const videoCount = items.filter((i) => i.itemType === "video" || i.itemType === "shorts_like").length;
         const channelCount = items.filter((i) => i.itemType === "channel").length;

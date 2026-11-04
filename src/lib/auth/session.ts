@@ -2,8 +2,15 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 import { SESSION_COOKIE_NAME } from "./cookies";
-import type { BlobBackend } from "../blob/blob-backend";
-import { adminSessionPathname, BLOB_NAMESPACES } from "../blob/blob-paths";
+import type { StorageBackend, BlobBackend } from "../storage/storage-backend";
+
+export function adminSessionPathname(sessionId: string): string {
+  return `asdy/admin/sessions/${sessionId}.json`;
+}
+
+export const BLOB_NAMESPACES = {
+  admin: "asdy/admin",
+};
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

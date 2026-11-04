@@ -2,14 +2,13 @@ import "server-only";
 
 import crypto from "node:crypto";
 import { createZipArchive, type ZipFileEntry } from "@/lib/storage/zip-builder";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import {
   classifyLegacyCategory,
   type CompleteLegacyScanReport,
   type DiscoveredLegacyItem,
   runServerLegacyScan,
 } from "./legacy-scanner";
-import { readRemoteBlobObject } from "@/lib/storage/blob-inventory";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -100,12 +99,19 @@ export interface BackupGenerationResult {
  */
 async function fetchItemBytes(item: DiscoveredLegacyItem): Promise<Buffer | null> {
   if (item.source === "vercel_blob" && item.downloadUrl) {
-    return await readRemoteBlobObject(item.downloadUrl);
+    try {
+      const res = await fetch(item.downloadUrl);
+      if (res.ok) {
+        return Buffer.from(await res.arrayBuffer());
+      }
+    } catch {
+      return null;
+    }
   }
 
   if (item.source === "supabase_database") {
     try {
-      const backend = getBlobBackend();
+      const backend = getNewStorageBackend();
       return await backend.getBytes(item.originalPathname);
     } catch {
       return null;

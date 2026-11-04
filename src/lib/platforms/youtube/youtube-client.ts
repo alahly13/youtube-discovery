@@ -121,7 +121,7 @@ export class YouTubeApiClient {
         await recordOutcome({ keyId, poolKey, projectId, operation: path, bucket, units, ok: false, errorReason: reason });
         // Pool-level exhaustion for THIS bucket only (other buckets stay live).
         await markKeyQuotaExhausted(keyId, reason);
-        const { getBlobBackend } = await import("../../blob/backend-factory");
+        const { getBlobBackend } = await import("../../storage/r2-blob-backend");
         await markPoolBucketExhausted(
           getBlobBackend(),
           poolKey,
@@ -201,7 +201,7 @@ async function recordOutcome(outcome: {
   errorReason: string | null;
 }): Promise<void> {
   try {
-    const { getBlobBackend } = await import("../../blob/backend-factory");
+    const { getBlobBackend } = await import("../../storage/r2-blob-backend");
     await recordRequestOutcome(getBlobBackend(), outcome);
   } catch {
     // Accounting is informational; the provider result stands on its own.

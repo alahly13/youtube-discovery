@@ -295,6 +295,14 @@ export default {
           return jsonResponse({ error: "Missing required fields: batchId and non-empty items array." }, 400, cors);
         }
 
+        if (body.items.length > 50) {
+          return jsonResponse(
+            { error: `Batch item count (${body.items.length}) exceeds maximum limit of 50 items per batch.` },
+            400,
+            cors
+          );
+        }
+
         const targetPrefix = body.targetPrefix || sanitizeKey(body.items[0].key.split("/").slice(0, 3).join("/"));
 
         const authCheck = await verifyCapabilityToken(

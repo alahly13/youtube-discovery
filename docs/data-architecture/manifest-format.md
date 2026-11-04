@@ -43,6 +43,15 @@ Collections are completely removed. Supported dataset types are strictly:
 
 ---
 
+## 1.5 2026 Client-Local Feature: "I Will Search For" (Zero Cloud)
+In addition to the 5 canonical cloud datasets, the system provides a 100% client-local research reminder notebook:
+- **Local Store:** `local_research_reminders` in IndexedDB (`idb-database` v3).
+- **Isolation:** Excluded from the cloud sync outbox, zero network traffic, zero database rows, zero Worker/R2 objects.
+- **Purpose:** Quick personal research reminders ("سأبحث عنه") bookmarked directly from search results.
+- **Accumulated Manifest:** Client-accumulated local manifest exportable on-demand as a single JSON file.
+
+---
+
 ## 2. Storage Hierarchy & Direct Permanent Upload Path
 
 To eliminate the risk of accidental TTL deletion of committed parts and avoid expensive cross-folder move operations in Supabase Storage, **manifest parts are uploaded directly to immutable, generation-specific permanent paths scoped by `storage_owner_uuid`**:

@@ -29,6 +29,12 @@ const backupPayloadSchema = z.object({
       recordCount: z.number(),
       sizeBytes: z.number(),
       previewData: z.unknown().optional(),
+      /**
+       * Complete raw data for backup export — full depth, full array length.
+       * Used preferentially over previewData when available to ensure the
+       * backup archive contains untruncated content.
+       */
+      fullBackupData: z.unknown().optional(),
       isProtected: z.boolean().optional(),
     })
   ),
@@ -36,9 +42,10 @@ const backupPayloadSchema = z.object({
 
 /**
  * Redacts secrets and sensitive fields from raw objects before writing to ZIP.
+ * Preserves full array lengths and full strings up to depth 25.
  */
 function redactObjectSecrets(obj: unknown, depth = 0): unknown {
-  if (depth > 6 || obj === null || obj === undefined) return obj;
+  if (depth > 25 || obj === null || obj === undefined) return obj;
   if (typeof obj === "string") {
     if (/^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$/.test(obj) && obj.length > 30) {
       return "[REDACTED_TOKEN]";
@@ -109,10 +116,28 @@ export async function POST(request: Request) {
     if (entry.isProtected) continue; // Exclude protected items
 
     const folder = categoryFolderMap[entry.category] || "Saved-Items";
-    const safeKey = entry.storageKey.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const filename = `${folder}/${safeKey}.json`;
+    
+    // Create clean, descriptive standard filenames (e.g. Saved-Items/saved-items.json)
+    let baseFilename: string;
+    if (entry.storageKey.includes("::")) {
+      const parts = entry.storageKey.split("::");
+      const field = parts[1];
+      const safeField = field.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+      baseFilename = `${folder}/${safeField}.json`;
+    } else {
+      const safeKey = entry.storageKey.replace(/[^a-zA-Z0-9._-]/g, "_");
+      baseFilename = `${folder}/${safeKey}.json`;
+    }
 
-    const sanitizedData = redactObjectSecrets(entry.previewData || {});
+    let filename = baseFilename;
+    let counter = 1;
+    while (fileEntries.some((f) => f.filename === filename)) {
+      filename = baseFilename.replace(/\.json$/, `_${counter++}.json`);
+    }
+
+    // Prioritize untruncated fullBackupData over previewData
+    const rawData = entry.fullBackupData !== undefined ? entry.fullBackupData : (entry.previewData ?? {});
+    const sanitizedData = redactObjectSecrets(rawData);
     const contentStr = JSON.stringify(
       {
         id: entry.id,

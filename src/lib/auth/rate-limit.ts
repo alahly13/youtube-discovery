@@ -1,8 +1,11 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import type { BlobBackend } from "../blob/blob-backend";
-import { rateLimitPathname } from "../blob/blob-paths";
+import type { StorageBackend, BlobBackend } from "../storage/storage-backend";
+
+export function rateLimitPathname(ipHash: string): string {
+  return `asdy/admin/ratelimit/${ipHash}.json`;
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

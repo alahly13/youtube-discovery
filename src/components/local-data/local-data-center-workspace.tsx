@@ -29,6 +29,7 @@ import {
   type LocalDatasetCategory,
   type StorageOverviewMetrics,
   scanAllLocalData,
+  collectFullBackupData,
   type DeletionResult,
 } from "@/lib/recovery/local-data-center-service";
 import { formatBytes } from "@/lib/utils/format";
@@ -158,22 +159,26 @@ export function LocalDataCenterWorkspace() {
   // Handle Backup & Export
   const handleScanAndDownload = async () => {
     setIsExporting(true);
-    setExportMessage("Scanning and assembling verifiable archive...");
+    setExportMessage("Scanning and assembling verifiable archive with full data...");
 
     try {
-      // 1. Fresh scan before download
+      // 1. Fresh scan before download to update UI status
       const freshScan = await scanAllLocalData(metrics.authenticatedUserId);
       setMetrics(freshScan.metrics);
       setEntries(freshScan.entries);
 
-      // 2. Submit to backup export route
+      // 2. Deep collection of full, untruncated browser storage records
+      const fullBackupEntries = await collectFullBackupData(metrics.authenticatedUserId);
+      const targetEntries = fullBackupEntries.length > 0 ? fullBackupEntries : freshScan.entries;
+
+      // 3. Submit to backup export route
       const res = await fetch("/api/local-data/backup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: metrics.authenticatedUserId,
           capturedAt: new Date().toISOString(),
-          entries: freshScan.entries,
+          entries: targetEntries,
         }),
       });
 
@@ -182,7 +187,7 @@ export function LocalDataCenterWorkspace() {
         throw new Error(errorData.error || `Export failed with HTTP ${res.status}`);
       }
 
-      // 3. Trigger browser download of ZIP
+      // 4. Trigger browser download of ZIP
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -193,7 +198,10 @@ export function LocalDataCenterWorkspace() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      setExportMessage(`Download complete! Successfully packaged ${freshScan.entries.length} items (${formatBytes(blob.size)}).`);
+      const totalRecords = targetEntries.reduce((sum, e) => sum + (e.recordCount || 1), 0);
+      setExportMessage(
+        `Download complete! Successfully packaged ${targetEntries.length} datasets (${totalRecords.toLocaleString()} records, ${formatBytes(blob.size)}).`
+      );
     } catch (err) {
       setExportMessage(`Export error: ${err instanceof Error ? err.message : String(err)}`);
     } finally {

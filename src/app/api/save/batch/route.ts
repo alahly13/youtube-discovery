@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -118,7 +118,7 @@ export async function POST(request: Request) {
 
     // Best-effort convenience update of derived root manifest.json
     try {
-      const backend = getBlobBackend();
+      const backend = getNewStorageBackend();
       const rootPath = `${storageOwnerUuid}/persistence/datasets/${datasetId}/manifest.json`;
       const rootManifest = {
         $schema: "https://youtube-discovery.app/schemas/manifest-root-v1.json",

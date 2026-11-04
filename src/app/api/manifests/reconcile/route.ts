@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
   const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
 
   try {
-    const backend = getBlobBackend();
+    const backend = getNewStorageBackend();
     const prefix = `${storageOwnerUuid}/persistence/`;
     const listResult = await backend.list(prefix);
 
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
         const item: ReconciliationItem = {
           storagePath: obj.pathname,
           observedBytes: obj.size,
-          observedSha256: obj.etag.replace(/"/g, ""),
+          observedSha256: (obj.etag || "").replace(/"/g, ""),
           status: "VERIFIED",
           details: `Physical object exists and passes size validation (${obj.size} bytes).`,
         };

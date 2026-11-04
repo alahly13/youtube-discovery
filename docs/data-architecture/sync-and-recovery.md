@@ -40,7 +40,9 @@ IndexedDB: youtube_discovery_local_v1
 ├── entities_search_history     (Key: id, Index: [ownerId, executedAt])
 ├── workspace_snapshots         (Key: [ownerId, route], value: active filters/query/state)
 ├── pending_operations          (Key: operationId, Index: [ownerId, datasetId, sequenceNumber], status)
-└── local_sync_metadata         (Key: [ownerId, datasetId], value: currentLocalSequence, lastCloudRevision)
+├── local_sync_metadata         (Key: [ownerId, datasetId], value: currentLocalSequence, lastCloudRevision)
+└── local_research_reminders    (Key: id, Index: ownerId, [ownerId, videoId], [ownerId, status], [ownerId, addedAt])
+                                [100% Client-Local, Excluded from Outbox & Cloud Sync]
 ```
 
 ---

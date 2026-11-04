@@ -1,11 +1,14 @@
 import "server-only";
 
-import type { BlobBackend, BlobObjectMeta } from "../blob/blob-backend";
+import type { StorageBackend, StorageObjectMeta, BlobBackend, BlobObjectMeta } from "./storage-backend";
 import {
+  StorageConflictError,
+  StorageNotFoundError,
+  StorageUnavailableError,
   BlobConflictError,
   BlobNotFoundError,
   BlobUnavailableError,
-} from "../blob/blob-backend";
+} from "./storage-backend";
 import {
   R2WorkerStorageClient,
   getR2WorkerStorageClient,
@@ -259,3 +262,6 @@ export function getStorageBackendForBucket(bucketId?: string): R2StorageBackend 
   if (bucketId === NEW_R2_BUCKET) return getNewStorageBackend();
   return new R2StorageBackend(bucketId || NEW_R2_BUCKET);
 }
+
+// Backward compatibility alias
+export const getBlobBackend = getNewStorageBackend;

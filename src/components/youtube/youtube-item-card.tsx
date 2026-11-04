@@ -1,10 +1,11 @@
-import { Bot, Check, Copy, ExternalLink, ListPlus, ListVideo, Play, Save, Tv, User } from "lucide-react";
+import { Bookmark, Bot, Check, Copy, ExternalLink, ListPlus, ListVideo, Play, Save, Tv, User } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { AddToPlaylistDialog } from "@/components/library/add-to-playlist-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useResearchReminders } from "@/lib/storage/use-research-reminders";
 import {
   formatCompactCount,
   formatCount,
@@ -34,12 +35,15 @@ export function YouTubeItemCard({
 }) {
   const savedItems = useYouTubeWorkspaceStore((s) => s.savedItems);
   const toggleItemSaved = useYouTubeWorkspaceStore((s) => s.toggleItemSaved);
+  const { isSaved: isReminderSaved, toggleReminder } = useResearchReminders();
 
   const isSaved = savedItems.some(
     (i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType
   );
+  const isInResearchReminders = isReminderSaved(item.platformItemId);
 
   const handleToggleSave = () => toggleItemSaved(item);
+  const handleToggleReminder = () => toggleReminder(item);
   const [pickerOpen, setPickerOpen] = useState(false);
   const openPicker = () => setPickerOpen(true);
 
@@ -52,21 +56,45 @@ export function YouTubeItemCard({
     case "channel":
       return (
         <>
-          <ChannelCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} onOpenPicker={openPicker} />
+          <ChannelCard
+            item={item}
+            onAiExplore={onAiExplore}
+            isSaved={isSaved}
+            onToggleSave={handleToggleSave}
+            isInResearchReminders={isInResearchReminders}
+            onToggleReminder={handleToggleReminder}
+            onOpenPicker={openPicker}
+          />
           {dialog}
         </>
       );
     case "playlist":
       return (
         <>
-          <PlaylistCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} onOpenPicker={openPicker} />
+          <PlaylistCard
+            item={item}
+            onAiExplore={onAiExplore}
+            isSaved={isSaved}
+            onToggleSave={handleToggleSave}
+            isInResearchReminders={isInResearchReminders}
+            onToggleReminder={handleToggleReminder}
+            onOpenPicker={openPicker}
+          />
           {dialog}
         </>
       );
     default:
       return (
         <>
-          <VideoCard item={item} onAiExplore={onAiExplore} isSaved={isSaved} onToggleSave={handleToggleSave} onOpenPicker={openPicker} />
+          <VideoCard
+            item={item}
+            onAiExplore={onAiExplore}
+            isSaved={isSaved}
+            onToggleSave={handleToggleSave}
+            isInResearchReminders={isInResearchReminders}
+            onToggleReminder={handleToggleReminder}
+            onOpenPicker={openPicker}
+          />
           {dialog}
         </>
       );
@@ -85,12 +113,16 @@ function VideoCard({
   onAiExplore,
   isSaved,
   onToggleSave,
+  isInResearchReminders,
+  onToggleReminder,
   onOpenPicker,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
   isSaved: boolean;
   onToggleSave: () => void;
+  isInResearchReminders: boolean;
+  onToggleReminder: () => void;
   onOpenPicker: () => void;
 }) {
   const isShortsLike = item.isShortsLike || item.itemType === "shorts_like";
@@ -198,10 +230,31 @@ function VideoCard({
           <Button 
             variant={isSaved ? "primary" : "secondary"} 
             className="h-8 px-2" 
-            title={isSaved ? "Unsave result" : "Save result"}
+            title={isSaved ? "Unsave result (إلغاء الحفظ)" : "Save result to Saved Items (حفظ إلى العناصر المحفوظة)"}
             onClick={onToggleSave}
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
+          </Button>
+          <Button
+            variant={isInResearchReminders ? "primary" : "secondary"}
+            className={`h-8 px-2 transition-colors cursor-pointer ${
+              isInResearchReminders
+                ? "bg-amber-600/90 text-white hover:bg-amber-600 border-amber-600 dark:bg-amber-500/80"
+                : "hover:text-amber-500"
+            }`}
+            title={
+              isInResearchReminders
+                ? "In I Will Search For — Click to remove (في قائمة سأبحث عنه — انقر للإزالة)"
+                : "Add to I Will Search For (أضف إلى قائمة سأبحث عنه)"
+            }
+            onClick={onToggleReminder}
+            aria-label={
+              isInResearchReminders
+                ? "Remove from I Will Search For"
+                : "Add to I Will Search For"
+            }
+          >
+            <Bookmark className={`h-3.5 w-3.5 ${isInResearchReminders ? "fill-current" : ""}`} />
           </Button>
           <Button
             variant="secondary"
@@ -259,12 +312,16 @@ function ChannelCard({
   onAiExplore,
   isSaved,
   onToggleSave,
+  isInResearchReminders,
+  onToggleReminder,
   onOpenPicker,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
   isSaved: boolean;
   onToggleSave: () => void;
+  isInResearchReminders: boolean;
+  onToggleReminder: () => void;
   onOpenPicker: () => void;
 }) {
   return (
@@ -358,10 +415,31 @@ function ChannelCard({
           <Button 
             variant={isSaved ? "primary" : "secondary"} 
             className="h-8 px-2" 
-            title={isSaved ? "Unsave channel" : "Save channel"}
+            title={isSaved ? "Unsave channel (إلغاء حفظ القناة)" : "Save channel to Saved Items (حفظ القناة)"}
             onClick={onToggleSave}
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
+          </Button>
+          <Button
+            variant={isInResearchReminders ? "primary" : "secondary"}
+            className={`h-8 px-2 transition-colors cursor-pointer ${
+              isInResearchReminders
+                ? "bg-amber-600/90 text-white hover:bg-amber-600 border-amber-600 dark:bg-amber-500/80"
+                : "hover:text-amber-500"
+            }`}
+            title={
+              isInResearchReminders
+                ? "In I Will Search For — Click to remove (في قائمة سأبحث عنه)"
+                : "Add to I Will Search For (أضف إلى قائمة سأبحث عنه)"
+            }
+            onClick={onToggleReminder}
+            aria-label={
+              isInResearchReminders
+                ? "Remove from I Will Search For"
+                : "Add to I Will Search For"
+            }
+          >
+            <Bookmark className={`h-3.5 w-3.5 ${isInResearchReminders ? "fill-current" : ""}`} />
           </Button>
           <Button
             variant="secondary"
@@ -397,12 +475,16 @@ function PlaylistCard({
   onAiExplore,
   isSaved,
   onToggleSave,
+  isInResearchReminders,
+  onToggleReminder,
   onOpenPicker,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
   onAiExplore?: (item: NormalizedYouTubeDiscoveryItem) => void;
   isSaved: boolean;
   onToggleSave: () => void;
+  isInResearchReminders: boolean;
+  onToggleReminder: () => void;
   onOpenPicker: () => void;
 }) {
   return (
@@ -499,10 +581,31 @@ function PlaylistCard({
           <Button 
             variant={isSaved ? "primary" : "secondary"} 
             className="h-8 px-2" 
-            title={isSaved ? "Unsave playlist" : "Save playlist"}
+            title={isSaved ? "Unsave playlist (إلغاء حفظ قائمة التشغيل)" : "Save playlist to Saved Items (حفظ قائمة التشغيل)"}
             onClick={onToggleSave}
           >
             <Save className={`h-3.5 w-3.5 ${isSaved ? "fill-current" : ""}`} />
+          </Button>
+          <Button
+            variant={isInResearchReminders ? "primary" : "secondary"}
+            className={`h-8 px-2 transition-colors cursor-pointer ${
+              isInResearchReminders
+                ? "bg-amber-600/90 text-white hover:bg-amber-600 border-amber-600 dark:bg-amber-500/80"
+                : "hover:text-amber-500"
+            }`}
+            title={
+              isInResearchReminders
+                ? "In I Will Search For — Click to remove (في قائمة سأبحث عنه)"
+                : "Add to I Will Search For (أضف إلى قائمة سأبحث عنه)"
+            }
+            onClick={onToggleReminder}
+            aria-label={
+              isInResearchReminders
+                ? "Remove from I Will Search For"
+                : "Add to I Will Search For"
+            }
+          >
+            <Bookmark className={`h-3.5 w-3.5 ${isInResearchReminders ? "fill-current" : ""}`} />
           </Button>
           <Button
             variant="secondary"

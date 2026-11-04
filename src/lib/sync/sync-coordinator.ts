@@ -49,6 +49,17 @@ class SyncCoordinator {
   private nextAutoSyncAt: string | null = null;
   private broadcastChannel: BroadcastChannel | null = null;
   private ownerId: string = "asdy-admin";
+  private latestSummary: PendingOperationsSummary = {
+    totalPending: 0,
+    byDataset: {
+      SAVED_ITEMS: 0,
+      PLAYLIST: 0,
+      SEARCH_HISTORY: 0,
+      RESEARCH_QUEUE: 0,
+      REFERENCES: 0,
+    },
+    estimatedBytes: 0,
+  };
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -57,6 +68,23 @@ class SyncCoordinator {
       this.initBroadcastChannel();
       this.initAutoSyncScheduler();
       this.initTabProtection();
+      this.autoResolveOwnerId();
+    }
+  }
+
+  private autoResolveOwnerId() {
+    if (typeof fetch !== "undefined") {
+      fetch("/api/auth/status")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && (data.userId || data.storageOwnerUuid)) {
+            const resolved = data.userId || data.storageOwnerUuid;
+            if (resolved && resolved !== this.ownerId) {
+              this.setOwnerId(resolved);
+            }
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -93,6 +121,8 @@ class SyncCoordinator {
     } catch {
       // Fallback
     }
+
+    this.latestSummary = summary;
 
     const event: SyncStateEvent = {
       status: this.status,
@@ -208,6 +238,12 @@ class SyncCoordinator {
         if (this.status === "SYNCING") {
           e.preventDefault();
           e.returnValue = "Cloud synchronization is currently in progress. Exiting may interrupt the upload.";
+          return e.returnValue;
+        }
+        if (this.latestSummary && this.latestSummary.totalPending > 0) {
+          e.preventDefault();
+          e.returnValue = `You have ${this.latestSummary.totalPending} unsynchronized change(s) saved locally in your browser. They are preserved safely in IndexedDB, but have not yet reached the cloud.`;
+          return e.returnValue;
         }
       });
     }

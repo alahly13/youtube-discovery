@@ -1,7 +1,7 @@
 import "server-only";
 
-import type { BlobBackend } from "../blob/blob-backend";
-import { getBlobBackend } from "../blob/backend-factory";
+import type { StorageBackend as BlobBackend } from "../storage/storage-backend";
+import { getBlobBackend } from "../storage/r2-blob-backend";
 import type { YouTubeManifest } from "@/types/manifest";
 import type {
   YouTubeResultFilters,
@@ -14,7 +14,7 @@ import {
   readIndex,
   saveRecord,
   type IndexEntry,
-} from "../blob/record-store";
+} from "../storage/record-store";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

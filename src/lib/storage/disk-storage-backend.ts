@@ -2,8 +2,8 @@ import "server-only";
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { BlobBackend, BlobObjectMeta } from "../blob/blob-backend";
-import { BlobConflictError, BlobNotFoundError } from "../blob/blob-backend";
+import type { BlobBackend, BlobObjectMeta } from "./storage-backend";
+import { BlobConflictError, BlobNotFoundError } from "./storage-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

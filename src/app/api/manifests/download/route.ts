@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const backend = getBlobBackend();
+    const backend = getNewStorageBackend();
     const bytes = await backend.getBytes(targetPath);
     const filename = targetPath.split("/").pop() || "manifest-part.json";
 

@@ -8,7 +8,7 @@ import {
   OLD_R2_BUCKET,
   NEW_R2_BUCKET,
 } from "./r2-blob-backend";
-import type { BlobBackend } from "../blob/blob-backend";
+import type { BlobBackend } from "./storage-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

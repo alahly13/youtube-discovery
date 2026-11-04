@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
 
   try {
-    const backend = getBlobBackend();
+    const backend = getNewStorageBackend();
     const listResult = await backend.list(`${storageOwnerUuid}/persistence/`);
 
     // Parse paths into a structured tree
@@ -98,7 +98,7 @@ export async function GET(request: Request) {
           storagePath: obj.pathname,
           byteCount: obj.size,
           recordCount: Math.max(1, Math.round(obj.size / 200)),
-          sha256: obj.etag.replace(/"/g, "") || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          sha256: (obj.etag || "").replace(/"/g, "") || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
           status: "VERIFIED",
         });
         gen.totalBytes += obj.size;

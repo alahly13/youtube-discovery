@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { readSessionId, revokeSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 import { assertSameOrigin } from "@/lib/auth/require-auth";
 import { createRouteHandlerSupabaseClient } from "@/lib/supabase/server";
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   // 2. Revoke local server-side session in storage
   try {
-    const backend = getBlobBackend();
+    const backend = getNewStorageBackend();
     const sid = readSessionId(request.headers.get("cookie"));
     if (sid) await revokeSession(backend, sid);
   } catch {

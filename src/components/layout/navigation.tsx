@@ -53,8 +53,9 @@ const mainNavSections: NavSection[] = [
     title: "MY LIBRARY",
     items: [
       { href: "/saved", label: "Saved Items", icon: BookmarkCheck },
+      { href: "/dashboard/i-will-search-for", label: "I Will Search For", icon: Bookmark },
       { href: "/playlist-manager", label: "Playlist Manager", icon: ListVideo },
-      { href: "/saved-searches", label: "Saved Searches", icon: Bookmark },
+      { href: "/saved-searches", label: "Saved Searches", icon: FileText },
       { href: "/history", label: "Search History", icon: History },
     ],
   },

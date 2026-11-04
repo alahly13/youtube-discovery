@@ -1,9 +1,14 @@
 import "server-only";
 
-import type { BlobBackend } from "../blob/blob-backend";
-import { getBlobBackend } from "../blob/backend-factory";
-import { recordPathname } from "../blob/blob-paths";
-import { deleteRecord, loadRecord, readIndex, saveRecord } from "../blob/record-store";
+import type { StorageBackend as BlobBackend } from "../storage/storage-backend";
+import { getBlobBackend } from "../storage/r2-blob-backend";
+import {
+  deleteRecord,
+  loadRecord,
+  readIndex,
+  recordPathname,
+  saveRecord,
+} from "../storage/record-store";
 import type {
   LibraryPlaylistItem,
   UserPlaylistIndexEntry,

@@ -1,8 +1,9 @@
 import "server-only";
 
-import type { BlobBackend } from "../blob/blob-backend";
-import { BlobConflictError } from "../blob/blob-backend";
-import { ADMIN_ACCOUNT_PATHNAME } from "../blob/blob-paths";
+import type { StorageBackend as BlobBackend } from "../storage/storage-backend";
+import { StorageConflictError as BlobConflictError } from "../storage/storage-backend";
+
+export const ADMIN_ACCOUNT_PATHNAME = "youtube-discovery/v1/admin/account.json";
 import { hashPassword, validateNewPassword, validateUsername, verifyPassword } from "./password";
 
 /**

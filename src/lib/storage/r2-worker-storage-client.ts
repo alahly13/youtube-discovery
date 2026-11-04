@@ -10,7 +10,7 @@ import {
   BlobConflictError,
   BlobNotFoundError,
   BlobUnavailableError,
-} from "../blob/blob-backend";
+} from "./storage-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

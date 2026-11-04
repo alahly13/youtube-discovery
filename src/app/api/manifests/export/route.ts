@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { createZipArchive, type ZipFileEntry } from "@/lib/storage/zip-builder";
 import { computePartSha256, computeAggregateGenerationSha256 } from "@/lib/storage/manifest-serializer";
 
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const backend = getBlobBackend();
+    const backend = getNewStorageBackend();
     const genPrefix = `${storageOwnerUuid}/persistence/datasets/${datasetId}/generations/${generationId}/parts/`;
     const listResult = await backend.list(genPrefix);
 

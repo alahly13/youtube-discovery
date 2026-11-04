@@ -1,8 +1,8 @@
 import "server-only";
 
-import type { BlobBackend } from "../blob/blob-backend";
-import { getBlobBackend } from "../blob/backend-factory";
-import { stableStringify } from "../blob/record-format";
+import type { StorageBackend, StorageBackend as BlobBackend } from "../storage/storage-backend";
+import { stableStringify } from "../storage/storage-backend";
+import { getNewStorageBackend, getBlobBackend } from "../storage/r2-blob-backend";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════

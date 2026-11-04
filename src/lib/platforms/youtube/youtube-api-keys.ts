@@ -1,8 +1,8 @@
 import "server-only";
 
-import type { BlobBackend } from "../../blob/blob-backend";
-import { getBlobBackend } from "../../blob/backend-factory";
-import { API_KEYS_STATE_PATHNAME } from "../../blob/blob-paths";
+import type { StorageBackend as BlobBackend } from "../../storage/storage-backend";
+import { getBlobBackend } from "../../storage/r2-blob-backend";
+export const API_KEYS_STATE_PATHNAME = "youtube-discovery/v1/api-keys/state.json";
 import { decryptApiKey, encryptApiKey, isKeyEncryptionAvailable, maskStoredKey } from "../../keys/key-crypto";
 import type { EncryptedBundle } from "../../keys/key-crypto";
 import {

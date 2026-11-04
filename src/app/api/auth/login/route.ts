@@ -2,8 +2,8 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getBlobBackend } from "@/lib/blob/backend-factory";
-import type { BlobBackend } from "@/lib/blob/blob-backend";
+import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
+import type { StorageBackend } from "@/lib/storage/storage-backend";
 import {
   clearLoginAttempts,
   checkLoginRateLimit,
@@ -46,9 +46,9 @@ export async function POST(request: Request) {
   const csrf = assertSameOrigin(request);
   if (csrf) return csrf;
 
-  let backend: BlobBackend | null = null;
+  let backend: StorageBackend | null = null;
   try {
-    backend = getBlobBackend();
+    backend = getNewStorageBackend();
   } catch {
     // Storage backend is optional if only Supabase Auth is active
   }

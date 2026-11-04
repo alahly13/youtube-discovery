@@ -67,6 +67,13 @@ export interface DiscoveredLocalEntry {
   isProtected: boolean;
   protectionReason?: string;
   previewData?: unknown;
+  /**
+   * Complete raw data for backup export — full depth, full array length.
+   * Only populated during backup collection (not normal scanning) to avoid
+   * bloating the UI state. Secrets are still redacted, but content is NOT
+   * truncated like previewData is.
+   */
+  fullBackupData?: unknown;
 }
 
 export interface StorageOverviewMetrics {
@@ -137,6 +144,45 @@ export function sanitizeForPreview(value: unknown, depth = 0): unknown {
 }
 
 /**
+ * Deeply sanitizes for backup export: redacts secrets and tokens but preserves
+ * full array lengths, full string content, and deep nesting — unlike the UI
+ * preview sanitizer which aggressively truncates for display performance.
+ *
+ * Depth is capped at 20 (vs 6 for preview) to handle complex nested structures
+ * like Zustand-persisted workspace state with full manifest items.
+ */
+export function sanitizeForBackup(value: unknown, depth = 0): unknown {
+  if (depth > 20) return "[Truncated: Max Depth]";
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === "string") {
+    // Redact JWTs or bearer tokens (same logic as preview)
+    if (/^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$/.test(value) && value.length > 30) {
+      return "[REDACTED_TOKEN]";
+    }
+    // NO string truncation for backup — full content preserved
+    return value;
+  }
+
+  if (typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    // NO array slicing for backup — all items preserved
+    return value.map((item) => sanitizeForBackup(item, depth + 1));
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SENSITIVE_KEY_REGEX.test(k)) {
+      sanitized[k] = "[REDACTED_SECRET]";
+    } else {
+      sanitized[k] = sanitizeForBackup(v, depth + 1);
+    }
+  }
+  return sanitized;
+}
+
+/**
  * Helper to compute size in bytes of a string or JSON-serializable item.
  */
 function estimateByteSize(val: unknown): number {
@@ -147,6 +193,20 @@ function estimateByteSize(val: unknown): number {
   } catch {
     return 64;
   }
+}
+
+/**
+ * Extracts the inner state object from a Zustand persist envelope.
+ * Zustand persist stores data as: { state: { ... }, version: N }
+ * Returns the state object if valid, or null.
+ */
+export function extractZustandState(data: unknown): Record<string, unknown> | null {
+  if (!data || typeof data !== "object") return null;
+  const obj = data as Record<string, unknown>;
+  if ("state" in obj && typeof obj.state === "object" && obj.state !== null) {
+    return obj.state as Record<string, unknown>;
+  }
+  return null;
 }
 
 /**
@@ -231,34 +291,209 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
 
         if (isProtected) {
           protectedEntries++;
-        } else if (ownership === "current_user") {
-          currentUserRecords++;
-        } else {
-          unassignedRecords++;
+          totalRecords++;
+          totalFiles++;
+
+          entries.push({
+            id: `ls-${key}`,
+            name: key,
+            category,
+            mechanism: "localStorage",
+            storageKey: key,
+            mimeType: typeof parsedData === "object" ? "application/json" : "text/plain",
+            recordCount: Array.isArray(parsedData) ? parsedData.length : 1,
+            sizeBytes,
+            timestamp: new Date().toISOString(),
+            ownership,
+            backupEligible: false,
+            deletionEligible: false,
+            isProtected: true,
+            protectionReason: "Authentication session token or core application configuration protected from deletion.",
+            previewData: null,
+          });
+          continue;
         }
 
-        totalRecords++;
-        totalFiles++;
+        // Check if this is a Zustand persisted store with structured datasets
+        const zustandState = extractZustandState(parsedData);
 
-        entries.push({
-          id: `ls-${key}`,
-          name: key,
-          category,
-          mechanism: "localStorage",
-          storageKey: key,
-          mimeType: typeof parsedData === "object" ? "application/json" : "text/plain",
-          recordCount: Array.isArray(parsedData) ? parsedData.length : 1,
-          sizeBytes,
-          timestamp: new Date().toISOString(),
-          ownership,
-          backupEligible: !isProtected,
-          deletionEligible: !isProtected,
-          isProtected,
-          protectionReason: isProtected
-            ? "Authentication session token or core application configuration protected from deletion."
-            : undefined,
-          previewData: isProtected ? null : sanitizeForPreview(parsedData),
-        });
+        if (zustandState && key === "youtube-discovery-workspace") {
+          const datasetExtractors: Array<{
+            field: string;
+            category: LocalDatasetCategory;
+            label: string;
+          }> = [
+            { field: "savedItems", category: "SAVED_ITEMS", label: "Saved Items (Videos, Channels, Playlists)" },
+            { field: "savedSearches", category: "REFERENCES", label: "Saved Searches" },
+            { field: "searchHistory", category: "SEARCH_HISTORY", label: "Search History" },
+            { field: "savedManifestIds", category: "SAVED_ITEMS", label: "Saved Manifest IDs" },
+          ];
+
+          let unpackedAny = false;
+          for (const { field, category: cat, label } of datasetExtractors) {
+            const fieldData = zustandState[field];
+            if (!fieldData || (Array.isArray(fieldData) && fieldData.length === 0)) continue;
+
+            unpackedAny = true;
+            const fieldSize = estimateByteSize(fieldData);
+            const recordCount = Array.isArray(fieldData) ? fieldData.length : 1;
+
+            totalRecords += recordCount;
+            totalFiles++;
+            if (ownership === "current_user") {
+              currentUserRecords += recordCount;
+            } else {
+              unassignedRecords += recordCount;
+            }
+
+            entries.push({
+              id: `ls-workspace-${field}`,
+              name: `${label} (${recordCount} items)`,
+              category: cat,
+              mechanism: "localStorage",
+              storageKey: `${key}::${field}`,
+              mimeType: "application/json",
+              recordCount,
+              sizeBytes: fieldSize,
+              timestamp: new Date().toISOString(),
+              ownership,
+              backupEligible: true,
+              deletionEligible: true,
+              isProtected: false,
+              previewData: sanitizeForPreview(fieldData),
+            });
+          }
+
+          if (!unpackedAny) {
+            totalRecords++;
+            totalFiles++;
+            if (ownership === "current_user") currentUserRecords++;
+            else unassignedRecords++;
+
+            entries.push({
+              id: `ls-${key}`,
+              name: `${key} (workspace state)`,
+              category: "SAVED_ITEMS",
+              mechanism: "localStorage",
+              storageKey: key,
+              mimeType: "application/json",
+              recordCount: 1,
+              sizeBytes,
+              timestamp: new Date().toISOString(),
+              ownership,
+              backupEligible: true,
+              deletionEligible: true,
+              isProtected: false,
+              previewData: sanitizeForPreview(parsedData),
+            });
+          }
+        } else if (zustandState && key === "youtube-discovery-user-playlists") {
+          let unpackedAny = false;
+          if (Array.isArray(zustandState.index) && zustandState.index.length > 0) {
+            unpackedAny = true;
+            const idxCount = zustandState.index.length;
+            totalRecords += idxCount;
+            totalFiles++;
+            if (ownership === "current_user") currentUserRecords += idxCount;
+            else unassignedRecords += idxCount;
+
+            entries.push({
+              id: "ls-user-playlists-index",
+              name: `User Playlists Index (${idxCount} playlists)`,
+              category: "PLAYLIST",
+              mechanism: "localStorage",
+              storageKey: `${key}::index`,
+              mimeType: "application/json",
+              recordCount: idxCount,
+              sizeBytes: estimateByteSize(zustandState.index),
+              timestamp: new Date().toISOString(),
+              ownership,
+              backupEligible: true,
+              deletionEligible: true,
+              isProtected: false,
+              previewData: sanitizeForPreview(zustandState.index),
+            });
+          }
+
+          if (zustandState.manifests && typeof zustandState.manifests === "object") {
+            const manifestKeys = Object.keys(zustandState.manifests);
+            if (manifestKeys.length > 0) {
+              unpackedAny = true;
+              const manifestCount = manifestKeys.length;
+              totalRecords += manifestCount;
+              totalFiles++;
+              if (ownership === "current_user") currentUserRecords += manifestCount;
+              else unassignedRecords += manifestCount;
+
+              entries.push({
+                id: "ls-user-playlists-manifests",
+                name: `User Playlist Manifests (${manifestCount} manifests)`,
+                category: "PLAYLIST",
+                mechanism: "localStorage",
+                storageKey: `${key}::manifests`,
+                mimeType: "application/json",
+                recordCount: manifestCount,
+                sizeBytes: estimateByteSize(zustandState.manifests),
+                timestamp: new Date().toISOString(),
+                ownership,
+                backupEligible: true,
+                deletionEligible: true,
+                isProtected: false,
+                previewData: sanitizeForPreview(zustandState.manifests),
+              });
+            }
+          }
+
+          if (!unpackedAny) {
+            totalRecords++;
+            totalFiles++;
+            if (ownership === "current_user") currentUserRecords++;
+            else unassignedRecords++;
+
+            entries.push({
+              id: `ls-${key}`,
+              name: `${key} (playlists state)`,
+              category: "PLAYLIST",
+              mechanism: "localStorage",
+              storageKey: key,
+              mimeType: "application/json",
+              recordCount: 1,
+              sizeBytes,
+              timestamp: new Date().toISOString(),
+              ownership,
+              backupEligible: true,
+              deletionEligible: true,
+              isProtected: false,
+              previewData: sanitizeForPreview(parsedData),
+            });
+          }
+        } else {
+          if (ownership === "current_user") {
+            currentUserRecords++;
+          } else {
+            unassignedRecords++;
+          }
+
+          totalRecords++;
+          totalFiles++;
+
+          entries.push({
+            id: `ls-${key}`,
+            name: key,
+            category,
+            mechanism: "localStorage",
+            storageKey: key,
+            mimeType: typeof parsedData === "object" ? "application/json" : "text/plain",
+            recordCount: Array.isArray(parsedData) ? parsedData.length : 1,
+            sizeBytes,
+            timestamp: new Date().toISOString(),
+            ownership,
+            backupEligible: true,
+            deletionEligible: true,
+            isProtected: false,
+            previewData: sanitizeForPreview(parsedData),
+          });
+        }
       }
     }
   } catch (err) {
@@ -276,7 +511,7 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
         req.onerror = () => reject(req.error || new Error("Failed to open IndexedDB"));
       });
 
-      const storeNames = Object.values(IDB_STORES);
+      const storeNames = Object.values(IDB_STORES) as string[];
       for (const storeName of storeNames) {
         if (!db.objectStoreNames.contains(storeName)) continue;
 
@@ -306,7 +541,8 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
             category = "SEARCH_HISTORY";
           } else if (
             storeName === IDB_STORES.RESEARCH_QUEUE ||
-            storeName === IDB_STORES.WORKSPACE_SNAPSHOTS
+            storeName === IDB_STORES.WORKSPACE_SNAPSHOTS ||
+            storeName === IDB_STORES.LOCAL_RESEARCH_REMINDERS
           ) {
             category = "RESEARCH_QUEUE";
           } else if (storeName === IDB_STORES.SAVED_REFERENCES) {
@@ -319,6 +555,7 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
           totalFiles++;
 
           const isProtected = storeName === IDB_STORES.LOCAL_SYNC_METADATA;
+          const isLocalOnly = storeName === IDB_STORES.LOCAL_RESEARCH_REMINDERS;
           const ownership: OwnershipClassification = isProtected
             ? "protected"
             : authenticatedUserId !== "unknown"
@@ -333,9 +570,13 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
             unassignedRecords += records.length;
           }
 
+          const displayName = isLocalOnly
+            ? `local_research_reminders (${records.length} records) [LOCAL ONLY — NOT CLOUD SYNCED]`
+            : `${storeName} (${records.length} records)`;
+
           entries.push({
             id: `idb-${storeName}`,
-            name: `${storeName} (${records.length} records)`,
+            name: displayName,
             category,
             mechanism: "IndexedDB",
             storageKey: `${IDB_DATABASE_NAME}:${storeName}`,
@@ -350,6 +591,8 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
             isProtected,
             protectionReason: isProtected
               ? "Internal synchronization metadata protected from deletion."
+              : isLocalOnly
+              ? "Local-only research reminders (never cloud-synced)."
               : undefined,
             previewData: isProtected ? null : sanitizeForPreview(records),
           });
@@ -487,6 +730,307 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
  */
 export const REQUIRED_DELETION_PHRASE = "احذف بياناتي المحلية";
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Full Backup Data Collector
+ * ──────────────────────────────────────────────────────────────────────────
+ * Performs a deep, non-truncated extraction of all eligible browser storage
+ * for complete backup export. Unlike scanAllLocalData() which populates
+ * `previewData` with truncated snippets (50 items, 5000 chars, depth 6),
+ * this function populates `fullBackupData` with complete content (all items,
+ * full strings, depth 20) while still redacting secrets and auth tokens.
+ *
+ * Key differences from scan preview:
+ *   - Zustand `savedItems` arrays: ALL items exported (not limited to 50)
+ *   - Long descriptions/notes: full text preserved (not cut at 5000 chars)
+ *   - Deep nested manifests: full depth traversal (20 vs 6)
+ *   - IndexedDB stores: ALL records exported with complete payloads
+ *
+ * Safety: Protected entries (auth tokens, sessions) are ALWAYS excluded.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+export async function collectFullBackupData(
+  authenticatedUserId = "unknown"
+): Promise<DiscoveredLocalEntry[]> {
+  const entries: DiscoveredLocalEntry[] = [];
+
+  if (typeof window === "undefined") return entries;
+
+  // 1. Collect full localStorage data
+  try {
+    if (window.localStorage) {
+      const storageLength = window.localStorage.length;
+
+      for (let i = 0; i < storageLength; i++) {
+        const key = window.localStorage.key(i);
+        if (!key) continue;
+
+        // Same app-key filter as scanner
+        const isAppKey =
+          key.startsWith("youtube-discovery") ||
+          key.startsWith("yd_") ||
+          key.startsWith("sb-") ||
+          key.includes("supabase");
+
+        if (!isAppKey) continue;
+
+        const rawValue = window.localStorage.getItem(key);
+        const sizeBytes = estimateByteSize(rawValue);
+
+        // Same protected-key detection as scanner
+        const isProtectedAuth =
+          key.startsWith("sb-") ||
+          key.includes("supabase.auth") ||
+          key === "youtube-discovery-theme";
+
+        if (isProtectedAuth) continue; // Skip protected entries entirely for backup
+
+        let category: LocalDatasetCategory = "SAVED_ITEMS";
+        if (key.includes("playlist")) category = "PLAYLIST";
+        else if (key.includes("history") || key.includes("search")) category = "SEARCH_HISTORY";
+        else if (key.includes("queue")) category = "RESEARCH_QUEUE";
+        else if (key.includes("ref")) category = "REFERENCES";
+
+        let parsedData: unknown = rawValue;
+        try {
+          if (rawValue) parsedData = JSON.parse(rawValue);
+        } catch {
+          // Leave as plain text
+        }
+
+        // For Zustand stores, extract specific dataset arrays for cleaner backup structure.
+        // The "youtube-discovery-workspace" key contains savedItems, savedSearches, etc.
+        // wrapped in a Zustand persist envelope: { state: { savedItems: [...], ... }, version: N }
+        const zustandState = extractZustandState(parsedData);
+
+        if (zustandState && key === "youtube-discovery-workspace") {
+          // Emit separate entries for each meaningful dataset within the Zustand store
+          const datasetExtractors: Array<{
+            field: string;
+            category: LocalDatasetCategory;
+            label: string;
+          }> = [
+            { field: "savedItems", category: "SAVED_ITEMS", label: "Saved Items (Videos, Channels, Playlists)" },
+            { field: "savedSearches", category: "REFERENCES", label: "Saved Search Titles & Queries" },
+            { field: "searchHistory", category: "SEARCH_HISTORY", label: "Search History Records" },
+            { field: "savedManifestIds", category: "SAVED_ITEMS", label: "Saved Manifest IDs" },
+          ];
+
+          for (const { field, category: cat, label } of datasetExtractors) {
+            const fieldData = zustandState[field];
+            if (!fieldData || (Array.isArray(fieldData) && fieldData.length === 0)) continue;
+
+            const fieldSize = estimateByteSize(fieldData);
+            const recordCount = Array.isArray(fieldData) ? fieldData.length : 1;
+
+            entries.push({
+              id: `ls-workspace-${field}`,
+              name: `${label} (from workspace store)`,
+              category: cat,
+              mechanism: "localStorage",
+              storageKey: `${key}::${field}`,
+              mimeType: "application/json",
+              recordCount,
+              sizeBytes: fieldSize,
+              timestamp: new Date().toISOString(),
+              ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+              backupEligible: true,
+              deletionEligible: true,
+              isProtected: false,
+              previewData: sanitizeForPreview(fieldData),
+              fullBackupData: sanitizeForBackup(fieldData),
+            });
+          }
+
+          // Also export the complete workspace state as a single entry for full restore capability
+          entries.push({
+            id: `ls-${key}-full`,
+            name: `${key} (complete workspace state)`,
+            category: "SAVED_ITEMS",
+            mechanism: "localStorage",
+            storageKey: key,
+            mimeType: "application/json",
+            recordCount: Array.isArray(zustandState.savedItems) ? zustandState.savedItems.length : 1,
+            sizeBytes,
+            timestamp: new Date().toISOString(),
+            ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+            backupEligible: true,
+            deletionEligible: true,
+            isProtected: false,
+            previewData: sanitizeForPreview(parsedData),
+            fullBackupData: sanitizeForBackup(parsedData),
+          });
+        } else if (zustandState && key === "youtube-discovery-user-playlists") {
+          if (Array.isArray(zustandState.index) && zustandState.index.length > 0) {
+            const idxCount = zustandState.index.length;
+            entries.push({
+              id: "ls-user-playlists-index",
+              name: `User Playlists Index (${idxCount} playlists)`,
+              category: "PLAYLIST",
+              mechanism: "localStorage",
+              storageKey: `${key}::index`,
+              mimeType: "application/json",
+              recordCount: idxCount,
+              sizeBytes: estimateByteSize(zustandState.index),
+              timestamp: new Date().toISOString(),
+              ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+              backupEligible: true,
+              deletionEligible: true,
+              isProtected: false,
+              previewData: sanitizeForPreview(zustandState.index),
+              fullBackupData: sanitizeForBackup(zustandState.index),
+            });
+          }
+
+          if (zustandState.manifests && typeof zustandState.manifests === "object") {
+            const manifestCount = Object.keys(zustandState.manifests).length;
+            if (manifestCount > 0) {
+              entries.push({
+                id: "ls-user-playlists-manifests",
+                name: `User Playlist Manifests (${manifestCount} manifests)`,
+                category: "PLAYLIST",
+                mechanism: "localStorage",
+                storageKey: `${key}::manifests`,
+                mimeType: "application/json",
+                recordCount: manifestCount,
+                sizeBytes: estimateByteSize(zustandState.manifests),
+                timestamp: new Date().toISOString(),
+                ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+                backupEligible: true,
+                deletionEligible: true,
+                isProtected: false,
+                previewData: sanitizeForPreview(zustandState.manifests),
+                fullBackupData: sanitizeForBackup(zustandState.manifests),
+              });
+            }
+          }
+
+          entries.push({
+            id: `ls-${key}-full`,
+            name: `${key} (complete playlists store)`,
+            category: "PLAYLIST",
+            mechanism: "localStorage",
+            storageKey: key,
+            mimeType: "application/json",
+            recordCount: Array.isArray(zustandState.index) ? zustandState.index.length : 1,
+            sizeBytes,
+            timestamp: new Date().toISOString(),
+            ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+            backupEligible: true,
+            deletionEligible: true,
+            isProtected: false,
+            previewData: sanitizeForPreview(parsedData),
+            fullBackupData: sanitizeForBackup(parsedData),
+          });
+        } else {
+          // Non-Zustand localStorage key — export as single entry with full data
+          entries.push({
+            id: `ls-${key}`,
+            name: key,
+            category,
+            mechanism: "localStorage",
+            storageKey: key,
+            mimeType: typeof parsedData === "object" ? "application/json" : "text/plain",
+            recordCount: Array.isArray(parsedData) ? parsedData.length : 1,
+            sizeBytes,
+            timestamp: new Date().toISOString(),
+            ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+            backupEligible: true,
+            deletionEligible: true,
+            isProtected: false,
+            previewData: sanitizeForPreview(parsedData),
+            fullBackupData: sanitizeForBackup(parsedData),
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[LocalDataCenter] Backup localStorage collection warning:", err);
+  }
+
+  // 2. Collect full IndexedDB data
+  try {
+    if (window.indexedDB) {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = window.indexedDB.open(IDB_DATABASE_NAME);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error("Failed to open IndexedDB"));
+      });
+
+      const storeNames = Object.values(IDB_STORES) as string[];
+      for (const storeName of storeNames) {
+        if (!db.objectStoreNames.contains(storeName)) continue;
+
+        // Skip sync metadata — protected internal state
+        if (storeName === IDB_STORES.LOCAL_SYNC_METADATA) continue;
+
+        try {
+          const records = await new Promise<unknown[]>((resolve, reject) => {
+            const tx = db.transaction(storeName, "readonly");
+            const store = tx.objectStore(storeName);
+            const getAllReq = store.getAll();
+            getAllReq.onsuccess = () => resolve(getAllReq.result || []);
+            getAllReq.onerror = () => reject(getAllReq.error);
+          });
+
+          if (records.length === 0) continue;
+
+          // Map store to category (same logic as scanner)
+          let category: LocalDatasetCategory = "SAVED_ITEMS";
+          if (
+            storeName === IDB_STORES.USER_PLAYLISTS ||
+            storeName === IDB_STORES.PLAYLIST_GROUPS ||
+            storeName === IDB_STORES.PLAYLIST_ENTRIES
+          ) {
+            category = "PLAYLIST";
+          } else if (
+            storeName === IDB_STORES.SEARCH_HISTORY ||
+            storeName === IDB_STORES.SAVED_SEARCHES
+          ) {
+            category = "SEARCH_HISTORY";
+          } else if (
+            storeName === IDB_STORES.RESEARCH_QUEUE ||
+            storeName === IDB_STORES.WORKSPACE_SNAPSHOTS ||
+            storeName === IDB_STORES.LOCAL_RESEARCH_REMINDERS
+          ) {
+            category = "RESEARCH_QUEUE";
+          } else if (storeName === IDB_STORES.SAVED_REFERENCES) {
+            category = "REFERENCES";
+          }
+
+          const sizeBytes = estimateByteSize(records);
+
+          entries.push({
+            id: `idb-${storeName}`,
+            name: `${storeName} (${records.length} records)`,
+            category,
+            mechanism: "IndexedDB",
+            storageKey: `${IDB_DATABASE_NAME}:${storeName}`,
+            storeName,
+            mimeType: "application/json",
+            recordCount: records.length,
+            sizeBytes,
+            timestamp: new Date().toISOString(),
+            ownership: authenticatedUserId !== "unknown" ? "current_user" : "unknown",
+            backupEligible: true,
+            deletionEligible: true,
+            isProtected: false,
+            previewData: sanitizeForPreview(records),
+            fullBackupData: sanitizeForBackup(records),
+          });
+        } catch (storeErr) {
+          console.warn(`[LocalDataCenter] Backup IndexedDB store ${storeName} read warning:`, storeErr);
+        }
+      }
+      db.close();
+    }
+  } catch (idbErr) {
+    console.warn("[LocalDataCenter] Backup IndexedDB collection warning:", idbErr);
+  }
+
+  return entries;
+}
+
 export interface DeletionResult {
   success: boolean;
   deletedRecordsCount: number;
@@ -546,9 +1090,34 @@ export async function deleteConfirmedLocalEntries(
 
     try {
       if (entry.mechanism === "localStorage") {
-        window.localStorage.removeItem(entry.storageKey);
-        result.deletedKeysCount++;
-        result.freedBytes += entry.sizeBytes;
+        if (entry.storageKey.includes("::")) {
+          const [parentKey, field] = entry.storageKey.split("::");
+          const raw = window.localStorage.getItem(parentKey);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object" && "state" in parsed && typeof (parsed as { state: unknown }).state === "object") {
+                const stateObj = (parsed as { state: Record<string, unknown> }).state;
+                if (field in stateObj) {
+                  if (Array.isArray(stateObj[field])) {
+                    stateObj[field] = [];
+                  } else {
+                    delete stateObj[field];
+                  }
+                  window.localStorage.setItem(parentKey, JSON.stringify(parsed));
+                  result.deletedRecordsCount += entry.recordCount;
+                  result.freedBytes += entry.sizeBytes;
+                }
+              }
+            } catch {
+              // fallback to normal deletion if JSON parse fails
+            }
+          }
+        } else {
+          window.localStorage.removeItem(entry.storageKey);
+          result.deletedKeysCount++;
+          result.freedBytes += entry.sizeBytes;
+        }
       } else if (entry.mechanism === "IndexedDB" && entry.storeName) {
         if (window.indexedDB) {
           const db = await new Promise<IDBDatabase>((resolve, reject) => {

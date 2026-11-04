@@ -15,7 +15,7 @@
  */
 
 export const IDB_DATABASE_NAME = "youtube_discovery_local_v1";
-export const IDB_DATABASE_VERSION = 2;
+export const IDB_DATABASE_VERSION = 3;
 
 export const CANONICAL_DATASET_TYPES = [
   "SAVED_ITEMS",
@@ -39,6 +39,7 @@ export const IDB_STORES = {
   WORKSPACE_SNAPSHOTS: "workspace_snapshots",
   PENDING_OPERATIONS: "pending_operations",
   LOCAL_SYNC_METADATA: "local_sync_metadata",
+  LOCAL_RESEARCH_REMINDERS: "local_research_reminders",
 } as const;
 
 export interface PendingOperation {
@@ -175,10 +176,34 @@ export function openLocalDatabase(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(IDB_STORES.LOCAL_SYNC_METADATA)) {
         db.createObjectStore(IDB_STORES.LOCAL_SYNC_METADATA, { keyPath: ["ownerId", "datasetType"] });
       }
+
+      // 12. local_research_reminders (I Will Search For — 100% Client-Only, NEVER synced to cloud)
+      if (!db.objectStoreNames.contains(IDB_STORES.LOCAL_RESEARCH_REMINDERS)) {
+        const reminderStore = db.createObjectStore(IDB_STORES.LOCAL_RESEARCH_REMINDERS, { keyPath: "reminderId" });
+        reminderStore.createIndex("ownerId", "ownerId", { unique: false });
+        reminderStore.createIndex("ownerId_videoId", ["ownerId", "videoId"], { unique: true });
+        reminderStore.createIndex("ownerId_status", ["ownerId", "status"], { unique: false });
+        reminderStore.createIndex("ownerId_addedAt", ["ownerId", "addedAt"], { unique: false });
+      }
     };
   });
 
   return dbPromise;
+}
+
+/**
+ * Helper to create an IDBTransaction with durability: "strict" where supported by the browser.
+ */
+export function createReadWriteTransaction(db: IDBDatabase, storeNames: string[]): IDBTransaction {
+  try {
+    return (db as unknown as { transaction: (stores: string[], mode: string, options?: { durability: string }) => IDBTransaction }).transaction(
+      storeNames,
+      "readwrite",
+      { durability: "strict" }
+    );
+  } catch {
+    return db.transaction(storeNames, "readwrite");
+  }
 }
 
 /**
@@ -228,7 +253,7 @@ export async function saveEntityLocally(
   };
 
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName, IDB_STORES.PENDING_OPERATIONS], "readwrite");
+    const tx = createReadWriteTransaction(db, [storeName, IDB_STORES.PENDING_OPERATIONS]);
     const entityStore = tx.objectStore(storeName);
     const outboxStore = tx.objectStore(IDB_STORES.PENDING_OPERATIONS);
 
@@ -279,7 +304,7 @@ export async function deleteEntityLocally(
   };
 
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([storeName, IDB_STORES.PENDING_OPERATIONS], "readwrite");
+    const tx = createReadWriteTransaction(db, [storeName, IDB_STORES.PENDING_OPERATIONS]);
     const entityStore = tx.objectStore(storeName);
     const outboxStore = tx.objectStore(IDB_STORES.PENDING_OPERATIONS);
 

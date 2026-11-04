@@ -34,6 +34,12 @@ import {
 } from "@/lib/recovery/local-data-center-service";
 import { formatBytes } from "@/lib/utils/format";
 import { LocalDataDeletionModal } from "./local-data-deletion-modal";
+import {
+  getLocalDatasetCatalog,
+  getSyncJournalBatches,
+  type LocalDatasetCatalogEntry,
+  type SyncJournalBatch,
+} from "@/lib/storage/indexeddb-store";
 
 export function LocalDataCenterWorkspace() {
   const [metrics, setMetrics] = useState<StorageOverviewMetrics>({
@@ -50,6 +56,8 @@ export function LocalDataCenterWorkspace() {
   });
 
   const [entries, setEntries] = useState<DiscoveredLocalEntry[]>([]);
+  const [catalogEntries, setCatalogEntries] = useState<LocalDatasetCatalogEntry[]>([]);
+  const [journalBatches, setJournalBatches] = useState<SyncJournalBatch[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
@@ -107,6 +115,15 @@ export function LocalDataCenterWorkspace() {
       const result = await scanAllLocalData(targetUserId);
       setMetrics(result.metrics);
       setEntries(result.entries);
+
+      try {
+        const cat = await getLocalDatasetCatalog(targetUserId);
+        const jrn = await getSyncJournalBatches(targetUserId);
+        setCatalogEntries(cat);
+        setJournalBatches(jrn);
+      } catch {
+        // Fallback if IndexedDB store is empty or initializing
+      }
     } catch (err) {
       console.error("[LocalDataCenter] Scan failed:", err);
       setMetrics((prev) => ({ ...prev, scanStatus: "Failed" }));
@@ -598,6 +615,148 @@ export function LocalDataCenterWorkspace() {
                 <span>Delete My Local Data (حذف بياناتي المحلية)</span>
               </Button>
             </div>
+          </Card>
+        </div>
+      </div>
+
+      {/* AREA D: Cloud Sync Journal & Local Dataset Catalog (سجل المزامنة والكتالوج السحابي) */}
+      <div className="space-y-4 border-t border-border/80 pt-8">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Layers className="h-5 w-5 text-primary" />
+            <h2 className="text-base font-bold text-foreground">
+              Cloud Sync Journal &amp; Local Dataset Catalog
+            </h2>
+            <span className="text-xs text-muted" dir="rtl">
+              | سجل المزامنة والكتالوج السحابي المحلي
+            </span>
+          </div>
+          <Badge tone="primary" className="text-xs w-fit">
+            IndexedDB v4 Storage
+          </Badge>
+        </div>
+        <p className="text-xs text-muted">
+          Authoritative local state of cloud-synchronized datasets, hydrated revisions, and journaled synchronization batches.
+        </p>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Panel 1: Local Dataset Catalog */}
+          <Card className="p-4 space-y-3 bg-surface/80 border-border/70 shadow-xs">
+            <div className="flex items-center justify-between border-b border-border/60 pb-2">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <Database className="h-4 w-4 text-primary" />
+                Dataset Catalog Entries
+              </span>
+              <span className="font-mono text-[11px] text-muted">
+                {catalogEntries.length} tracked
+              </span>
+            </div>
+
+            {catalogEntries.length === 0 ? (
+              <p className="text-xs text-muted py-4 text-center italic">
+                Catalog initializing or will populate on next sync/hydration.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {catalogEntries.map((cat) => (
+                  <div
+                    key={cat.datasetType}
+                    className="p-2.5 rounded-lg border border-border/60 bg-surface-muted/30 text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-foreground">
+                        {cat.datasetType}
+                      </span>
+                      <Badge
+                        tone={
+                          cat.syncStatus === "SYNCED"
+                            ? "success"
+                            : cat.syncStatus === "SYNCING"
+                            ? "primary"
+                            : cat.syncStatus === "FAILED"
+                            ? "danger"
+                            : "neutral"
+                        }
+                        className="text-[10px] py-0.5"
+                      >
+                        {cat.syncStatus}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] text-muted pt-1">
+                      <div>
+                        Local Rev: <strong className="text-foreground">{cat.localRevision}</strong>
+                      </div>
+                      <div>
+                        Hydrated Rev: <strong className="text-foreground">{cat.lastHydratedRevision}</strong>
+                      </div>
+                      <div>
+                        Pending Ops: <strong className="text-foreground">{cat.pendingOperationCount}</strong>
+                      </div>
+                      <div className="truncate">
+                        Last Gen: <code className="text-primary font-mono text-[10px]">{cat.lastHydratedGenerationId || "None"}</code>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* Panel 2: Sync Journal Batches */}
+          <Card className="p-4 space-y-3 bg-surface/80 border-border/70 shadow-xs">
+            <div className="flex items-center justify-between border-b border-border/60 pb-2">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <Archive className="h-4 w-4 text-primary" />
+                Recent Sync Journal Batches
+              </span>
+              <span className="font-mono text-[11px] text-muted">
+                {journalBatches.length} recorded
+              </span>
+            </div>
+
+            {journalBatches.length === 0 ? (
+              <p className="text-xs text-muted py-4 text-center italic">
+                No recent sync batches journaled in this browser session.
+              </p>
+            ) : (
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {journalBatches.slice(0, 8).map((batch) => (
+                  <div
+                    key={batch.syncBatchId}
+                    className="p-2.5 rounded-lg border border-border/60 bg-surface-muted/30 text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <code className="text-primary font-mono text-[10px] font-bold">
+                        {batch.syncBatchId}
+                      </code>
+                      <Badge
+                        tone={
+                          batch.batchStatus === "COMMITTED"
+                            ? "success"
+                            : batch.batchStatus === "UPLOADING"
+                            ? "primary"
+                            : batch.batchStatus === "FAILED"
+                            ? "danger"
+                            : "warning"
+                        }
+                        className="text-[10px] py-0.5"
+                      >
+                        {batch.batchStatus}
+                      </Badge>
+                    </div>
+                    <div className="text-[11px] text-muted flex items-center justify-between">
+                      <span>Datasets: {batch.affectedDatasets.join(", ")}</span>
+                      <span>{new Date(batch.createdAt).toLocaleTimeString()}</span>
+                    </div>
+                    {batch.lastErrorCode && (
+                      <p className="text-[10px] text-danger font-mono truncate">
+                        Error: {batch.lastErrorCode}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       </div>

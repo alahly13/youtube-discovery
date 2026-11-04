@@ -1,4 +1,14 @@
 import crypto from "node:crypto";
+import {
+  buildPartKey,
+  buildManifestKey,
+  buildVersionPointerKey,
+  buildTempItemKey,
+  datasetTypeToSlug,
+  type CanonicalDatasetType,
+} from "./canonical-paths";
+
+export * from "./canonical-paths";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -6,7 +16,7 @@ import crypto from "node:crypto";
  * ──────────────────────────────────────────────────────────────────────────
  * Scope: Handles exact UTF-8 byte chunking, SHA-256 hashing, binary aggregate
  *        generation checksums, and storage path generation scoped by
- *        storage_owner_uuid.
+ *        canonical asdy/persistence/<storageOwnerUuid>/ convention.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -40,7 +50,7 @@ export interface GenerationDescriptor {
 
 /**
  * Builds the canonical physical object path for an immutable manifest part.
- * Formatted as: <storageOwnerUuid>/persistence/<datasetType>/generations/<generationId>/parts/part-<number>.json
+ * Formatted as: asdy/persistence/<storageOwnerUuid>/<datasetSlug>/generations/<generationId>/parts/part-<number>.json
  */
 export function buildManifestPartStoragePath(
   storageOwnerUuid: string,
@@ -48,8 +58,13 @@ export function buildManifestPartStoragePath(
   generationId: string,
   partNumber: number
 ): string {
-  const padded = String(partNumber).padStart(6, "0");
-  return `${storageOwnerUuid}/persistence/${datasetTypeOrId}/generations/${generationId}/parts/part-${padded}.json`;
+  try {
+    return buildPartKey(storageOwnerUuid, datasetTypeOrId as CanonicalDatasetType, generationId, partNumber);
+  } catch {
+    const slug = datasetTypeOrId.toLowerCase().replace(/_/g, "-");
+    const padded = String(partNumber).padStart(6, "0");
+    return `asdy/persistence/${storageOwnerUuid}/${slug}/generations/${generationId}/parts/part-${padded}.json`;
+  }
 }
 
 /**
@@ -60,7 +75,12 @@ export function buildGenerationManifestPath(
   datasetTypeOrId: string,
   generationId: string
 ): string {
-  return `${storageOwnerUuid}/persistence/${datasetTypeOrId}/generations/${generationId}/manifest.json`;
+  try {
+    return buildManifestKey(storageOwnerUuid, datasetTypeOrId as CanonicalDatasetType, generationId);
+  } catch {
+    const slug = datasetTypeOrId.toLowerCase().replace(/_/g, "-");
+    return `asdy/persistence/${storageOwnerUuid}/${slug}/generations/${generationId}/manifest.json`;
+  }
 }
 
 /**
@@ -70,7 +90,12 @@ export function buildDatasetVersionPointerPath(
   storageOwnerUuid: string,
   datasetTypeOrId: string
 ): string {
-  return `${storageOwnerUuid}/persistence/${datasetTypeOrId}/version.json`;
+  try {
+    return buildVersionPointerKey(storageOwnerUuid, datasetTypeOrId as CanonicalDatasetType);
+  } catch {
+    const slug = datasetTypeOrId.toLowerCase().replace(/_/g, "-");
+    return `asdy/persistence/${storageOwnerUuid}/${slug}/version.json`;
+  }
 }
 
 /**
@@ -80,7 +105,8 @@ export function buildDerivedRootManifestPath(
   storageOwnerUuid: string,
   datasetId: string
 ): string {
-  return `${storageOwnerUuid}/persistence/datasets/${datasetId}/manifest.json`;
+  const slug = datasetId.toLowerCase().replace(/_/g, "-");
+  return `asdy/persistence/${storageOwnerUuid}/${slug}/manifest.json`;
 }
 
 /**
@@ -91,7 +117,7 @@ export function buildTemporaryExportPath(
   exportId: string,
   filename: string
 ): string {
-  return `${storageOwnerUuid}/temp/exports/${exportId}/${filename}`;
+  return `asdy/temp/${storageOwnerUuid}/${exportId}/${filename}`;
 }
 
 /**

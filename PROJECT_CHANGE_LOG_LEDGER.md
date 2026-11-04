@@ -3717,3 +3717,104 @@ No.
 ### Whether `db:apply` was run
 
 No.
+
+
+---
+
+## 2026-11-04 (Cloud Hydration, Canonical Storage Paths, Persistent Sync Registry & 12-Hour Synchronization)
+
+### Date/time
+
+2026-11-04 ~17:15 UTC
+
+### Agent/model if known
+
+Antigravity (Google DeepMind)
+
+### Task summary
+
+Strengthened and unified the persistence and recovery architecture across YouTube Discovery:
+1. Built authoritative Cloud Hydration engine (`src/lib/sync/cloud-hydration-service.ts`, `useCloudHydration`, `GET /api/sync/hydrate`, `GET /api/sync/hydrate/part`) restoring 5 canonical datasets (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`) onto fresh browser profiles with 9-state machine, incremental revision comparison, outbox preservation, and SHA-256 integrity checks.
+2. Consolidated authoritative canonical Cloudflare R2 paths module (`src/lib/storage/canonical-paths.ts`) standardizing `asdy/persistence/<ownerId>/<datasetSlug>/...` (`version.json`, `generations/<genId>/manifest.json`, `parts/part-XXXXXX.json`) and `asdy/temp/<ownerId>/<syncBatchId>/...` with full legacy `<ownerId>/persistence/...` read compatibility and traversal protection.
+3. Upgraded IndexedDB to v4 (`IDB_DATABASE_VERSION = 4`) adding `local_dataset_catalog`, `sync_journal`, and `sync_leases` stores.
+4. Hardened 12-Hour Client Sync Coordinator (`src/lib/sync/sync-coordinator.ts`) with zero-op bypass (`totalPending === 0`), `navigator.locks` + IndexedDB mutex fallback, 60s ticker (anti-sleep drift), `visibilitychange` + `online` catchup, and exponential backoff retry.
+5. Implemented automated storage reconciliation service (`src/lib/sync/sync-reconciliation-service.ts` and `GET /api/manifests/reconcile`) detecting missing parts, orphan objects, stale `/temp/` files (>24h), and revision divergence.
+6. Enhanced UI in `SaveCenter` (real-time cloud hydration status and manual restore button) and `LocalDataCenterWorkspace` (dedicated visual section for Dataset Catalog and Sync Journal).
+7. Created 44 automated verification tests in `scripts/test-cloud-hydration-and-canonical-sync.mjs` (all 44 passed).
+
+### Reason/root cause
+
+Inconsistent path conventions existed across legacy features, fresh browsers started with an empty library without a cloud hydration mechanism from Supabase + R2, and long-interval timers were susceptible to browser sleep drift without regular interval ticking and cross-tab mutex coordination.
+
+### Files changed
+
+- `src/lib/storage/canonical-paths.ts` (created canonical path module and validators)
+- `src/lib/storage/manifest-serializer.ts` (integrated canonical paths and serializers)
+- `src/lib/storage/indexeddb-store.ts` (bumped to v4, added catalog, journal, leases stores and hydration bulk insertion)
+- `src/app/api/sync/hydrate/route.ts` (created cloud hydration registry endpoint)
+- `src/app/api/sync/hydrate/part/route.ts` (created secure part streaming endpoint with owner isolation)
+- `src/lib/sync/cloud-hydration-service.ts` (created 9-state hydration state machine and recovery service)
+- `src/lib/sync/use-cloud-hydration.ts` (created React hydration progress hook)
+- `src/lib/storage/use-merged-dataset.ts` (subscribed to `yt-discovery-hydration-changed` event)
+- `src/lib/sync/sync-coordinator.ts` (hardened 12h scheduler, zero-op bypass, mutex lease, 60s ticker, journal logging)
+- `src/app/api/sync/save-all/route.ts` (explicit canonical prefix passing and batch verification)
+- `src/app/api/manifests/tree/route.ts` (scans canonical and legacy prefixes, parses with `parseStorageKey`)
+- `src/app/api/manifests/download/route.ts` (supports canonical `asdy/persistence/<ownerId>/` and legacy paths)
+- `src/app/api/manifests/export/route.ts` (supports canonical and legacy prefixes with ZIP packaging)
+- `src/lib/sync/sync-reconciliation-service.ts` (created automated R2 vs PostgreSQL reconciliation engine)
+- `src/app/api/manifests/reconcile/route.ts` (created reconciliation inspection API route)
+- `src/components/layout/save-center.tsx` (added hydration indicator and manual restore trigger)
+- `src/components/local-data/local-data-center-workspace.tsx` (added Dataset Catalog and Sync Journal UI)
+- `scripts/test-cloud-hydration-and-canonical-sync.mjs` (created 44-test automated test suite)
+- `package.json` (added `test:canonical-sync` script)
+- `docs/data-architecture/manifest-format.md` (documented canonical paths and hydration)
+- `docs/data-architecture/sync-and-recovery.md` (documented v4 IndexedDB, 12h scheduler, and reconciliation)
+- `youtube_discovery_ledger.md` (updated current-state ledger and verification results)
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended this dated entry)
+
+### Architecture impact
+
+Consolidates the authoritative storage architecture: Client (IndexedDB v4) → Outbox → Next.js Backend → Cloudflare R2 Worker (`asdy/persistence/<ownerId>/<slug>/...`) + Supabase PostgreSQL (`storage_datasets`, `storage_generations`, `storage_manifest_parts`, `save_sync_batches`). Enables seamless recovery of any user library on a fresh device without data loss.
+
+### Environment impact
+
+None. No new secrets required.
+
+### Database/migration impact
+
+None. Utilizes existing canonical Prisma models (`storage_datasets`, `storage_generations`, `storage_manifest_parts`, `save_sync_batches`) without requiring new migrations.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube API quota consumed.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run typecheck`: Passed with exit code 0 (zero errors).
+- `npx tsx scripts/test-cloud-hydration-and-canonical-sync.mjs`: Passed with exit code 0 (44/44 tests passed across 4 groups).
+- `node scripts/test-complete-storage-pipeline.mjs`: Passed with exit code 0 (10/10 tests passed).
+- `npm run test:r2`: Passed with exit code 0 (11/11 tests passed).
+
+### Blocked checks, if any
+
+None.
+
+### Remaining risks/limitations
+
+None. Workers remain ready for deployment.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.

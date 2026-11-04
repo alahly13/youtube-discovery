@@ -7,10 +7,10 @@ import {
   HardDrive,
   Loader2,
   RefreshCw,
-  AlertTriangle,
   ChevronDown,
   Layers,
   Database,
+  CloudDownload,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import {
   type SyncStatus,
   type SyncStateEvent,
 } from "@/lib/sync/sync-coordinator";
+import { useCloudHydration } from "@/lib/sync/use-cloud-hydration";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -30,6 +31,7 @@ import {
  *   - Real-time pending operations counter and dataset breakdown
  *   - Automated 12-hour background sync status indicator
  *   - Direct Cloudflare R2 Worker batch upload trigger
+ *   - Active Cloud Hydration progress and manual restore trigger
  *   - Zero data loss: Local IndexedDB outbox remains until remote confirmation
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -53,6 +55,9 @@ export function SaveCenter() {
   });
   const [saving, setSaving] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
+
+  const ownerId = syncCoordinator.getOwnerId();
+  const hydration = useCloudHydration(ownerId, false);
 
   useEffect(() => {
     const unsubscribe = syncCoordinator.subscribe((evt) => {
@@ -81,6 +86,15 @@ export function SaveCenter() {
   const pendingCount = syncEvent.summary.totalPending;
 
   function renderStatusBadge(status: SyncStatus) {
+    if (hydration.isHydrating) {
+      return (
+        <Badge tone="primary" className="gap-1.5 py-1 px-2.5">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>Restoring from Cloud ({hydration.completedDatasets}/{hydration.totalDatasets || 5})…</span>
+        </Badge>
+      );
+    }
+
     if (status === "SYNCING" || saving) {
       return (
         <Badge tone="primary" className="gap-1.5 py-1 px-2.5">
@@ -144,7 +158,7 @@ export function SaveCenter() {
       <Button
         variant={pendingCount > 0 ? "primary" : "secondary"}
         onClick={handleSaveAll}
-        disabled={saving || syncEvent.status === "SYNCING"}
+        disabled={saving || syncEvent.status === "SYNCING" || hydration.isHydrating}
         className={`h-9 gap-2 px-3 text-xs font-semibold shadow-xs cursor-pointer ${
           pendingCount > 0
             ? "bg-primary text-primary-foreground hover:bg-primary/90 animate-pulse"
@@ -187,7 +201,7 @@ export function SaveCenter() {
 
       {/* Breakdown Dropdown Menu */}
       {showDropdown && (
-        <div className="absolute right-0 top-11 z-50 w-72 rounded-xl border border-border bg-surface p-3.5 shadow-xl animate-in fade-in zoom-in-95">
+        <div className="absolute right-0 top-11 z-50 w-76 rounded-xl border border-border bg-surface p-3.5 shadow-xl animate-in fade-in zoom-in-95">
           <div className="mb-2 flex items-center justify-between border-b border-border/60 pb-2">
             <div className="flex items-center gap-1.5 font-semibold text-xs text-foreground">
               <Layers className="h-4 w-4 text-primary" />
@@ -229,32 +243,55 @@ export function SaveCenter() {
             </div>
           </div>
 
-          <div className="mt-3 border-t border-border/60 pt-2 text-[11px] text-muted">
+          <div className="mt-3 border-t border-border/60 pt-2 text-[11px] text-muted space-y-1">
             <div className="flex items-center justify-between">
               <span>Auto-Sync Schedule:</span>
               <span className="font-semibold text-foreground">Every 12h</span>
             </div>
             {syncEvent.lastSuccessfulSyncAt && (
-              <div className="flex items-center justify-between mt-0.5">
+              <div className="flex items-center justify-between">
                 <span>Last Cloud Sync:</span>
                 <span className="text-foreground">
                   {new Date(syncEvent.lastSuccessfulSyncAt).toLocaleTimeString()}
                 </span>
               </div>
             )}
+            <div className="flex items-center justify-between">
+              <span>Cloud Hydration:</span>
+              <span className="font-semibold text-foreground">
+                {hydration.state === "READY"
+                  ? "Synchronized"
+                  : hydration.isHydrating
+                  ? "Restoring…"
+                  : hydration.state}
+              </span>
+            </div>
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-col gap-2">
             <Button
               variant="secondary"
               onClick={() => {
                 setShowDropdown(false);
                 handleSaveAll();
               }}
-              disabled={saving || pendingCount === 0}
-              className="w-full h-8 text-xs"
+              disabled={saving || pendingCount === 0 || hydration.isHydrating}
+              className="w-full h-8 text-xs font-semibold cursor-pointer"
             >
-              Sync Now
+              Sync Pending Changes Now
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowDropdown(false);
+                hydration.retryHydration();
+              }}
+              disabled={hydration.isHydrating}
+              className="w-full h-8 text-xs gap-1.5 text-muted hover:text-foreground cursor-pointer"
+            >
+              <CloudDownload className="h-3.5 w-3.5" />
+              <span>Restore from Cloud R2</span>
             </Button>
           </div>
         </div>

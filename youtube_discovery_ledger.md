@@ -543,3 +543,14 @@ Latest verification results on 2026-10-09:
 - Pages `/saved`, `/saved/[id]`, `/` return 200 with the Dailymotion sidebar link present.
 - Zod for server route validation.
 
+Latest verification results on 2026-11-04 (Cloud Hydration, Canonical Storage Paths, Persistent Sync Registry & 12h Scheduler):
+
+- `npm run typecheck`: passed (0 errors across the entire application).
+- `npx tsx scripts/test-cloud-hydration-and-canonical-sync.mjs`: passed (44/44 assertions pass across all 4 groups).
+- `node scripts/test-complete-storage-pipeline.mjs`: passed (10/10 assertions pass).
+- `npm run test:r2`: passed (11/11 assertions pass).
+- Canonical Storage Key consolidation: `new-youtube-discovery-private/asdy/persistence/<ownerId>/<datasetSlug>/...` established with legacy read compatibility.
+- 9-state Cloud Hydration recovery engine: verified with SHA-256 integrity, outbox safety, and automatic reactive UI refresh.
+- 12-hour scheduler: verified with zero-op bypass, Web Locks + IndexedDB mutex fallback, 60-second ticker, and exponential backoff retry.
+- Storage Reconciliation: `GET /api/manifests/reconcile` verified with PostgreSQL and R2 parity detection.
+

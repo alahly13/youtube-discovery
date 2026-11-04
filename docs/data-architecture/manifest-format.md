@@ -229,3 +229,66 @@ Owner: user_profile_01 (Storage UUID: e7b0c442-98fc-4c14-9afb-f4c8996fb924)
 - **Export Complete Generation (ZIP):** Server validates all parts' SHA-256 digests, packages them into a ZIP archive with a root index descriptor, and streams the download.
 - **Export Dataset:** Exports the current committed generation snapshot along with historical revision metadata.
 - **Reconciliation Scan:** Compares PostgreSQL `storage_manifest_parts` against `supabase.storage.from('youtube-discovery').list()` and surfaces discrepancies in the UI.
+
+---
+
+## 6. 2026 Authoritative Canonical Cloudflare R2 Paths & Cloud Hydration
+
+### 6.1 Canonical Cloudflare R2 Storage Hierarchy
+In 2026 production, all permanent dataset generations and manifest parts are stored in the private Cloudflare R2 bucket `new-youtube-discovery-private` using the authoritative `asdy/` root prefix:
+
+```text
+Bucket: new-youtube-discovery-private
+├── asdy/
+│   ├── persistence/
+│   │   └── <storage_owner_uuid>/
+│   │       ├── saved-items/
+│   │       │   ├── version.json
+│   │       │   └── generations/<gen_id>/
+│   │       │       ├── manifest.json
+│   │       │       └── parts/
+│   │       │           ├── part-000001.json
+│   │       │           └── part-000002.json
+│   │       ├── saved-playlists/
+│   │       │   └── ...
+│   │       ├── saved-search-history/
+│   │       │   └── ...
+│   │       ├── research-queue/
+│   │       │   └── ...
+│   │       └── references/
+│   │           └── ...
+│   └── temp/
+│       └── <storage_owner_uuid>/
+│           └── <sync_batch_id>/
+│               └── <dataset-slug>/
+│                   └── ...
+```
+
+### 6.2 Canonical Dataset Slugs
+| Dataset Type | Canonical Kebab-Case Slug | Description |
+|---|---|---|
+| `SAVED_ITEMS` | `saved-items` | User's global saved YouTube videos, channels, and playlists |
+| `PLAYLIST` | `saved-playlists` | Custom curated playlists created by the user |
+| `SEARCH_HISTORY` | `saved-search-history` | Automated and manually saved YouTube search queries |
+| `RESEARCH_QUEUE` | `research-queue` | Queued items prioritized for deep study and AI analysis |
+| `REFERENCES` | `references` | Academic, citation, and reference materials |
+
+### 6.3 Legacy Path Read Compatibility
+Historical paths created under `<storage_owner_uuid>/persistence/...` are fully supported for reading, tree rendering, and streaming without modifying or deleting historical Cloudflare R2 objects. Newly uploaded generations strictly write to `asdy/persistence/<ownerId>/...`.
+
+### 6.4 9-State Cloud Hydration State Machine
+When a user launches YouTube Discovery on a fresh device or clean browser profile, the client hydration service restores the local IndexedDB library from Supabase PostgreSQL and Cloudflare R2 through 9 explicit lifecycle phases:
+1. `NOT_HYDRATED`
+2. `CHECKING_REGISTRY`
+3. `FETCHING_MANIFEST`
+4. `FETCHING_PARTS`
+5. `VERIFYING` (SHA-256 integrity verification)
+6. `RESTORING_LOCAL_INDEX` (Bulk insertion into IndexedDB)
+7. `MERGING_PENDING_CHANGES` (Outbox preservation)
+8. `READY`
+9. `PARTIAL_FAILURE` / `FAILED`
+
+### 6.5 IndexedDB v4 Synchronized Stores
+- `local_dataset_catalog`: Tracks local vs remote authoritative revisions per dataset.
+- `sync_journal`: Records immutable batches (`UPLOADING` -> `COMMITTED` / `FAILED`).
+- `sync_leases`: Mutex lease locks preventing concurrent multi-tab sync races.

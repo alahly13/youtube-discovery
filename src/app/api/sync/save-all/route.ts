@@ -180,6 +180,7 @@ export async function POST(request: Request) {
       // (1 single Worker request for all objects in this generation)
       await r2Client.uploadBatch(batchId, datasetType, batchItems, {
         storageOwnerUuid,
+        targetPrefix: `asdy/persistence/${storageOwnerUuid}`,
       });
 
       // 7. Commit generation in Supabase PostgreSQL if database is active

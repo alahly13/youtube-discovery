@@ -7,7 +7,8 @@ import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
  * GET /api/manifests/download?path=<storagePath>
  * ──────────────────────────────────────────────────────────────────────────
  * Streams an individual immutable manifest part directly to the caller,
- * verifying that the path is strictly within the caller's storage partition.
+ * verifying that the path is strictly within the caller's storage partition
+ * (supports both canonical asdy/persistence/<ownerId>/ and legacy <ownerId>/).
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -23,17 +24,20 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "Missing required path parameter" }, { status: 400 });
   }
 
-  // Enforce owner partition isolation
-  if (!targetPath.startsWith(`${storageOwnerUuid}/`)) {
+  // Directory traversal prevention
+  if (targetPath.includes("../") || targetPath.includes("..\\")) {
+    return NextResponse.json({ ok: false, error: "Invalid storage path" }, { status: 400 });
+  }
+
+  // Enforce owner partition isolation (accepts canonical asdy/persistence/<owner>/ or legacy <owner>/)
+  const isCanonicalOwner = targetPath.startsWith(`asdy/persistence/${storageOwnerUuid}/`);
+  const isLegacyOwner = targetPath.startsWith(`${storageOwnerUuid}/`);
+
+  if (!isCanonicalOwner && !isLegacyOwner) {
     return NextResponse.json(
       { ok: false, error: "Access denied: requested storage path outside owner partition" },
       { status: 403 }
     );
-  }
-
-  // Directory traversal prevention
-  if (targetPath.includes("../") || targetPath.includes("..\\")) {
-    return NextResponse.json({ ok: false, error: "Invalid storage path" }, { status: 400 });
   }
 
   try {

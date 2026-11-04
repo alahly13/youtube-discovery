@@ -15,7 +15,7 @@
  */
 
 export const IDB_DATABASE_NAME = "youtube_discovery_local_v1";
-export const IDB_DATABASE_VERSION = 3;
+export const IDB_DATABASE_VERSION = 4;
 
 export const CANONICAL_DATASET_TYPES = [
   "SAVED_ITEMS",
@@ -40,6 +40,9 @@ export const IDB_STORES = {
   PENDING_OPERATIONS: "pending_operations",
   LOCAL_SYNC_METADATA: "local_sync_metadata",
   LOCAL_RESEARCH_REMINDERS: "local_research_reminders",
+  DATASET_CATALOG: "local_dataset_catalog",
+  SYNC_JOURNAL: "sync_journal",
+  SYNC_LEASES: "sync_leases",
 } as const;
 
 export interface PendingOperation {
@@ -61,6 +64,45 @@ export interface LocalSyncMetadata {
   lastCommittedGenerationId: string | null;
   lastSuccessfulSyncAt: string | null;
   updatedAt: string;
+}
+
+export interface LocalDatasetCatalogEntry {
+  ownerId: string;
+  datasetType: CanonicalDatasetType;
+  localRevision: number;
+  remoteRevision: number;
+  currentLocalGenerationId: string | null;
+  lastHydratedGenerationId: string | null;
+  lastHydratedRevision: number;
+  pendingOperationCount: number;
+  estimatedBytes: number;
+  lastLocalMutationAt: string | null;
+  lastSuccessfulSyncAt: string | null;
+  syncStatus: "IDLE" | "SYNCING" | "SYNCED" | "FAILED";
+  schemaVersion: number;
+}
+
+export interface SyncJournalBatch {
+  syncBatchId: string;
+  ownerId: string;
+  snapshotWatermark: number;
+  affectedDatasets: CanonicalDatasetType[];
+  expectedRevisions: Record<string, number>;
+  targetGenerationIds: Record<string, string>;
+  batchStatus: "PENDING" | "UPLOADING" | "COMMITTED" | "FAILED";
+  createdAt: string;
+  lastAttemptAt: string;
+  lastErrorCode?: string;
+  recoveryState?: string;
+  uploadedObjectReceipts: Array<{ key: string; size: number; sha256: string; etag: string }>;
+  dbCommitStatus: "PENDING" | "COMMITTED" | "FAILED";
+}
+
+export interface SyncLeaseRecord {
+  leaseName: string;
+  holderTabId: string;
+  acquiredAt: number;
+  expiresAt: number;
 }
 
 export interface PendingOperationsSummary {
@@ -184,6 +226,25 @@ export function openLocalDatabase(): Promise<IDBDatabase> {
         reminderStore.createIndex("ownerId_videoId", ["ownerId", "videoId"], { unique: true });
         reminderStore.createIndex("ownerId_status", ["ownerId", "status"], { unique: false });
         reminderStore.createIndex("ownerId_addedAt", ["ownerId", "addedAt"], { unique: false });
+      }
+
+      // 13. local_dataset_catalog (Coordinated dataset registry per owner)
+      if (!db.objectStoreNames.contains(IDB_STORES.DATASET_CATALOG)) {
+        const catStore = db.createObjectStore(IDB_STORES.DATASET_CATALOG, { keyPath: ["ownerId", "datasetType"] });
+        catStore.createIndex("ownerId", "ownerId", { unique: false });
+      }
+
+      // 14. sync_journal (Durable record of cloud sync batches and receipts)
+      if (!db.objectStoreNames.contains(IDB_STORES.SYNC_JOURNAL)) {
+        const journalStore = db.createObjectStore(IDB_STORES.SYNC_JOURNAL, { keyPath: "syncBatchId" });
+        journalStore.createIndex("ownerId", "ownerId", { unique: false });
+        journalStore.createIndex("batchStatus", "batchStatus", { unique: false });
+        journalStore.createIndex("createdAt", "createdAt", { unique: false });
+      }
+
+      // 15. sync_leases (Multi-tab concurrency lease mutex)
+      if (!db.objectStoreNames.contains(IDB_STORES.SYNC_LEASES)) {
+        db.createObjectStore(IDB_STORES.SYNC_LEASES, { keyPath: "leaseName" });
       }
     };
   });
@@ -486,4 +547,246 @@ export async function exportLocalDisasterRecoveryBackup(): Promise<string> {
   };
 
   return JSON.stringify(exportPayload, null, 2);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Coordinated Dataset Catalog Management (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getLocalDatasetCatalog(ownerId: string): Promise<LocalDatasetCatalogEntry[]> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([IDB_STORES.DATASET_CATALOG], "readonly");
+    const store = tx.objectStore(IDB_STORES.DATASET_CATALOG);
+    const index = store.index("ownerId");
+    const req = index.getAll(ownerId);
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error || new Error("Failed to load dataset catalog"));
+  });
+}
+
+export async function getDatasetCatalogEntry(
+  ownerId: string,
+  datasetType: CanonicalDatasetType
+): Promise<LocalDatasetCatalogEntry | null> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([IDB_STORES.DATASET_CATALOG], "readonly");
+    const store = tx.objectStore(IDB_STORES.DATASET_CATALOG);
+    const req = store.get([ownerId, datasetType]);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error || new Error("Failed to load catalog entry"));
+  });
+}
+
+export async function updateLocalDatasetCatalog(
+  ownerId: string,
+  datasetType: CanonicalDatasetType,
+  entry: Partial<LocalDatasetCatalogEntry>
+): Promise<void> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.DATASET_CATALOG]);
+    const store = tx.objectStore(IDB_STORES.DATASET_CATALOG);
+    const getReq = store.get([ownerId, datasetType]);
+
+    getReq.onsuccess = () => {
+      const existing = (getReq.result as LocalDatasetCatalogEntry) || {
+        ownerId,
+        datasetType,
+        localRevision: 0,
+        remoteRevision: 0,
+        currentLocalGenerationId: null,
+        lastHydratedGenerationId: null,
+        lastHydratedRevision: 0,
+        pendingOperationCount: 0,
+        estimatedBytes: 0,
+        lastLocalMutationAt: null,
+        lastSuccessfulSyncAt: null,
+        syncStatus: "IDLE",
+        schemaVersion: 1,
+      };
+
+      const updated: LocalDatasetCatalogEntry = {
+        ...existing,
+        ...entry,
+        ownerId,
+        datasetType,
+      };
+
+      store.put(updated);
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to update dataset catalog"));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync Journal & Batch Receipts Management (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getSyncJournalBatches(ownerId: string): Promise<SyncJournalBatch[]> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([IDB_STORES.SYNC_JOURNAL], "readonly");
+    const store = tx.objectStore(IDB_STORES.SYNC_JOURNAL);
+    const index = store.index("ownerId");
+    const req = index.getAll(ownerId);
+    req.onsuccess = () => {
+      const list = (req.result || []) as SyncJournalBatch[];
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      resolve(list);
+    };
+    req.onerror = () => reject(req.error || new Error("Failed to load sync journal"));
+  });
+}
+
+export async function recordSyncJournalBatch(batch: SyncJournalBatch): Promise<void> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SYNC_JOURNAL]);
+    const store = tx.objectStore(IDB_STORES.SYNC_JOURNAL);
+    store.put(batch);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to record sync batch journal"));
+  });
+}
+
+export async function updateSyncJournalBatch(
+  syncBatchId: string,
+  updates: Partial<SyncJournalBatch>
+): Promise<void> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SYNC_JOURNAL]);
+    const store = tx.objectStore(IDB_STORES.SYNC_JOURNAL);
+    const getReq = store.get(syncBatchId);
+
+    getReq.onsuccess = () => {
+      if (getReq.result) {
+        store.put({ ...getReq.result, ...updates, syncBatchId });
+      }
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to update sync journal batch"));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-Tab Mutex Lease Helpers (Phase 6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function acquireSyncLease(
+  leaseName = "global_sync_lease",
+  ttlMs = 300000
+): Promise<boolean> {
+  const db = await openLocalDatabase();
+  const tabId = typeof window !== "undefined" ? (window.name ||= `tab_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`) : "server";
+  const now = Date.now();
+
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SYNC_LEASES]);
+    const store = tx.objectStore(IDB_STORES.SYNC_LEASES);
+    const req = store.get(leaseName);
+
+    req.onsuccess = () => {
+      const current = req.result as SyncLeaseRecord | undefined;
+      if (current && current.expiresAt > now && current.holderTabId !== tabId) {
+        // Active lease held by another tab
+        resolve(false);
+        return;
+      }
+
+      // Acquire or renew lease
+      const record: SyncLeaseRecord = {
+        leaseName,
+        holderTabId: tabId,
+        acquiredAt: now,
+        expiresAt: now + ttlMs,
+      };
+      store.put(record);
+      resolve(true);
+    };
+
+    req.onerror = () => reject(req.error || new Error("Failed to check sync lease"));
+  });
+}
+
+export async function releaseSyncLease(leaseName = "global_sync_lease"): Promise<void> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SYNC_LEASES]);
+    const store = tx.objectStore(IDB_STORES.SYNC_LEASES);
+    store.delete(leaseName);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to release sync lease"));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cloud Hydration Bulk Insertion (Phase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function bulkHydrateDatasetEntities(
+  ownerId: string,
+  datasetType: CanonicalDatasetType,
+  entities: Record<string, unknown>[],
+  generationId: string,
+  revision: number
+): Promise<{ insertedCount: number }> {
+  if (entities.length === 0) return { insertedCount: 0 };
+  const db = await openLocalDatabase();
+  const storeName = getStoreNameForDataset(datasetType);
+
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [storeName, IDB_STORES.DATASET_CATALOG, IDB_STORES.LOCAL_SYNC_METADATA]);
+    const entityStore = tx.objectStore(storeName);
+    const catStore = tx.objectStore(IDB_STORES.DATASET_CATALOG);
+    const metaStore = tx.objectStore(IDB_STORES.LOCAL_SYNC_METADATA);
+
+    let inserted = 0;
+    for (const raw of entities) {
+      const item = { ...raw, ownerId } as any;
+      // Ensure key fields exist
+      if (datasetType === "SAVED_ITEMS" && !item.platformItemId && item.id) {
+        item.platformItemId = item.id;
+      }
+      entityStore.put(item);
+      inserted++;
+    }
+
+    // Update catalog entry
+    const catEntry: LocalDatasetCatalogEntry = {
+      ownerId,
+      datasetType,
+      localRevision: revision,
+      remoteRevision: revision,
+      currentLocalGenerationId: generationId,
+      lastHydratedGenerationId: generationId,
+      lastHydratedRevision: revision,
+      pendingOperationCount: 0,
+      estimatedBytes: 0,
+      lastLocalMutationAt: new Date().toISOString(),
+      lastSuccessfulSyncAt: new Date().toISOString(),
+      syncStatus: "SYNCED",
+      schemaVersion: 1,
+    };
+    catStore.put(catEntry);
+
+    // Update legacy sync metadata store as well
+    const metaEntry: LocalSyncMetadata = {
+      ownerId,
+      datasetType,
+      lastCommittedRevision: revision,
+      lastCommittedGenerationId: generationId,
+      lastSuccessfulSyncAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    metaStore.put(metaEntry);
+
+    tx.oncomplete = () => resolve({ insertedCount: inserted });
+    tx.onerror = () => reject(tx.error || new Error("Failed to bulk hydrate entities"));
+  });
 }

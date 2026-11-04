@@ -73,9 +73,20 @@ export function useMergedDataset<T extends Record<string, unknown>>(
       load();
     });
 
+    const handleHydrationEvent = () => {
+      load();
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("yt-discovery-hydration-changed", handleHydrationEvent);
+    }
+
     return () => {
       cancelled = true;
       unsubscribe();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("yt-discovery-hydration-changed", handleHydrationEvent);
+      }
     };
   }, [datasetType, ownerId, tick]);
 

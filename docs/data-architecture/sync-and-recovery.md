@@ -229,3 +229,31 @@ Attempting to update `storage_datasets.current_generation_id` before committing 
    )
    ```
    This guarantees that if an old generation is purged from storage, live user items remain in PostgreSQL without dangling or orphaned provenance references.
+
+---
+
+## 6. 2026 Resilient 12-Hour Sync Scheduler & Cloud Hydration
+
+### 6.1 12-Hour Automated Sync Architecture
+- **Interval:** 12 hours (43,200,000 ms) tracked persistently in `localStorage.yt_discovery_sync_meta_v1`.
+- **Zero-Op Bypass:** If `pendingOperations.length === 0`, the scheduler advances the 12-hour schedule immediately without calling Cloudflare Workers or Supabase PostgreSQL.
+- **Sleep & Tab Throttling Protection:** A regular 60-second ticker interval checks for overdue synchronization even if `setTimeout` was suspended by laptop sleep or browser tab throttling.
+- **Immediate Catchup:** `document.visibilityState === "visible"` and `window.addEventListener("online")` instantly catch up overdue synchronizations upon tab focus or network restoration.
+- **Concurrency Mutex:** Uses `navigator.locks` with automatic fallback to IndexedDB `sync_leases` (60s TTL), preventing race conditions across multiple open tabs.
+- **Exponential Backoff:** If remote sync fails, retries are scheduled at 15s, 30s, 60s (max 5 minutes) without advancing the 12-hour schedule or wiping outbox changes.
+
+### 6.2 IndexedDB v4 Schema Additions
+```text
+IndexedDB: youtube_discovery_local_v1 (Version 4)
+├── local_dataset_catalog (Key: [ownerId, datasetType])
+│   └── Tracks: localRevision, remoteRevision, lastHydratedGenerationId, syncStatus
+├── sync_journal (Key: syncBatchId)
+│   └── Tracks: snapshotWatermark, affectedDatasets, batchStatus (UPLOADING -> COMMITTED / FAILED)
+└── sync_leases (Key: leaseName)
+    └── Tracks: holderTabId, acquiredAt, expiresAt
+```
+
+### 6.3 Automated Storage Reconciliation Endpoint
+- **Route:** `GET /api/manifests/reconcile`
+- **Functionality:** Compares Supabase PostgreSQL `storage_datasets`, `storage_generations`, and `storage_manifest_parts` against physical objects in Cloudflare R2 bucket `new-youtube-discovery-private`.
+- **Reports:** Missing parts, orphan permanent objects, stale `/temp/` objects (>24h), and revision divergence.

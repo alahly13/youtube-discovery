@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth/require-auth";
 import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { createZipArchive, type ZipFileEntry } from "@/lib/storage/zip-builder";
 import { computePartSha256, computeAggregateGenerationSha256 } from "@/lib/storage/manifest-serializer";
+import { datasetTypeToSlug } from "@/lib/storage/canonical-paths";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -11,6 +12,9 @@ import { computePartSha256, computeAggregateGenerationSha256 } from "@/lib/stora
  * Pre-validates cryptographic SHA-256 digests across all parts in a generation,
  * packages them into a standard PKZIP archive with a generation index descriptor,
  * and streams the ZIP file to the administrator.
+ *
+ * Checks canonical asdy/persistence/<ownerId>/<slug>/generations/<genId>/parts/
+ * with graceful fallback to legacy <ownerId>/persistence/... paths.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
@@ -32,10 +36,32 @@ export async function GET(request: Request) {
 
   try {
     const backend = getNewStorageBackend();
-    const genPrefix = `${storageOwnerUuid}/persistence/datasets/${datasetId}/generations/${generationId}/parts/`;
-    const listResult = await backend.list(genPrefix);
 
-    const partFiles = listResult.filter((obj) => obj.pathname.includes("/parts/part-"));
+    // 1. Determine canonical slug
+    let slug = datasetId;
+    try {
+      slug = datasetTypeToSlug(datasetId);
+    } catch {
+      slug = datasetId.toLowerCase().replace(/_/g, "-");
+    }
+
+    // Try canonical prefix first
+    const canonicalPrefix = `asdy/persistence/${storageOwnerUuid}/${slug}/generations/${generationId}/parts/`;
+    let listResult = await backend.list(canonicalPrefix);
+    let partFiles = listResult.filter((obj) => obj.pathname.includes("/parts/part-"));
+
+    // Fallback to legacy prefixes if no parts found
+    if (partFiles.length === 0) {
+      const legacyPrefix1 = `${storageOwnerUuid}/persistence/datasets/${datasetId}/generations/${generationId}/parts/`;
+      listResult = await backend.list(legacyPrefix1);
+      partFiles = listResult.filter((obj) => obj.pathname.includes("/parts/part-"));
+    }
+
+    if (partFiles.length === 0) {
+      const legacyPrefix2 = `${storageOwnerUuid}/persistence/${datasetId}/generations/${generationId}/parts/`;
+      listResult = await backend.list(legacyPrefix2);
+      partFiles = listResult.filter((obj) => obj.pathname.includes("/parts/part-"));
+    }
 
     if (partFiles.length === 0) {
       return NextResponse.json(
@@ -89,43 +115,50 @@ export async function GET(request: Request) {
       });
     }
 
-    // Compute generation aggregate SHA-256
-    const aggregateSha = computeAggregateGenerationSha256(verifiedPartsMeta);
+    // Sort parts by partNumber
+    verifiedPartsMeta.sort((a, b) => a.partNumber - b.partNumber);
 
-    // Create root generation descriptor
-    const descriptor = {
-      $schema: "https://youtube-discovery.app/schemas/manifest-generation-export-v1.json",
-      exportedAt: new Date().toISOString(),
+    // Compute aggregate generation SHA-256
+    const aggregateSha256 = computeAggregateGenerationSha256(verifiedPartsMeta);
+    const totalRecords = verifiedPartsMeta.reduce((acc, p) => acc + p.recordCount, 0);
+    const totalBytes = verifiedPartsMeta.reduce((acc, p) => acc + p.byteCount, 0);
+
+    // Build standard generation index descriptor
+    const manifestDescriptor = {
+      $schema: "https://youtube-discovery.app/schemas/dataset-manifest-v1.json",
+      schemaVersion: 1,
       datasetId,
       generationId,
-      storageOwnerUuid,
+      ownerId: storageOwnerUuid,
+      exportedAt: new Date().toISOString(),
+      aggregateSha256,
       totalParts: verifiedPartsMeta.length,
-      totalBytes: verifiedPartsMeta.reduce((acc, p) => acc + p.byteCount, 0),
-      totalRecords: verifiedPartsMeta.reduce((acc, p) => acc + p.recordCount, 0),
-      aggregateSha256: aggregateSha,
+      totalRecords,
+      totalBytes,
       parts: verifiedPartsMeta,
     };
 
     zipEntries.unshift({
-      filename: "generation-descriptor.json",
-      data: JSON.stringify(descriptor, null, 2),
+      filename: "manifest.json",
+      data: Buffer.from(JSON.stringify(manifestDescriptor, null, 2), "utf8"),
     });
 
+    // Package into streaming ZIP
     const zipBuffer = createZipArchive(zipEntries);
-    const exportFilename = `youtube-discovery-${datasetId}-${generationId}.zip`;
+    const zipFilename = `${datasetId}-${generationId}-export.zip`;
 
     return new Response(new Uint8Array(zipBuffer), {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${exportFilename}"`,
+        "Content-Disposition": `attachment; filename="${zipFilename}"`,
         "Content-Length": String(zipBuffer.length),
         "Cache-Control": "private, no-cache",
       },
     });
   } catch (error) {
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Generation export failed" },
+      { ok: false, error: error instanceof Error ? error.message : "Failed to export generation" },
       { status: 500 }
     );
   }

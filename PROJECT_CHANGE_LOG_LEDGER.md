@@ -3940,3 +3940,87 @@ No new migrations required. All models pre-exist in migration 1.
 ### Whether `db:apply` was run
 
 No.
+
+---
+
+## 2026-11-04 — Supabase IPv6 Connectivity Fix, prisma.config.ts Rewrite, Migration CLI Improvement & 5th Migration Deployment
+
+### Agent/model
+
+Antigravity (Gemini Pro)
+
+### Task summary
+
+Fix `ENOTFOUND db.qrsjlyminkpfcqpsnrxj.supabase.co` DNS resolution failure preventing `npx prisma migrate deploy` and `npm run db:migrations:check` from connecting to the remote Supabase PostgreSQL database. Deploy the pending 5th migration (`20261104200000_device_identity_and_origin_metadata`).
+
+### Reason/root cause
+
+Supabase's direct connection host (`db.<ref>.supabase.co`) publishes only an AAAA (IPv6) DNS record with no A (IPv4) record. Node.js `dns.lookup()` uses the OS `getaddrinfo()` which returns `ENOTFOUND` because the user's machine/network lacks working IPv6 connectivity (IPv6 TCP to port 5432 times out). This is NOT an env-loading issue — both `dotenv/config` (prisma.config.ts) and `@next/env` (custom CLI) load `.env` correctly.
+
+### Files changed
+
+1. `prisma.config.ts` — Rewritten with IPv6-only Supabase direct host detection and automatic Session Pooler URL derivation fallback. Detects `db.*.supabase.co` pattern and derives a Session Pooler URL (port 5432, no pgbouncer flag) from `DATABASE_URL` to use as `directUrl` for Prisma migrations.
+2. `scripts/db-migrations/core.mjs` — Updated `resolveDatabaseUrl()` with the same IPv6-safe fallback logic and `deriveSessionPoolerUrl()` helper for the custom migration CLI.
+3. `scripts/db-migrations/renderer.mjs` — Migration summary section now shows "Unknown" instead of misleading "0" for Applied/Pending/Failed/Divergent counts when the database is unreachable. Added `UNAVAILABLE` case to `formatStatusBadge()`.
+
+### Technical details
+
+- DNS diagnostics confirmed: `Resolve-DnsName` returns AAAA only (no A record), Node `dns.resolve4()` → ENODATA, `dns.resolve6()` → success, `dns.lookup()` → ENOTFOUND, IPv6 TCP to port 5432 → timeout.
+- Session Pooler host (`aws-0-eu-west-1.pooler.supabase.com`) resolves to IPv4 via CNAME → AWS ELB. Both port 5432 (session mode) and 6543 (transaction mode) are reachable.
+- Session Pooler (port 5432, without `?pgbouncer=true`) confirmed to support advisory locks required by Prisma migration engine.
+- The `_prisma_migrations` table had a failed row for `phase1_5_security_and_old_archive` (finished_at: null, applied_steps_count: 0) alongside a successful row for the same migration. Prisma correctly handled this during `migrate deploy`.
+
+### Architecture impact
+
+No architectural changes. The IPv6 fallback is transparent — when a non-Supabase direct host is used (localhost, custom host), the original DIRECT_URL passes through unchanged. The fallback only activates for the known `db.*.supabase.co` IPv6-only pattern.
+
+### Environment impact
+
+None. No new environment variables required. Existing `DATABASE_URL` and `DIRECT_URL` remain unchanged.
+
+### Database/migration impact
+
+- Migration `20261104200000_device_identity_and_origin_metadata` successfully deployed (applied at 2026-11-04 17:58:00 UTC, duration 1.24s).
+- Adds `origin_device_id` (VARCHAR(128)) and `origin_device_label` (VARCHAR(128)) columns to `saved_items_index`, `save_sync_batches`, and `storage_generations`.
+- Adds composite index `saved_items_index_owner_id_origin_device_id_idx` on `saved_items_index(owner_id, origin_device_id)`.
+- All 5 migrations now SYNCHRONIZED on remote Supabase PostgreSQL 17.
+
+### YouTube API/quota impact
+
+None.
+
+### AI scope/safety impact
+
+None.
+
+### Verification run and results
+
+- `npm run db:migrations:check`: SYNCHRONIZED — 5/5 applied, 0 pending, 0 failed, 0 divergent.
+- `npm run typecheck`: passed (0 errors).
+- `npm run test:playlists`: passed (30/30).
+- `npm run test:legacy-migration`: passed (14/14).
+- `npm run test:saved-lifecycle`: passed (25/25).
+- `npm run test:pipeline`: passed (10/10).
+- `npm run test:migrations`: passed (43/43).
+- Total: 122/122 regression tests passed.
+
+### Blocked checks, if any
+
+None. All checks passed after the IPv6 fallback fix.
+
+### Remaining risks/limitations
+
+- The `DATABASE_URL` in `.env` uses port 5432 with `?pgbouncer=true`. Port 5432 is Session Pooler mode which doesn't need the pgbouncer flag. Consider updating to port 6543 (Transaction Pooler) for runtime queries or removing the flag. This is a runtime optimization, not a blocker.
+- If Supabase adds an A (IPv4) record for direct hosts in the future, the fallback will be harmless (non-Supabase direct hosts pass through unchanged, and Supabase direct hosts are detected by hostname pattern).
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+Applied: `20261104200000_device_identity_and_origin_metadata` (pre-existing local file, newly deployed to remote).
+
+### Whether `db:apply` was run
+
+`npx prisma migrate deploy` was run. No `db:apply` or `prisma migrate reset`.

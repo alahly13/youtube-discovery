@@ -70,6 +70,8 @@ export function formatStatusBadge(status) {
       return `${colors.brightRed}? Missing Local${colors.reset}`;
     case "NOT_CHECKED":
       return `${colors.gray}○ Local Only${colors.reset}`;
+    case "UNAVAILABLE":
+      return `${colors.brightYellow}? Unknown${colors.reset}`;
     default:
       return `${colors.gray}- Unknown${colors.reset}`;
   }
@@ -126,16 +128,22 @@ export function renderDashboard(report, options = {}) {
 
   // 3. Migration Summary Section
   lines.push(`${colors.bold}${colors.brightCyan}MIGRATION SUMMARY${colors.reset}`);
+
+  // When the database is unreachable, remote migration counts are unknown —
+  // never display misleading zeros that imply a successful empty audit.
+  const dbUnreachable = !report.database.connected && report.database.status !== undefined && report.database.status !== "NOT_CHECKED";
+  const unknownLabel = `${colors.brightYellow}Unknown${colors.reset}`;
+
   const totalCount = Math.max(
     report.summary.totalLocal,
     report.summary.applied + report.summary.pending + report.summary.failed
   );
   lines.push(`  ${pad("Total Known", 18)} ${colors.white}${totalCount}${colors.reset}`);
   lines.push(`  ${pad("Local Files", 18)} ${colors.white}${report.summary.totalLocal}${colors.reset}`);
-  lines.push(`  ${pad("Applied", 18)} ${report.summary.applied > 0 ? colors.brightGreen : colors.gray}${report.summary.applied}${colors.reset}`);
-  lines.push(`  ${pad("Pending", 18)} ${report.summary.pending > 0 ? colors.brightYellow : colors.gray}${report.summary.pending}${colors.reset}`);
-  lines.push(`  ${pad("Failed", 18)} ${report.summary.failed > 0 ? colors.brightRed : colors.gray}${report.summary.failed}${colors.reset}`);
-  lines.push(`  ${pad("Divergent", 18)} ${report.summary.divergent > 0 ? colors.brightRed : colors.gray}${report.summary.divergent}${colors.reset}`);
+  lines.push(`  ${pad("Applied", 18)} ${dbUnreachable ? unknownLabel : (report.summary.applied > 0 ? colors.brightGreen : colors.gray) + report.summary.applied + colors.reset}`);
+  lines.push(`  ${pad("Pending", 18)} ${dbUnreachable ? unknownLabel : (report.summary.pending > 0 ? colors.brightYellow : colors.gray) + report.summary.pending + colors.reset}`);
+  lines.push(`  ${pad("Failed", 18)} ${dbUnreachable ? unknownLabel : (report.summary.failed > 0 ? colors.brightRed : colors.gray) + report.summary.failed + colors.reset}`);
+  lines.push(`  ${pad("Divergent", 18)} ${dbUnreachable ? unknownLabel : (report.summary.divergent > 0 ? colors.brightRed : colors.gray) + report.summary.divergent + colors.reset}`);
   if (report.summary.missingLocally > 0) {
     lines.push(`  ${pad("Missing Locally", 18)} ${colors.brightRed}${report.summary.missingLocally}${colors.reset}`);
   }

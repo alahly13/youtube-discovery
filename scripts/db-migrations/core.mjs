@@ -76,13 +76,61 @@ export function parseConnectionDetails(rawUrl) {
 }
 
 /**
+ * Derives a Supabase Session Pooler URL from the transaction pooler
+ * DATABASE_URL. Session mode (port 5432, no pgbouncer) supports advisory
+ * locks and DDL statements required by Prisma migrations.
+ */
+function deriveSessionPoolerUrl(poolerUrl) {
+  try {
+    const u = new URL(poolerUrl);
+    u.port = "5432";
+    u.searchParams.delete("pgbouncer");
+    return u.toString();
+  } catch {
+    return poolerUrl;
+  }
+}
+
+/**
  * Resolves the database connection string to use.
  * Prefers DIRECT_URL for migrations (as Prisma CLI does in prisma.config.ts),
  * with fallback to DATABASE_URL.
+ *
+ * IPv6-safe: Supabase direct hosts (db.<ref>.supabase.co) publish only AAAA
+ * records. On machines without working IPv6, Node.js dns.lookup() returns
+ * ENOTFOUND. When this pattern is detected and DATABASE_URL is available,
+ * we derive a Session Pooler connection (port 5432, no pgbouncer) which
+ * resolves over IPv4 and supports advisory locks + DDL for migrations.
  */
 export function resolveDatabaseUrl(customUrl) {
   if (customUrl) return customUrl;
-  return process.env.DIRECT_URL || process.env.DATABASE_URL || null;
+
+  const directUrl = process.env.DIRECT_URL;
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (directUrl) {
+    try {
+      const parsed = new URL(directUrl);
+      const host = parsed.hostname;
+      const isSupabaseDirectHost =
+        host.startsWith("db.") && host.endsWith(".supabase.co");
+
+      if (isSupabaseDirectHost && databaseUrl) {
+        // Supabase direct host is IPv6-only; derive session pooler fallback
+        return deriveSessionPoolerUrl(databaseUrl);
+      }
+      return directUrl;
+    } catch {
+      return directUrl;
+    }
+  }
+
+  // No DIRECT_URL — use DATABASE_URL session pooler derivation if available
+  if (databaseUrl) {
+    return deriveSessionPoolerUrl(databaseUrl);
+  }
+
+  return null;
 }
 
 /**

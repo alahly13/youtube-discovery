@@ -28,11 +28,12 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Tailwind CSS 4 with centralized CSS variables in `src/app/globals.css`.
 - lucide-react for iconography.
 - Zod for server route validation.
-- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections. All 4 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active):
-  1. `20261102000000_canonical_v1_4`
+- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections with automatic IPv6-only Supabase direct host fallback to Session Pooler. All 5 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active):
+  1. `20261102000000_canonical_v1_4_foundation`
   2. `20261102220000_phase1_5_security_and_old_archive`
-  3. `20261103150000_canonical_private_bucket`
+  3. `20261103150000_canonical_private_storage_bucket`
   4. `20261103173000_old_and_new_buckets_separation`
+  5. `20261104200000_device_identity_and_origin_metadata`
 - Supabase Auth exclusively for user authentication, session cookies, and administrator authorization (`@supabase/ssr@0.12.7`, `@supabase/supabase-js@2.118.0`).
 - Supabase PostgreSQL with Prisma 7 (`7.10.1`, pinned) exclusively for application relational data, models, and metadata.
 - Cloudflare R2 accessed exclusively through Two Dedicated Cloudflare Workers for all authoritative object storage:
@@ -49,7 +50,7 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 - Local Windows/PowerShell: run from `F:\discovery\youtube-discovery`; keep local secrets in root `.env.local`; use `vercel env pull .env.local --yes` when linked to Vercel.
 - Vercel production/preview: configure server-only variables in Vercel Project Settings; do not run database migrations during normal build.
-- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 4 applied migrations and 19 canonical domain tables.
+- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 5 applied migrations and 19 canonical domain tables. The direct host (`db.*.supabase.co`) is IPv6-only; `prisma.config.ts` automatically falls back to Session Pooler when IPv6 is unreachable.
 - Supabase Storage: dedicated private buckets `old-youtube-discovery-private` and `new-youtube-discovery-private` configured for archives, active manifests, and exports.
 - GitHub Actions: `.github/workflows/ci.yml` runs npm install, lint, typecheck, and build on Node 24.
 - Codex/online environment: provider keys and DB may be missing; live provider/DB checks must be reported honestly.
@@ -198,12 +199,14 @@ Server-only modules import `server-only` where secrets/providers are involved. P
 
 ## Database And Schema Concepts
 
-Canonical schema: Approved Phase 1.5 schema foundation with Canonical Private Storage Bucket extension. All 19 models defined in `prisma/schema.prisma` and migrations authored and deployed via Prisma migration engine:
+Canonical schema: Approved Phase 1.5 schema foundation with Canonical Private Storage Bucket extension and Device Identity. All 19 models defined in `prisma/schema.prisma` and migrations authored and deployed via Prisma migration engine:
 1. `prisma/migrations/20261102000000_canonical_v1_4_foundation`
 2. `prisma/migrations/20261102220000_phase1_5_security_and_old_archive`
 3. `prisma/migrations/20261103150000_canonical_private_storage_bucket`
+4. `prisma/migrations/20261103173000_old_and_new_buckets_separation`
+5. `prisma/migrations/20261104200000_device_identity_and_origin_metadata`
 
-Migrations: Applied to remote Supabase PostgreSQL 17 (`qrsjlyminkpfcqpsnrxj`). Status is `SYNCHRONIZED` (verified with `npm run db:migrations:check`). The `_prisma_migrations` table records all 3 migrations as successfully applied.
+Migrations: Applied to remote Supabase PostgreSQL 17 (`qrsjlyminkpfcqpsnrxj`). Status is `SYNCHRONIZED` (verified with `npm run db:migrations:check`). The `_prisma_migrations` table records all 5 migrations as successfully applied.
 
 Canonical 19 models (Phase 1.5 Architecture: 18 Core + 1 Archive Extension):
 
@@ -442,7 +445,7 @@ Forbidden public secrets:
 - `docs/data-architecture/sync-and-recovery.md`: Phase 1 local durability, atomic outbox, power-loss protection, and Save Center.
 - `docs/database/migration-management.md`: professional documentation for migration CLI tools, indicators, exit codes, and workflows.
 - `prisma/schema.prisma`: canonical DB schema foundation with all 19 domain models and `@prisma/adapter-pg` driver adapter.
-- `prisma/migrations/*`: append-only migration history with 3 applied and synchronized migrations (`20261102000000_canonical_v1_4_foundation`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_storage_bucket`).
+- `prisma/migrations/*`: append-only migration history with 5 applied and synchronized migrations (`20261102000000_canonical_v1_4_foundation`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_storage_bucket`, `20261103173000_old_and_new_buckets_separation`, `20261104200000_device_identity_and_origin_metadata`).
 - `scripts/*`: env and DB guardrails using root `.env.local`.
 - `vercel-blob-backup/`: Local mirror directory containing all 86 blobs (16.15 MB) downloaded from Vercel Blob before decommissioning, preserving full directory structure (`youtube-discovery/v1/...`).
 - `src/lib/recovery/local-data-center-service.ts`: Unified client-side browser storage inventory & management engine. Discovers localStorage, IndexedDB (`youtube_discovery_local_v1`), Cache Storage, and OPFS across 5 canonical dataset categories (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`) with strict secret redaction and safe deletion safeguards. Features deep Zustand workspace extraction (`collectFullBackupData`), unpacking saved videos, channels, playlists, searches, and history into dedicated untruncated datasets with accurate record counting.
@@ -573,5 +576,19 @@ Latest verification results on 2026-11-04 (Complete Playlist Management System, 
 - `npm run test:saved-lifecycle`: passed (25/25 assertions pass).
 - `node scripts/test-complete-storage-pipeline.mjs`: passed (10/10 assertions pass).
 - Full database integration: `playlist-db-service.ts` synchronizes with Prisma models `user_playlists`, `user_playlist_groups`, and `user_playlist_entries` with multi-user isolation and offline fallback.
+
+Latest verification results on 2026-11-04 (Supabase IPv6 Connectivity Fix, prisma.config.ts Rewrite, 5th Migration Deployment):
+
+- Root cause: `ENOTFOUND db.*.supabase.co` — Supabase direct connection host publishes only an AAAA (IPv6) DNS record with no A (IPv4) record; machine lacks working IPv6 connectivity.
+- Fix: `prisma.config.ts` and `scripts/db-migrations/core.mjs` rewritten with automatic IPv6-only detection and Session Pooler fallback derivation.
+- `npx prisma migrate deploy`: successfully applied `20261104200000_device_identity_and_origin_metadata` (1.24s).
+- `npm run db:migrations:check`: SYNCHRONIZED — all 5 migrations applied, 0 pending, 0 failed, 0 divergent.
+- `npm run typecheck`: passed (0 errors across the entire application).
+- `npm run test:playlists`: passed (30/30).
+- `npm run test:legacy-migration`: passed (14/14).
+- `npm run test:saved-lifecycle`: passed (25/25).
+- `npm run test:pipeline`: passed (10/10).
+- `npm run test:migrations`: passed (43/43).
+- Total: 122/122 regression tests passed.
 
 

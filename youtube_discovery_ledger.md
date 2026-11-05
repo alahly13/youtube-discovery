@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-04 (Complete Playlist Management System, Full-Stack Database & R2 Integration, Multiline Description Preservation & Isolation, Legacy Data Migration Engine, Part Records Inspector & Comprehensive Automated Test Suite)
+Last updated: 2026-11-05 (Canonical Resource Taxonomy, R2 Save/Hydrate Pipeline Hardening, Saved Titles & Links, Worker Batch Verification, Manifest Explorer Canonical Classification)
 
 ## Project Identity And Mission
 
@@ -19,7 +19,7 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Community posts remain unsupported/future-ready unless an official endpoint exposes them.
 - Use `Known public playlist appearances`, never `All playlists containing this video`.
 - AI must use explicit scopes and must not invent IDs, URLs, counts, videos, playlist relationships, or private data.
-- Remote Vercel Blob objects must never be deleted or purged before verified migration to Supabase Storage.
+- Remote Vercel Blob objects must never be deleted or purged before verified migration to Cloudflare R2.
 
 ## Current Tech Stack And Library Decisions
 
@@ -28,12 +28,13 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Tailwind CSS 4 with centralized CSS variables in `src/app/globals.css`.
 - lucide-react for iconography.
 - Zod for server route validation.
-- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections with automatic IPv6-only Supabase direct host fallback to Session Pooler. All 5 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active):
+- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections with automatic IPv6-only Supabase direct host fallback to Session Pooler. All 6 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active):
   1. `20261102000000_canonical_v1_4_foundation`
   2. `20261102220000_phase1_5_security_and_old_archive`
   3. `20261103150000_canonical_private_storage_bucket`
   4. `20261103173000_old_and_new_buckets_separation`
   5. `20261104200000_device_identity_and_origin_metadata`
+  6. `20261104230000_canonical_resource_classification`
 - Supabase Auth exclusively for user authentication, session cookies, and administrator authorization (`@supabase/ssr@0.12.7`, `@supabase/supabase-js@2.118.0`).
 - Supabase PostgreSQL with Prisma 7 (`7.10.1`, pinned) exclusively for application relational data, models, and metadata.
 - Cloudflare R2 accessed exclusively through Two Dedicated Cloudflare Workers for all authoritative object storage:
@@ -50,8 +51,8 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 - Local Windows/PowerShell: run from `F:\discovery\youtube-discovery`; keep local secrets in root `.env.local`; use `vercel env pull .env.local --yes` when linked to Vercel.
 - Vercel production/preview: configure server-only variables in Vercel Project Settings; do not run database migrations during normal build.
-- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 5 applied migrations and 19 canonical domain tables. The direct host (`db.*.supabase.co`) is IPv6-only; `prisma.config.ts` automatically falls back to Session Pooler when IPv6 is unreachable.
-- Supabase Storage: dedicated private buckets `old-youtube-discovery-private` and `new-youtube-discovery-private` configured for archives, active manifests, and exports.
+- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 6 applied migrations and 19 canonical domain tables. The direct host (`db.*.supabase.co`) is IPv6-only; `prisma.config.ts` automatically falls back to Session Pooler when IPv6 is unreachable.
+- Cloudflare R2: dedicated private buckets `old-youtube-discovery-private` and `new-youtube-discovery-private` accessed only through the two dedicated Workers for archives, active manifests, and exports. Supabase Storage is retired for object persistence.
 - GitHub Actions: `.github/workflows/ci.yml` runs npm install, lint, typecheck, and build on Node 24.
 - Codex/online environment: provider keys and DB may be missing; live provider/DB checks must be reported honestly.
 
@@ -65,11 +66,12 @@ Authoritative persistence uses Cloudflare R2 via `src/lib/storage/r2-blob-backen
 - **Dataset-Level Grouping:** N items (e.g. 20 saved videos) = 1 grouped immutable generation (`manifest.json` + `parts/part-XXXXXX.json` + `version.json`), avoiding individual Worker requests for individual records.
 - **Zero 50MB Storage Limit:** Cloudflare R2 eliminates Supabase Storage limits; manifests and parts up to 40–45 MiB partition smoothly without hard storage ceiling boundaries.
 - **Strictly 5 Canonical Datasets:** `SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`. (`COLLECTIONS` deprecated and removed).
-- **NEW Cloudflare Worker Grouped Batch API:** `POST /v1/batches/upload` verified via HMAC-SHA256 capability tokens, writing manifest + parts with SHA-256 integrity receipts.
+- **Canonical Resource Taxonomy (schema v2):** Eight persisted resource types — `VIDEO`, `VIDEO_SHORT`, `CHANNEL`, `YOUTUBE_PLAYLIST`, `USER_PLAYLIST`, `SAVED_TITLE`, `SAVED_LINK`, `SAVED_SEARCH` — are distinct from dataset types. `VIDEO_SHORT` requires explicit `/shorts/` URL evidence or an authoritative Shorts field; duration, aspect ratio, and `isShortsLike` never decide it. Every record carries `recordId`, `resourceType`, `resourceId`, and classification provenance.
+- **NEW Cloudflare Worker Grouped Batch API:** `POST /v1/batches/upload` plus `POST /v1/batches/verify`, verified via HMAC-SHA256 capability tokens, with owner-namespace enforcement, per-item/batch size limits, duplicate-key rejection, immutable-generation protection, and SHA-256 integrity receipts.
 - **12-Hour Scheduled Sync & Overdue Catchup:** Automated foreground timer + visibilitychange catchup executing every 12 hours or on tab re-activation.
 - **Merged Read Model:** `useMergedDataset` hook combines server-committed data with uncommitted local additions and suppresses local `DELETE` tombstones immediately.
 - **OLD archives** route strictly to `old-youtube-discovery-private` via `old-youtube-discovery-api` under `asdy/old/<category>/<manifestId>/manifest.json`.
-- **NEW dataset generations** route strictly to `new-youtube-discovery-private` via `new-youtube-discovery-api` under `<owner_uuid>/persistence/<datasetType>/...`.
+- **NEW dataset generations** route strictly to `new-youtube-discovery-private` via `new-youtube-discovery-api` under `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/generations/<generation-id>/...`; the dataset slug is derived from the dataset type, never from the dataset UUID.
 - Structured data persistence is fully connected to Prisma 7 / Supabase PostgreSQL across all 19 canonical models.
 - Object storage routes through dedicated Cloudflare Workers using short-lived cryptographic capability tokens.
 - Manifests, playlists, and search histories are permanently stored without TTL data loss.
@@ -98,6 +100,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/saved`: **FULL DEDICATED** Saved Items page supporting all 3 YouTube entity types (Videos, Channels, Playlists) with **Daily Grouping** by calendar date (e.g., "November 2, 2026", newer first, clear visual separators), type filters (All, Videos, Channels, Playlists), search, sort, add-to-playlist actions, and **Phase 1.6 UI Readability Upgrades** (spacious 3-column responsive grid `grid gap-5 sm:grid-cols-2 lg:grid-cols-3`, crisp 16:9 thumbnail containers, centered circular channel artwork, and prominent 2-line title typography `line-clamp-2 text-base font-bold`).
 - `/playlist-manager`: **FULL DEDICATED** Personal Playlist Manager workspace for creating, editing, renaming, deleting, and reviewing personal playlists, featuring multiline description support with expandable progressive disclosure, prominent video thumbnail galleries, bold multi-line titles (`line-clamp-2 text-base font-bold`), item count badges, section badges, full database synchronization (`user_playlists`), and direct links to `/saved/[playlistId]`.
 - `/saved-searches`: **FULL DEDICATED** Saved Searches workspace for pinned search titles, quick rerun links (`/search?q=...`), copyable titles with enhanced readability (`line-clamp-2 text-base font-bold`), and research notes.
+- `/saved-titles-links`: **FULL DEDICATED** Saved Titles & Links workspace backed by the `REFERENCES` dataset. Creates, edits, deletes, searches, filters, and sorts `SAVED_TITLE` / `SAVED_LINK` records with URL validation, duplicate detection, local-first outbox persistence, pending/committed badges, and a Save All trigger. Distinct from `/old/saved-titles-links` (legacy archive) and from saved search presets.
 - `/saved/[playlistId]`: **FULL** personal-playlist workspace — enlarged media thumbnails (`h-20 w-36 sm:h-22 sm:w-40`), multi-line wrapped titles (`line-clamp-2 text-base font-bold`), in-playlist FlexSearch search, content-type/date/views filters, 12 transient sort modes plus canonical manual order, user sections/groups (create/rename/note/collapse/reorder/delete keep-or-delete), custom items/notes, HTML5 drag-and-drop with Move Up/Down alternatives, multi-select bulk move/copy/group/remove, Undo, and self-contained JSON export. Includes multiline editable playlist description and item-level expandable description with strict description isolation. Zero YouTube API calls.
 - `/other-actions` / `/dashboard/other-actions`: **FULL DEDICATED** Legacy Data Migration & Other Actions workspace allowing scanning, previewing, and migrating legacy browser storage records into canonical datasets under `before-app-updating` in Cloudflare R2 and reviewing historical archives.
 - `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control. The three query-utility buttons (Shuffle Words, Trim Spaces, Shuffle One Word) rewrite the visible input ONLY — they never submit, call the API, or record history; the user presses Search explicitly.
@@ -110,10 +113,10 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/playlists`: **FULL** saved playlist library (localStorage-backed).
 - `/playlist-explorer`: playlist workflow scaffold.
 - `/playlists/[playlistId]`: **FULL** playlist explorer with order-preserving list/grid view, play-next navigation, local filters/sort/search-inside-playlist, export, and scoped AI panel.
-- `/manifests`: **FULL** Manifest Storage Explorer workspace with real-time PostgreSQL registry reconciliation, Supabase Storage browser, 6 canonical reconciliation states, individual part download stream, and generation ZIP exports.
+- `/manifests`: **FULL** Manifest Storage Explorer workspace with real-time PostgreSQL registry reconciliation, Cloudflare R2 object browser, 6 canonical reconciliation states, individual part download stream, generation ZIP exports, and canonical resource-type badges sourced from `classifyResourceRecord` (including classification source/evidence and origin device).
 - `/manifests/upload`: **FULL DEDICATED** Manifest Upload workspace with dual-destination selector (OLD historical archive vs NEW active dataset generation), 4-category selector for OLD with real-time derived storage path preview, dataset generation batch upload for NEW, collision detection, and verified persistence.
 - `/manifests/viewer`: **FULL DEDICATED** 100% Read-Only Manifest Viewer & Inspector, allowing side-by-side inspection of registered or local manifest files with item type filters (ALL, VIDEO, SHORTS, CHANNELS, PLAYLISTS), raw JSON modal, and zero storage mutation.
-- `/manifests/export`: **FULL DEDICATED** Manifest Export workspace for downloading authentic, unaltered manifest files directly from Supabase Storage or assembling multi-manifest ZIP archives with authentic `SHA256SUMS.txt`.
+- `/manifests/export`: **FULL DEDICATED** Manifest Export workspace for downloading authentic, unaltered manifest files directly from Cloudflare R2 or assembling multi-manifest ZIP archives with authentic `SHA256SUMS.txt`.
 - `/manifests/[manifestId]`: **FULL** manifest detail workspace with local search/filter/sort, export, and scoped AI analysis.
 - `/collections`: DEPRECATED and REMOVED in Phase 1.4 in favor of dedicated Saved Items (`/saved`), Playlist Manager (`/playlist-manager`), and Saved Searches (`/saved-searches`).
 - `/history`: **FULL** chronological history workspace with shared FlexSearch `Search history...` filter across title/query/metadata without calling YouTube API, unified client + server archive listing, "View Results" action loading full search data from the archive with zero quota consumption, and Back-to-Top control.
@@ -190,7 +193,9 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `POST /api/download-center/full-backup`: protected endpoint streaming complete project backup ZIP (all 19 database tables JSON, schema DDL, applied migrations, logical SQL dump, storage objects, SHA256SUMS, and self-contained restore runner) for total data portability.
 - `POST /api/download-center/legacy-recovery/scan`: protected legacy data discovery scanner with read-only safety guarantees across Vercel Blob, disk cache, and browser storage.
 - `POST /api/download-center/legacy-recovery/backup`: protected offline verifiable backup package generator streaming ZIP (`YouTube-Discovery-Legacy-Backup/...`) with `backup-manifest.json` and `checksums/SHA256SUMS.txt`.
-- `POST /api/sync/save-all`: protected authoritative cloud synchronization endpoint; validates session, groups outbox operations into canonical dataset generations, uploads batch to Cloudflare R2 Worker, and atomically commits generation, parts, revisions, and relational index in Supabase PostgreSQL (Prisma 7).
+- `POST /api/sync/save-all`: protected authoritative cloud synchronization endpoint; validates session and Zod payload, resolves the canonical `storage_owner_uuid` from the profile, validates every record through the resource taxonomy, writes a full snapshot generation (`manifest.json` + parts) to Cloudflare R2, verifies the upload through Worker `batch_verify` (size + SHA-256), then atomically commits generation, parts, revision, dataset pointer, and relational index in Supabase PostgreSQL (Prisma 7). Returns `ok: true` only after the database commit; version pointer failure is reported separately.
+- `GET /api/sync/hydrate`: protected manifest-based hydration discovery endpoint; returns dataset generations with verified part metadata (real SHA-256, byte counts, record counts), canonical and legacy owner prefixes, and PostgreSQL authority.
+- `GET /api/sync/hydrate/part`: protected part streaming endpoint with owner isolation; hydration verifies exact byte count and SHA-256 before parsing and applies snapshot replacement locally.
 - `POST /api/ai/youtube-search-assistant`: scoped AI search helper.
 - `POST /api/ai/youtube-manifest-assistant`: scoped manifest analyst.
 - `POST /api/ai/youtube-video-explorer`: selected-video AI explorer.
@@ -205,24 +210,25 @@ Canonical schema: Approved Phase 1.5 schema foundation with Canonical Private St
 3. `prisma/migrations/20261103150000_canonical_private_storage_bucket`
 4. `prisma/migrations/20261103173000_old_and_new_buckets_separation`
 5. `prisma/migrations/20261104200000_device_identity_and_origin_metadata`
+6. `prisma/migrations/20261104230000_canonical_resource_classification`
 
-Migrations: Applied to remote Supabase PostgreSQL 17 (`qrsjlyminkpfcqpsnrxj`). Status is `SYNCHRONIZED` (verified with `npm run db:migrations:check`). The `_prisma_migrations` table records all 5 migrations as successfully applied.
+Migrations: Applied to remote Supabase PostgreSQL 17 (`qrsjlyminkpfcqpsnrxj`). Status is `SYNCHRONIZED` (verified with `npx prisma migrate deploy`; the `_prisma_migrations` table records all 6 migrations as successfully applied).
 
 Canonical 19 models (Phase 1.5 Architecture: 18 Core + 1 Archive Extension):
 
 - `user_profiles`: Authenticated profile 1:1 with `auth.users(id)` (via `ON DELETE SET NULL`), containing `storage_owner_uuid` for permanent physical storage paths, role: 'admin' | 'user', and security lockout flags. Admin user 'asdy' mapped to authoritative profile with role 'admin'.
 - `user_preferences`: 1:1 user settings, theme, auto-save settings, and preferred timezone.
-- `storage_datasets`: Authoritative registry of manifest datasets scoped to `owner_id`, with `current_revision` and `current_generation_id` pointer guarded by `trg_dataset_current_generation_guard`.
+- `storage_datasets`: Authoritative registry of manifest datasets scoped to `owner_id`, with `current_revision` and `current_generation_id` pointer guarded by `trg_dataset_current_generation_guard`; unique `(owner_id, dataset_type)` prevents duplicate dataset rows for the same canonical dataset type.
 - `storage_generations`: Committed immutable generation snapshots with linear parent lineage enforced by `uq_storage_generations_linear`, deterministic binary aggregate SHA-256, and composite foreign key `(owner_id, dataset_id, source_batch_id)` to `save_sync_batches`.
 - `storage_manifest_parts`: Individual chunks <= 45 MiB with exact UTF-8 byte counts and SHA-256 digests.
 - `storage_temp_objects`: Managed temporary and staging files with explicit TTL expirations and status lifecycle.
-- `saved_items_index`: Lightweight relational index for Saved Items (Videos, Channels, Playlists) with daily date grouping in owner timezone. Provenance foreign keys to parts use `ON DELETE SET NULL (generation_id, manifest_part_id)` with all-or-none check constraint, guarded by atomic pre-delete trigger on parts.
+- `saved_items_index`: Lightweight relational index for Saved Items (Videos, Shorts, Channels, Playlists) with daily date grouping in owner timezone. Stores canonical `resource_type`, `resource_id`, and `record_id` classification columns plus origin device fields. Provenance foreign keys to parts use `ON DELETE SET NULL (generation_id, manifest_part_id)` with all-or-none check constraint, guarded by atomic pre-delete trigger on parts.
 - `user_playlists`: Personal playlists metadata, display order, and thumbnail aggregates.
 - `user_playlist_groups`: Section headers/groups inside personal playlists (composite key `(playlist_id, id)`).
 - `user_playlist_entries`: Ordered memberships (composite FK to group with `ON DELETE SET NULL (group_id)`, deduplicated by `(playlist_id, platform_item_id)` for YouTube items).
 - `research_queue_items`: “Items I Will Search For” saved from search/AI result cards (provenance `ON DELETE SET NULL`, guarded by atomic pre-delete trigger on parts).
-- `saved_references`: Manually saved titles, articles, and external non-YouTube URLs (provenance `ON DELETE SET NULL`, guarded by atomic pre-delete trigger on parts).
-- `saved_search_presets`: Reusable query presets with filters, tags, and pinned state.
+- `saved_references`: Manually saved titles and external non-YouTube links (`SAVED_TITLE` / `SAVED_LINK`) in the `REFERENCES` dataset. `url` is nullable so title-only records are valid; stores canonical `record_id`, `resource_type`, `resource_id`, origin device fields, and `saved_at`, with unique `(owner_id, record_id)` (provenance `ON DELETE SET NULL`, guarded by atomic pre-delete trigger on parts).
+- `saved_search_presets`: Reusable query presets (`SAVED_SEARCH`) with filters, tags, pinned state, canonical classification columns, origin device fields, and unique `(owner_id, record_id)`.
 - `search_history_records`: Permanent audit of executed searches with raw manifest links (`ON DELETE RESTRICT`).
 - `managed_api_keys`: AES-256-GCM encrypted YouTube API v3 keys with AAD binding per owner.
 - `quota_usage_events`: Idempotent YouTube API request accounting and attribution with request fingerprints (`request_sha256`) and `ON DELETE RESTRICT`.
@@ -235,14 +241,14 @@ Security Hardening (Phase 1.5):
 - **A2 — Linear Succession & Single Root Constraints:** Two partial unique indexes (`uq_storage_generations_single_root` and `uq_storage_generations_linear_successor`) ensure exactly one committed root generation per dataset and strictly linear non-forking chains, plus `chk_storage_generations_no_self_parent`.
 - **A3 — Database Immutability Triggers:** `trg_prevent_committed_generation_mutation` and `trg_prevent_committed_manifest_part_mutation` prevent any `UPDATE` or `DELETE` on committed generations or their parts, with a secure session escape hatch `app.privileged_maintenance = 'on'`.
 - **A4 — Direct Batch-Generation Relationship:** Composite FK `(owner_id, dataset_id, source_batch_id)` referencing `save_sync_batches(owner_id, dataset_id, id)` with unique index `uq_storage_generations_source_batch` ensuring at most one generation per sync batch.
-- **A5 — Supabase Storage RLS Policies:** Complete RLS on `storage.objects` for canonical bucket `youtube-discovery-private` (and legacy alias `youtube-discovery`) authorizing owner partition `<storage_owner_uuid>/...` and logical archive root `ASDY/OLD/<storage_owner_uuid>/...`. Strict enforcement that `UPDATE` and `DELETE` operations are ONLY permitted on temporary paths (`/temp/%`), with permanent manifests and archives immutable.
+- **A5 — Object Storage Ownership & Immutability:** Supabase Storage RLS remains documented as historical schema security. Active object persistence is enforced in the NEW Worker: capability tokens bind operation, bucket, key, audience, and `storageOwnerUuid`; writes must stay under `asdy/persistence/<storage_owner_uuid>/` or `asdy/temp/<storage_owner_uuid>/`; generation objects cannot be overwritten; DELETE is restricted to canonical temp keys.
 - **A6 — SECURITY DEFINER Function Hardening:** All security definer functions (`current_user_profile_id`, `audit_log_append_internal`, etc.) hardened with `SET search_path = ''` and schema-qualified references.
 
 Collections status: Completely removed in Phase 1.4.
 
 Owner scope is represented by `owner_id UUID NOT NULL REFERENCES user_profiles(id)`. Every user-owned record is strictly partitioned. Application access remains single-administrator (`role = 'admin'`) for now, while database architecture is natively multi-user-ready.
 
-Migration status: All 3 migrations deployed and synchronized on remote Supabase PostgreSQL. Verified via `npm run db:migrations:check` with exit code 0.
+Migration status: All 6 migrations deployed and synchronized on remote Supabase PostgreSQL. Verified via `npx prisma migrate deploy` with all 6 migrations reported applied and no pending migrations.
 
 ## Environment Variable Map
 
@@ -289,9 +295,9 @@ Forbidden public secrets:
 
 - `AGENTS.md`: repo operating rules; future agents must read it before edits.
 - `implementation-guide.md`: authoritative engineering implementation specification (v1.3); details Phase 0–1.3, multi-user foundation, direct permanent storage uploads, storage explorer, and approval gates.
-- `docs/data-architecture/erd.md`: canonical ERD (v1.3) with 18 tables, full generational chain composite foreign keys with linear parent lineage, current generation trigger, and decoupled resource types.
-- `docs/data-architecture/data-dictionary.md`: canonical data dictionary (v1.3) with exact 18 tables, nullable auth_user_id ON DELETE SET NULL, zero-coercion rule, soft-delete key archiving, and account suspension flags.
-- `docs/data-architecture/manifest-format.md`: manifest format and physical storage explorer specification (v1.3) with direct permanent uploads to <owner-auth-uuid>/persistence/..., 40/45 MiB sizing, PostgreSQL generation authority, 6 reconciliation states, and raw downloads/ZIP exports.
+- `docs/data-architecture/erd.md`: canonical ERD (v2.0) with 19 tables, full generational chain composite foreign keys with linear parent lineage, current generation trigger, canonical resource taxonomy columns, and R2 storage paths.
+- `docs/data-architecture/data-dictionary.md`: canonical data dictionary (v2.0) with exact 19 tables, nullable auth_user_id ON DELETE SET NULL, zero-coercion rule, resource taxonomy columns, nullable saved-reference URLs, and account suspension flags.
+- `docs/data-architecture/manifest-format.md`: manifest format and physical storage explorer specification (v2.0) with canonical R2 uploads to `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/...`, taxonomy v2 part envelopes, 40/45 MiB sizing, PostgreSQL generation authority, checksum verification, snapshot hydration, 6 reconciliation states, and raw downloads/ZIP exports.
 - `docs/data-architecture/sync-and-recovery.md`: sync and crash recovery architecture (v1.3) detailing Option A single-dataset batches (no batch_items), direct immutable upload saga, row-level locks, and outbox lifecycle.
 - `docs/data-architecture/implementation-plan.md`: implementation roadmap across Phases A through G (v1.3) establishing strict approval gates and decoupled execution milestones.
 - `docs/data-architecture/adr-001-multi-user-storage-explorer.md`: architectural decision record ADR-001 (v1.3) resolving all v1.3 relational, lifecycle, and storage review findings.
@@ -315,7 +321,9 @@ Forbidden public secrets:
 - `src/lib/blob/blob-backend.ts`: swappable byte adapter interface + in-memory mock for tests.
 - `src/lib/blob/vercel-blob-backend.ts`: production storage adapter delegating to R2StorageBackend (`new-youtube-discovery-private`).
 - `src/lib/storage/indexeddb-store.ts`: local-first IndexedDB database (`youtube_discovery_local_v1`) providing atomic write-ahead outbox journaling, multi-user isolation by Supabase UUID, and entity stores across the 5 canonical datasets (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`).
-- `src/lib/sync/sync-coordinator.ts`: client synchronization coordinator orchestrating outbox freezing, grouped generation building, batch uploads to Cloudflare R2 Worker, Supabase PostgreSQL atomic commits, 12-hour background scheduler, and cross-tab Web Lock coordination.
+- `src/lib/sync/sync-coordinator.ts`: client synchronization coordinator orchestrating canonical owner resolution/migration, outbox freezing, full-snapshot generation building, retry-stable idempotency keys, batch uploads to the NEW Cloudflare Worker, 409 hydration recovery, Supabase PostgreSQL atomic commits, 12-hour background scheduler, and cross-tab Web Lock coordination.
+- `src/lib/resources/resource-taxonomy.ts`: canonical eight-type resource taxonomy and classification engine (`classifyResourceRecord`, `normalizeResourceRecord`, `validateResourceRecord`, stable `recordId`/`resourceId` builders). Single authority for dataset-type vs resource-type separation and explicit `/shorts/` evidence.
+- `src/lib/auth/storage-owner.ts`: canonical owner/profile resolver used by sync, hydration, manifests, playlists, migration, and download routes. Resolves `user_profiles.id`, `auth_user_id`, and `storage_owner_uuid` without treating the auth UUID as the R2 path owner.
 - `src/lib/storage/use-merged-dataset.ts`: reactive client hook merging remote server-committed items with uncommitted local additions and suppressing local `DELETE` tombstones immediately.
 - `src/app/api/sync/save-all/route.ts`: authoritative Next.js backend sync route validating Supabase session, calling Cloudflare R2 Worker `POST /v1/batches/upload`, and executing atomic Prisma transactions.
 - `scripts/test-local-first-sync-pipeline.mjs`: comprehensive standalone test suite validating local-first persistence, 20 items -> 1 generation grouping, batch capability tokens, 12h scheduler math, and multi-user isolation.
@@ -364,6 +372,8 @@ Forbidden public secrets:
 - `src/components/layout/navigation.tsx`: app nav incl. `Search Guide 2026` (`/search-guide`) entry plus external `Dailymotion Discovery` entry (exact `https://dailymotion-discovery.vercel.app/`, new tab, `noopener noreferrer`) with local brand SVG.
 - `src/components/layout/dailymotion-icon.tsx`: local inline Dailymotion brand-mark SVG (no external image, no generic icon).
 - `src/components/saved/saved-library-workspace.tsx`: Saved hub (playlists/items/searches tabs, shared search, standalone detection, add-to-playlist hooks).
+- `src/components/saved/saved-titles-links-workspace.tsx`: local-first Saved Titles & Links workspace for `SAVED_TITLE` / `SAVED_LINK` records in the `REFERENCES` dataset (CRUD, search, kind filter, sort, URL validation, duplicate detection, pending/committed badges, Save All).
+- `src/app/saved-titles-links/page.tsx`: dedicated page route with the exact visible title “Saved Titles & Links”, wrapped in `AppShell` + `WorkspacePage`.
 - `src/components/library/add-to-playlist-dialog.tsx`: add-to-playlist picker with inline creation and per-playlist duplicate prevention.
 - `src/components/library/playlist-detail-workspace.tsx`: individual playlist workspace (search/filter/sort/groups/drag-drop/notes/export/undo).
 - `src/app/saved/[playlistId]/page.tsx`: dedicated user-playlist page (distinct from YouTube explorer `/playlists/[playlistId]`).
@@ -439,7 +449,9 @@ Forbidden public secrets:
 - `src/app/api/download-center/full-backup/route.ts`: Protected endpoint streaming the complete full project backup archive (`YouTube-Discovery-Full-Backup-<timestamp>.zip`).
 - `scripts/backup-cli.mjs`: Pure Node.js CLI backup runner (`npm run db:backup`) generating identical verifiable full project backups without requiring a running web server.
 - `scripts/test-remote-integration.mjs`: Real live integration test suite verifying 41 assertions against remote Supabase PostgreSQL 17 and private Storage bucket `youtube-discovery-private`.
-- `prisma/migrations/20261103150000_canonical_private_storage_bucket/migration.sql`: Canonical migration registering the private bucket `youtube-discovery-private` (50 MiB limit) and establishing owner-scoped RLS policies on `storage.objects`.
+- `prisma/migrations/20261103150000_canonical_private_storage_bucket/migration.sql`: Historical migration registering the retired Supabase Storage bucket and its owner-scoped RLS policies.
+- `prisma/migrations/20261104230000_canonical_resource_classification/migration.sql`: Additive taxonomy migration adding `resource_type`, `resource_id`, `record_id`, origin-device, and saved-at columns; making `saved_references.url` nullable; and adding unique `(owner_id, record_id)` plus `(owner_id, dataset_type)` constraints. Applied to remote Supabase.
+- `public/manifest-example/canonical-v2/*`: Internally consistent taxonomy-v2 example (`manifest.json`, `part-000001.json`, `part-000002.json`, `version.json`, `README.md`). Checksums and byte counts are real for the included parts; UUIDs are illustrative.
 - `docs/data-architecture/data-dictionary.md`: Phase 1 table-by-table column types, nullability, constraints, indexes.
 - `docs/data-architecture/manifest-format.md`: Phase 1 manifest dataset sizing (40/45 MiB), immutable parts, and generational chain.
 - `docs/data-architecture/sync-and-recovery.md`: Phase 1 local durability, atomic outbox, power-loss protection, and Save Center.
@@ -459,8 +471,11 @@ Forbidden public secrets:
 ## Current Limitations And Known Risks
 
 - Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation).
-- Remote Vercel Blob objects remain safely in the remote store and can be imported to Supabase Storage once credentials are provided; zero deletion policy preserved.
-- Database access is direct to Supabase PostgreSQL 17; all 19 canonical models are active and migrations are synchronized.
+- Remote Vercel Blob objects remain safely in the remote store and can be imported to Cloudflare R2 once credentials are provided; zero deletion policy preserved.
+- Database access is direct to Supabase PostgreSQL 17; all 19 canonical models are active and all 6 migrations are synchronized.
+- The hardened NEW Worker (`cloudflare/workers/new-youtube-discovery-api`) is verified locally only; it has not been deployed in this task. End-to-end Save All → R2 → hydrate cannot be claimed until deployment and a real remote round-trip are performed.
+- Hydration fails closed when a part lacks a valid SHA-256 checksum. Legacy parts written before checksum enforcement are not hydratable through the strict path.
+- Full-repository `npm run lint` still reports pre-existing errors in unrelated files; targeted lint for files touched by this task is clean (warnings only).
 
 ## Verification Commands And Expected Checks
 
@@ -475,8 +490,11 @@ Forbidden public secrets:
 - `npm run test:old`: 15-assertion automated suite verifying OLD legacy manifest archive envelope parsing, 4-filter classification, pure Node.js ZIP extraction, and archive store operations.
 - `npm run test:recovery`: 93-assertion automated suite verifying Phase 1.6 legacy storage discovery, 8-category classification, cache evaluation, verifiable backup ZIP packaging, download center multi-manifest export, and 48 zero-deletion proof checks.
 - `npm run test:auth`: Automated test suite verifying Supabase Auth connection, admin user "asdy" resolution, route-handler cookie integration, and configurable 1-week session TTL.
-- `npm run lint`: ESLint validation (0 errors).
+- `npm run lint`: ESLint validation. Targeted lint on files touched by the 2026-11-05 hardening is clean (0 errors, warnings only); full-repository lint still has pre-existing unrelated errors.
 - `npm run typecheck`: strict TypeScript check (`tsc --noEmit --incremental false`).
+- `npm run test:taxonomy`: 40-assertion taxonomy/contract suite (classification, `/shorts/` evidence, stable IDs, dataset/resource separation).
+- `npm run test:manifest`: manifest serializer suite (taxonomy-v2 envelopes, canonical paths, aggregate checksum, empty snapshot).
+- `npm run test:canonical-sync`: cloud hydration and canonical sync suite (44 assertions).
 - `npm run test:blob`: 118 assertions unit test suite for storage.
 - `npm run test:search`: 77 assertions unit test suite for search query transforms.
 - `npm run verify`: One-step end-to-end verification (`npm run lint && npm run typecheck && npm run test:security && npm run test:old && npm run test:recovery && npm run test:auth && npm run build`).
@@ -590,5 +608,18 @@ Latest verification results on 2026-11-04 (Supabase IPv6 Connectivity Fix, prism
 - `npm run test:pipeline`: passed (10/10).
 - `npm run test:migrations`: passed (43/43).
 - Total: 122/122 regression tests passed.
+
+Latest verification results on 2026-11-05 (Canonical Resource Taxonomy, R2 Save/Hydrate Hardening, Saved Titles & Links, Worker Batch Verification):
+
+- `npx tsc --noEmit --incremental false`: passed (0 errors across the entire application).
+- `npm run test:taxonomy`: passed (40/40 assertions covering canonical classification, explicit `/shorts/` evidence, stable IDs, dataset/resource separation, and validation).
+- `npm run test:manifest`: passed (97/97 assertions covering taxonomy-v2 part envelopes, canonical paths, aggregate checksum, and empty-snapshot behavior).
+- `npm run test:canonical-sync`: passed (44/44 assertions).
+- `npm run test:saved-lifecycle`: passed (25/25 assertions).
+- `npm run test:pipeline`: passed (10/10 assertions).
+- Targeted ESLint on key touched files: 0 errors, warnings only (the key-file subset re-run reported 1 `import/no-anonymous-default-export` warning in the Worker). Full-repository lint still has pre-existing unrelated errors.
+- `npx prisma migrate deploy`: all 6 migrations applied; `prisma generate` succeeded. `storage_datasets`, `storage_generations`, and `storage_manifest_parts` remained empty at audit time.
+- `public/manifest-example/canonical-v2`: part byte counts, SHA-256 digests, aggregate digest, total bytes, and version pointer verified against the included files.
+- Not verified: NEW Worker deployment and a real remote Save All → R2 → hydrate round-trip. The Worker source is hardened locally only.
 
 

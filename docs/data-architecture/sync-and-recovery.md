@@ -1,10 +1,13 @@
-# YouTube Discovery — Phase 1: Local Durability, Synchronization & Recovery Specification (v1.4)
+# YouTube Discovery — Local Durability, Synchronization & Recovery Specification (v2.0)
 
 **Document:** `docs/data-architecture/sync-and-recovery.md`  
-**Version:** 1.4 (Final Architecture Correction + Full Local Implementation Execution)  
+**Version:** 2.0 (Canonical Owner Resolution + Snapshot Hydration + Cloudflare R2 Reconciliation)  
 **Baseline Date:** 2 November 2026  
+**Reconciled:** 5 November 2026  
 **Status:** **APPROVED ARCHITECTURE SPECIFICATION & IMPLEMENTATION FOUNDATION**  
 **Execution Mode:** AUTHORIZED LOCAL IMPLEMENTATION & RUNTIME FOUNDATION  
+
+> **2026-11-05 reconciliation:** Storage is Cloudflare R2 via the NEW Worker, not Supabase Storage. Hydration is snapshot-based and checksum-verified. The canonical owner is `user_profiles.storage_owner_uuid`. The save route commits only after Worker batch verification succeeds. Applied database truth: 6 migrations, including `20261104230000_canonical_resource_classification`.
 
 ---
 
@@ -50,8 +53,8 @@ IndexedDB: youtube_discovery_local_v1
 ## 3. Storage Upload & PostgreSQL Atomic Commit Saga (Stages 1–6)
 
 ### Crucial Architectural Boundary
-**A PostgreSQL database transaction CANNOT wrap or coordinate an external HTTP upload to Supabase Storage.**  
-Storage upload and PostgreSQL transactions are decoupled across an explicit 6-stage crash-resilient saga using direct immutable uploads to permanent paths scoped by `storage_owner_uuid`.
+**A PostgreSQL database transaction CANNOT wrap or coordinate an external HTTP upload to Cloudflare R2.**  
+Storage upload and PostgreSQL transactions are decoupled across an explicit 6-stage crash-resilient saga using direct immutable uploads to permanent paths scoped by `storage_owner_uuid`. The Next.js route authenticates the request, resolves the canonical storage owner, uploads through the NEW Worker, and calls `batch_verify` before opening the commit transaction.
 
 ### 3.1 Detailed Protocol Stages
 
@@ -60,7 +63,7 @@ sequenceDiagram
     autonumber
     actor Client as Client Save Coordinator
     participant Server as Sync API Route
-    participant Storage as Supabase Storage
+    participant Storage as Cloudflare R2 (NEW Worker)
     participant DB as PostgreSQL (Canonical Registry)
 
     Note over Client,DB: STAGE 1: PREPARE
@@ -80,7 +83,7 @@ sequenceDiagram
     Note over Client,DB: STAGE 2: DIRECT UPLOAD (Out-of-Transaction)
     Server->>DB: 5. Transition generation to 'UPLOADING'
     loop Parallel upload (max 3 concurrent)
-        Server->>Storage: 6. PUT <storage_owner_uuid>/persistence/datasets/<ds-id>/generations/<gen-id>/parts/part-<n>.json
+        Server->>Storage: 6. PUT asdy/persistence/<storage_owner_uuid>/<dataset-slug>/generations/<gen-id>/parts/part-<n>.json
     end
 
     Note over Client,DB: STAGE 3: VERIFY (Out-of-Transaction)
@@ -118,6 +121,23 @@ Therefore, in Step 13 and Step 14:
 - `storage_generations.state` **MUST be updated to `'COMMITTED'` first**.
 - `storage_datasets.current_generation_id` **is updated second**.
 Attempting to update `storage_datasets.current_generation_id` before committing the generation will cause a foreign-state trigger violation and abort the transaction.
+
+### 3.3 Canonical Owner Resolution (Mandatory)
+
+Every server route and storage operation must resolve the storage namespace from `user_profiles.storage_owner_uuid`, not from `auth.users.id`, a username, or a client-supplied owner.
+
+- Canonical resolver: `src/lib/auth/storage-owner.ts` (`resolveStorageOwnerId`, `requireStorageOwnerId`, `resolveProfileId`).
+- The authenticated Supabase user maps to `user_profiles.auth_user_id`; the profile row supplies `id` (owner_id for relational rows) and `storage_owner_uuid` (R2 namespace).
+- A missing profile or missing `storage_owner_uuid` is a hard failure. The route must not fall back to `"asdy-admin"`, a username, or the auth UUID.
+- The client sync coordinator resolves the owner from `/api/auth/status`, preferring `storageOwnerUuid`, and migrates local partitions that were written under legacy owner IDs before switching.
+- `save-all` returns success only after the database transaction commits and the response includes the committed generation/revision. A failed profile lookup or failed Worker verification returns an explicit error.
+
+### 3.4 Idempotency & Conflict Semantics
+
+- Idempotency keys are derived from sorted outbox operation IDs, so retries of the same logical batch reuse the same key.
+- `expectedRevision` is sent only when a hydrated generation exists. A mismatch returns HTTP 409 with the current server revision.
+- On 409 the client forces a hydration pull, preserves pending outbox entities, and retries the batch. It never prunes unacknowledged operations.
+- Identical re-uploads are idempotent; immutable objects with different content return 409 and are never overwritten.
 
 ---
 
@@ -209,7 +229,7 @@ Attempting to update `storage_datasets.current_generation_id` before committing 
 
 ## 5. Domain Manifest Roles & Index Decoupling
 
-| Domain | Role of PostgreSQL | Role of Supabase Storage Manifest | Historical Versioning Strategy |
+| Domain | Role of PostgreSQL | Role of Cloudflare R2 Manifest | Historical Versioning Strategy |
 |---|---|---|---|
 | **`saved_items_index`** | Live authoritative mutable index (daily calendar grouping, filters, search). | Point-in-time immutable backup and complete payload snapshot. | New generation creates a new snapshot; live index rows update their provenance pointers (`ON DELETE SET NULL`). |
 | **`user_playlists`** | Live personal playlist metadata, manual ordering, section/group hierarchy. | Point-in-time snapshot of playlist entries and groups in dedicated dataset (`entity_id = playlist_id::text`). | Each cloud save creates a new immutable generation for that playlist. |
@@ -257,3 +277,22 @@ IndexedDB: youtube_discovery_local_v1 (Version 4)
 - **Route:** `GET /api/manifests/reconcile`
 - **Functionality:** Compares Supabase PostgreSQL `storage_datasets`, `storage_generations`, and `storage_manifest_parts` against physical objects in Cloudflare R2 bucket `new-youtube-discovery-private`.
 - **Reports:** Missing parts, orphan permanent objects, stale `/temp/` objects (>24h), and revision divergence.
+
+### 6.4 Snapshot Hydration Contract
+
+- Each committed generation is a **full snapshot** of its dataset. Generations are not deltas.
+- Hydration fetches the generation manifest, downloads every part, verifies the exact UTF-8 byte count and SHA-256 before parsing, validates envelope `datasetId`/`generationId`/`datasetType`, and checks the record count.
+- `bulkHydrateDatasetEntities` replaces the local dataset projection, removes records absent from the snapshot, and preserves pending outbox entities.
+- A missing or invalid checksum is a hard failure. Legacy parts that do not carry a checksum are not hydrated and are surfaced as a failure rather than silently trusted.
+- The R2 fallback derives part metadata from the manifest and real object bytes; it never fabricates SHA-256 from an ETag or estimates record counts from file size.
+
+### 6.5 Saved Titles & Links Sync
+
+- `/saved-titles-links` writes `SAVED_TITLE` / `SAVED_LINK` records to the `REFERENCES` dataset through the local-first outbox.
+- `SAVED_LINK` requires a valid URL; `SAVED_TITLE` may be title-only.
+- The relational mirror is `saved_references`, keyed by `(owner_id, record_id)` with `resource_type` and `resource_id`.
+- The same 12-hour scheduler, Save All action, snapshot hydration, and Manifest Explorer taxonomy display apply to this dataset.
+
+### 6.6 Local Owner Migration
+
+`migrateLocalOwnerId(from, to)` in `src/lib/storage/indexeddb-store.ts` migrates dataset projections, pending operations, catalog entries, sync metadata, workspace snapshots, sync journal, and local research reminders when the canonical owner changes. Canonical records win on conflict. The migration is idempotent and runs before the coordinator switches to the resolved owner. This prevents legacy partitions such as `"asdy-admin"` or an auth UUID from remaining as hidden local truth.

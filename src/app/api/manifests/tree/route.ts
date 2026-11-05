@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import {
+  resolveLegacyOwnerIds,
+  resolveProfileId,
+  resolveStorageOwnerId,
+} from "@/lib/auth/storage-owner";
 import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { parseStorageKey } from "@/lib/storage/canonical-paths";
 import { prisma } from "@/lib/db/prisma";
@@ -21,12 +26,19 @@ export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+  const profileId = resolveProfileId(auth.admin);
 
   try {
     const backend = getNewStorageBackend();
 
-    // 1. List objects from canonical prefix
+    // 1. List objects from the canonical prefix.
     const canonicalPrefix = `asdy/persistence/${storageOwnerUuid}/`;
     let canonicalObjects: Array<{ pathname: string; size: number; etag?: string }> = [];
     try {
@@ -35,19 +47,28 @@ export async function GET(request: Request) {
       // Best effort
     }
 
-    // 2. List objects from legacy prefix
-    const legacyPrefix = `${storageOwnerUuid}/persistence/`;
-    let legacyObjects: Array<{ pathname: string; size: number; etag?: string }> = [];
-    try {
-      legacyObjects = await backend.list(legacyPrefix);
-    } catch {
-      // Best effort
-    }
+    // 2. List historical owner layouts for read compatibility. These are
+    // never written by the current application.
+    const legacyPrefixes = resolveLegacyOwnerIds(auth.admin)
+      .filter((owner) => owner !== storageOwnerUuid)
+      .map((owner) => `${owner}/persistence/`);
+
+    const legacyLists = await Promise.all(
+      legacyPrefixes.map(async (prefix) => {
+        try {
+          return await backend.list(prefix);
+        } catch {
+          return [];
+        }
+      })
+    );
 
     // Merge and deduplicate by pathname
     const allObjectsMap = new Map<string, { pathname: string; size: number; etag?: string }>();
     for (const obj of canonicalObjects) allObjectsMap.set(obj.pathname, obj);
-    for (const obj of legacyObjects) allObjectsMap.set(obj.pathname, obj);
+    for (const list of legacyLists) {
+      for (const obj of list) allObjectsMap.set(obj.pathname, obj);
+    }
 
     // Map datasets
     const datasetsMap = new Map<
@@ -144,9 +165,12 @@ export async function GET(request: Request) {
             partNumber: partNum,
             storagePath: obj.pathname,
             byteCount: obj.size,
-            recordCount: Math.max(1, Math.round(obj.size / 200)),
-            sha256: (obj.etag || "").replace(/"/g, "") || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            status: "VERIFIED",
+            // R2 listing does not expose a trustworthy SHA-256. The manifest
+            // or PostgreSQL registry is the only authoritative checksum
+            // source; until then this part is explicitly UNVERIFIED.
+            recordCount: 0,
+            sha256: "",
+            status: "UNVERIFIED",
           });
           gen.totalBytes += obj.size;
         }
@@ -191,9 +215,11 @@ export async function GET(request: Request) {
               partNumber: partNum,
               storagePath: obj.pathname,
               byteCount: obj.size,
-              recordCount: Math.max(1, Math.round(obj.size / 200)),
-              sha256: (obj.etag || "").replace(/"/g, "") || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              status: "VERIFIED",
+              // Legacy path shape without manifest metadata. Never fabricate
+              // a checksum or record count from object size.
+              recordCount: 0,
+              sha256: "",
+              status: "UNVERIFIED",
             });
             gen.totalBytes += obj.size;
           }
@@ -204,7 +230,13 @@ export async function GET(request: Request) {
     // Try to query PostgreSQL to enrich revisions and database generations
     try {
       const profile = await prisma.userProfile.findFirst({
-        where: { storage_owner_uuid: storageOwnerUuid },
+        where: {
+          OR: [
+            { storage_owner_uuid: storageOwnerUuid },
+            ...(profileId ? [{ id: profileId }] : []),
+            ...(auth.admin.userId ? [{ auth_user_id: auth.admin.userId }] : []),
+          ],
+        },
         include: {
           storage_datasets: {
             include: {

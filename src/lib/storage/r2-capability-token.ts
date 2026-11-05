@@ -24,7 +24,8 @@ export type R2Operation =
   | "head"
   | "list"
   | "delete"
-  | "batch_upload";
+  | "batch_upload"
+  | "batch_verify";
 
 export interface CapabilityClaims {
   iss: "youtube-discovery-web";
@@ -125,6 +126,15 @@ export function signCapabilityToken(
   // Normalize key: strip leading slashes
   const cleanKey = options.key.replace(/^\/+/, "");
 
+  // NEW bucket operations are always owner-scoped. Refusing to mint a token
+  // without a canonical owner prevents shared-namespace writes.
+  const storageOwner = options.storageOwnerUuid?.trim();
+  if (options.bucketKind === "NEW" && !storageOwner) {
+    throw new Error(
+      "Cannot sign a NEW bucket capability token without a canonical storageOwnerUuid."
+    );
+  }
+
   const header = {
     alg: "HS256",
     typ: "JWT",
@@ -134,7 +144,7 @@ export function signCapabilityToken(
     iss: "youtube-discovery-web",
     aud: audience,
     sub: options.subject || "admin-session",
-    storage_owner_uuid: options.storageOwnerUuid || "asdy-admin",
+    storage_owner_uuid: storageOwner || "legacy",
     bucket_kind: options.bucketKind,
     operation: options.operation,
     key: cleanKey,

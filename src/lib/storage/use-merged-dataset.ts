@@ -39,11 +39,27 @@ export interface MergedDatasetResult<T> {
   refresh: () => void;
 }
 
+/**
+ * Reads the stable identity of a dataset entity without assuming a concrete
+ * record shape. Saved items use `platformItemId`; references/playlists use
+ * `id`. Never falls back to title or array position.
+ */
+function entityIdentity(item: unknown): string {
+  if (!item || typeof item !== "object") return "";
+  const record = item as Record<string, unknown>;
+  const platformId = typeof record.platformItemId === "string" ? record.platformItemId : "";
+  const id = typeof record.id === "string" ? record.id : "";
+  return (platformId || id).trim();
+}
+
 export function useMergedDataset<T extends object>(
   datasetType: CanonicalDatasetType,
   serverItems: T[] = [],
-  ownerId = "asdy-admin"
+  ownerId?: string
 ): MergedDatasetResult<T> {
+  const [activeOwnerId, setActiveOwnerId] = useState<string>(() =>
+    ownerId?.trim() || syncCoordinator.getOwnerId()
+  );
   const [localItems, setLocalItems] = useState<T[]>([]);
   const [pendingOps, setPendingOps] = useState<PendingOperation[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -51,16 +67,53 @@ export function useMergedDataset<T extends object>(
 
   const refresh = useCallback(() => setTick((prev) => prev + 1), []);
 
+  // Track the canonical owner. Components that pass an explicit owner keep
+  // their behavior; otherwise the coordinator is the single source of truth.
+  useEffect(() => {
+    if (ownerId?.trim()) {
+      setActiveOwnerId(ownerId.trim());
+      return;
+    }
+
+    const update = () => setActiveOwnerId(syncCoordinator.getOwnerId());
+    update();
+
+    const unsubscribe = syncCoordinator.subscribe(update);
+    const handleOwnerChanged = () => update();
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("yt-discovery-owner-changed", handleOwnerChanged);
+    }
+
+    return () => {
+      unsubscribe();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("yt-discovery-owner-changed", handleOwnerChanged);
+      }
+    };
+  }, [ownerId]);
+
   // Load local IndexedDB state
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      if (!activeOwnerId) {
+        // No canonical owner yet. Never read or display another partition's
+        // data; the owner-changed event will trigger a real load.
+        if (!cancelled) {
+          setLocalItems([]);
+          setPendingOps([]);
+          setIsLoading(false);
+        }
+        return;
+      }
+
       setIsLoading(true);
       try {
         const [entities, ops] = await Promise.all([
-          getLocalEntities<T>(ownerId, datasetType),
-          getPendingOperations(ownerId),
+          getLocalEntities<T>(activeOwnerId, datasetType),
+          getPendingOperations(activeOwnerId),
         ]);
 
         if (!cancelled) {
@@ -100,7 +153,7 @@ export function useMergedDataset<T extends object>(
         window.removeEventListener("yt-discovery-local-committed", handleDataEvent);
       }
     };
-  }, [datasetType, ownerId, tick]);
+  }, [datasetType, activeOwnerId, tick]);
 
   // Reconcile and partition into local pending vs cloud committed
   const { items, localPendingItems, cloudCommittedItems } = useMemo(() => {
@@ -124,7 +177,7 @@ export function useMergedDataset<T extends object>(
 
     // 1. Add server items first if not deleted locally
     for (const s of serverItems) {
-      const id = (((s as any).platformItemId as string) || ((s as any).id as string))?.trim();
+      const id = entityIdentity(s);
       if (id && !deletedIds.has(id)) {
         allItemsMap.set(id, s);
       }
@@ -132,7 +185,7 @@ export function useMergedDataset<T extends object>(
 
     // 2. Overlay local IndexedDB items (if not deleted locally)
     for (const l of localItems) {
-      const id = (((l as any).platformItemId as string) || ((l as any).id as string))?.trim();
+      const id = entityIdentity(l);
       if (id && !deletedIds.has(id)) {
         allItemsMap.set(id, { ...allItemsMap.get(id), ...l });
       }
@@ -152,7 +205,7 @@ export function useMergedDataset<T extends object>(
 
     for (const [id, item] of allItemsMap.entries()) {
       totalList.push(item);
-      const rawItem = item as any;
+      const rawItem = item as Record<string, unknown>;
 
       // Determine if local pending:
       // Either explicit outbox pending op, or _localStatus is LOCAL_PENDING / PENDING_SYNC,

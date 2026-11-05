@@ -2,6 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
 import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { getR2WorkerStorageClient } from "@/lib/storage/r2-worker-storage-client";
 import { prisma } from "@/lib/db/prisma";
@@ -28,7 +29,13 @@ export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
 
   try {
     const body = (await request.json()) as PreparedMigrationPlan;
@@ -119,7 +126,13 @@ export async function POST(request: Request) {
       // 4. Try registering in PostgreSQL (best-effort / gracefully handles offline DB)
       try {
         const profile = await prisma.userProfile.findFirst({
-          where: { storage_owner_uuid: storageOwnerUuid },
+          where: {
+            OR: [
+              { storage_owner_uuid: storageOwnerUuid },
+              ...(auth.admin.profileId ? [{ id: auth.admin.profileId }] : []),
+              ...(auth.admin.userId ? [{ auth_user_id: auth.admin.userId }] : []),
+            ],
+          },
         });
 
         if (profile) {

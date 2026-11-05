@@ -1,0 +1,43 @@
+{
+  "$schema": "https://youtube-discovery.app/schemas/manifest-part-v2.json",
+  "schemaVersion": 2,
+  "resourceSchemaVersion": 2,
+  "datasetType": "SAVED_ITEMS",
+  "datasetId": "8b2f4c1a-3d6e-4a7b-9c10-5e6f7a8b9c0d",
+  "ownerId": "c129bb2a-0f40-49d8-b8c8-42424d44cf3e",
+  "storageOwnerUuid": "c987539d-246a-4817-b958-b0ea32c590f9",
+  "generationId": "f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b",
+  "partNumber": 1,
+  "totalPartsInGeneration": 2,
+  "createdAt": "2026-11-05T12:00:00.000Z",
+  "recordCount": 1,
+  "resourceTypeCounts": {
+    "VIDEO": 1
+  },
+  "items": [
+    {
+      "recordId": "video:dQw4w9WgXcQ",
+      "resourceType": "VIDEO",
+      "resourceId": "dQw4w9WgXcQ",
+      "classificationSource": "platform_url",
+      "classificationEvidence": "YouTube watch URL",
+      "platformItemId": "dQw4w9WgXcQ",
+      "entityType": "video",
+      "title": "Example Video Title",
+      "channelTitle": "Example Channel",
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "thumbnailUrl": "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+      "isShortsLike": false,
+      "isAgeRestricted": false,
+      "publishedAt": "2024-01-15T08:00:00Z",
+      "viewsCount": 1450000,
+      "likesCount": 85000,
+      "commentsCount": 12400,
+      "durationSeconds": 212,
+      "savedAt": "2026-11-05T10:15:30Z",
+      "savedDate": "2026-11-05",
+      "originDeviceId": "dev_576eefe91b4e46bc",
+      "originDeviceLabel": "Main Research Rig"
+    }
+  ]
+}

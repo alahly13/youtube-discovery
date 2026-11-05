@@ -1,12 +1,23 @@
+/**
+ * Manifest serializer & storage lifecycle verification suite.
+ *
+ * Runs the real production serializer by compiling the small TypeScript graph
+ * to CommonJS in a temp folder (see scripts/lib/compile-ts-entry.mjs). This
+ * avoids changing production imports just to satisfy Node's ESM resolver.
+ */
+
 import crypto from "node:crypto";
-import {
+import { compileTsEntries } from "./lib/compile-ts-entry.mjs";
+
+const compiled = compileTsEntries(["src/lib/storage/manifest-serializer.ts"]);
+const {
   computePartSha256,
   computeAggregateGenerationSha256,
   buildManifestPartStoragePath,
   buildDerivedRootManifestPath,
   buildTemporaryExportPath,
   partitionRecordsIntoManifestParts,
-} from "../src/lib/storage/manifest-serializer.ts";
+} = compiled.load("lib/storage/manifest-serializer.js");
 
 let passed = 0;
 let failed = 0;
@@ -25,27 +36,39 @@ console.log("\n═════════════════════�
 console.log("   MANIFEST SERIALIZER & STORAGE LIFECYCLE TEST SUITE          ");
 console.log("══════════════════════════════════════════════════════════════\n");
 
-// Test 1: Path generation with storageOwnerUuid
+// Test 1: Canonical path generation with storageOwnerUuid + dataset type.
 const storageOwnerUuid = "e7b0c442-98fc-4c14-9afb-f4c8996fb924";
 const datasetId = "b1f7c3e2-89a1-4321-9988-123456789abc";
 const genId = "gen_01JBCDEF1234567890ABCDEF";
 
-const partPath1 = buildManifestPartStoragePath(storageOwnerUuid, datasetId, genId, 1);
+const partPath1 = buildManifestPartStoragePath(storageOwnerUuid, "SAVED_ITEMS", genId, 1);
 assert(
-  partPath1 === `${storageOwnerUuid}/persistence/datasets/${datasetId}/generations/${genId}/parts/part-000001.json`,
-  "Part path matches canonical <storage_owner_uuid>/persistence/... structure"
+  partPath1 ===
+    `asdy/persistence/${storageOwnerUuid}/saved-items/generations/${genId}/parts/part-000001.json`,
+  "Part path uses the single canonical asdy/persistence/<owner>/<dataset-slug> builder"
 );
 
-const rootPath = buildDerivedRootManifestPath(storageOwnerUuid, datasetId);
+const rootPath = buildDerivedRootManifestPath(storageOwnerUuid, "SAVED_ITEMS");
 assert(
-  rootPath === `${storageOwnerUuid}/persistence/datasets/${datasetId}/manifest.json`,
-  "Root manifest path matches canonical structure"
+  rootPath === `asdy/persistence/${storageOwnerUuid}/saved-items/manifest.json`,
+  "Derived root manifest path matches the canonical dataset prefix"
 );
 
 const exportPath = buildTemporaryExportPath(storageOwnerUuid, "job_123", "export.zip");
 assert(
-  exportPath === `${storageOwnerUuid}/temp/exports/job_123/export.zip`,
-  "Temporary export path matches <storage_owner_uuid>/temp/exports/... structure"
+  exportPath === `asdy/temp/${storageOwnerUuid}/exports/job_123/export.zip`,
+  "Temporary export path is owner-scoped under asdy/temp/<owner>/exports/..."
+);
+
+let rejectedDatasetIdAsType = false;
+try {
+  buildManifestPartStoragePath(storageOwnerUuid, datasetId, genId, 1);
+} catch {
+  rejectedDatasetIdAsType = true;
+}
+assert(
+  rejectedDatasetIdAsType,
+  "Passing a datasetId where datasetType is required throws instead of silently building a wrong path"
 );
 
 // Test 2: Individual Part SHA-256
@@ -68,6 +91,8 @@ assert(agg1.length === 64, "Aggregate SHA-256 produces 64-char lowercase hexadec
 // Test 4: Partitioning logic with simulated small target bytes
 const sampleRecords = Array.from({ length: 50 }, (_, i) => ({
   id: `video_${i}`,
+  platformItemId: `video_${i}`,
+  itemType: "video",
   title: `Sample Video Item ${i} with long descriptive text to test chunk boundaries`,
   views: i * 1000,
 }));
@@ -85,12 +110,42 @@ const genDesc = partitionRecordsIntoManifestParts({
 assert(genDesc.parts.length > 1, `Records split into multiple parts (${genDesc.parts.length} parts)`);
 assert(genDesc.totalRecords === 50, "Total record count matches input count exactly");
 assert(genDesc.aggregateSha256.length === 64, "Generated generation descriptor has valid aggregate SHA-256");
+assert(
+  genDesc.resourceTypeCounts.VIDEO === 50,
+  "Generation descriptor carries canonical resourceTypeCounts (VIDEO)"
+);
 
 for (const p of genDesc.parts) {
   assert(p.rawJson.includes('"totalPartsInGeneration":' + genDesc.parts.length), `Part ${p.partNumber} envelope has correct totalParts`);
   assert(computePartSha256(p.rawJson) === p.sha256, `Part ${p.partNumber} sha256 matches serialized content`);
   assert(Buffer.byteLength(p.rawJson, "utf8") === p.byteCount, `Part ${p.partNumber} byteCount matches Buffer byteLength`);
+
+  const envelope = JSON.parse(p.rawJson);
+  assert(
+    envelope.datasetType === "SAVED_ITEMS" && envelope.resourceSchemaVersion === 2,
+    `Part ${p.partNumber} envelope preserves datasetType and resource schema version`
+  );
+  assert(
+    envelope.items.every((item) => item.resourceType === "VIDEO" && item.recordId),
+    `Part ${p.partNumber} records carry resourceType + stable recordId`
+  );
 }
+
+// Test 5: Empty snapshot still produces one hydratable part (delete-all safety).
+const emptyGen = partitionRecordsIntoManifestParts({
+  datasetId,
+  datasetType: "SAVED_ITEMS",
+  ownerId: "profile_01",
+  storageOwnerUuid,
+  generationId: "gen_empty_snapshot",
+  records: [],
+});
+assert(
+  emptyGen.parts.length === 1 && emptyGen.parts[0].recordCount === 0,
+  "Empty snapshot produces one empty part so delete-all generations remain hydratable"
+);
+
+compiled.cleanup();
 
 console.log("\n══════════════════════════════════════════════════════════════");
 console.log(`   TEST RESULT: ${passed} PASSED, ${failed} FAILED (TOTAL: ${passed + failed})`);

@@ -20,7 +20,6 @@
 import {
   bulkHydrateDatasetEntities,
   getDatasetCatalogEntry,
-  updateLocalDatasetCatalog,
   type CanonicalDatasetType,
 } from "../storage/indexeddb-store";
 
@@ -67,6 +66,23 @@ interface RemoteDatasetRegistryItem {
     byteCount: number;
     recordCount: number;
   }>;
+}
+
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
+
+/**
+ * Computes SHA-256 over the exact downloaded bytes using Web Crypto.
+ * Hydration refuses to import bytes it cannot verify; there is no
+ * "trust the transport" mode.
+ */
+async function computeSha256Hex(buffer: ArrayBuffer): Promise<string> {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    throw new Error("Web Crypto is unavailable; refusing to hydrate unverified data.");
+  }
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 class CloudHydrationService {
@@ -206,34 +222,99 @@ class CloudHydrationService {
 
           for (const part of parts) {
             const partUrl = `/api/sync/hydrate/part?path=${encodeURIComponent(part.storagePath)}`;
-            const partRes = await fetch(partUrl);
+            const partRes = await fetch(partUrl, { cache: "no-store" });
 
             if (!partRes.ok) {
               throw new Error(`Failed to download part ${part.partNumber} for ${datasetType} (${partRes.status})`);
             }
 
-            const rawJson = await partRes.text();
+            const expectedSha = String(part.sha256 || "").toLowerCase();
+            if (!SHA256_HEX_PATTERN.test(expectedSha)) {
+              // Historical generations may lack a checksum. Importing them
+              // would create unverified local truth, so hydration fails closed
+              // for that dataset instead of guessing.
+              throw new Error(
+                `Part ${part.partNumber} for ${datasetType} has no verifiable SHA-256 checksum.`
+              );
+            }
+
+            const buffer = await partRes.arrayBuffer();
+            const computedSha = await computeSha256Hex(buffer);
+            const headerSha = partRes.headers.get("X-Payload-SHA256")?.toLowerCase() || null;
+
+            if (computedSha !== expectedSha) {
+              throw new Error(
+                `Part ${part.partNumber} for ${datasetType} failed SHA-256 verification.`
+              );
+            }
+            if (headerSha && headerSha !== computedSha) {
+              throw new Error(
+                `Part ${part.partNumber} for ${datasetType} disagrees with the server checksum header.`
+              );
+            }
+            if (part.byteCount > 0 && buffer.byteLength !== part.byteCount) {
+              throw new Error(
+                `Part ${part.partNumber} for ${datasetType} byte count mismatch (${buffer.byteLength} !== ${part.byteCount}).`
+              );
+            }
+
+            const rawJson = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
             let parsedPart: Record<string, unknown>;
             try {
-              parsedPart = JSON.parse(rawJson);
+              parsedPart = JSON.parse(rawJson) as Record<string, unknown>;
             } catch {
               throw new Error(`Part ${part.partNumber} is not valid JSON`);
             }
 
-            // Extract records from part envelope
+            // Envelope identity checks prevent mixing generations or datasets.
+            if (
+              typeof parsedPart.datasetType === "string" &&
+              parsedPart.datasetType !== datasetType
+            ) {
+              throw new Error(
+                `Part ${part.partNumber} declares datasetType '${parsedPart.datasetType}' but '${datasetType}' was expected.`
+              );
+            }
+            if (
+              typeof parsedPart.generationId === "string" &&
+              parsedPart.generationId !== generationId
+            ) {
+              throw new Error(
+                `Part ${part.partNumber} belongs to a different generation.`
+              );
+            }
+
+            // Extract records from the v2 part envelope. Legacy parts used
+            // `items` or even a bare record array.
             const records: Record<string, unknown>[] = Array.isArray(parsedPart.records)
               ? (parsedPart.records as Record<string, unknown>[])
               : Array.isArray(parsedPart.items)
               ? (parsedPart.items as Record<string, unknown>[])
+              : Array.isArray(parsedPart)
+              ? (parsedPart as unknown as Record<string, unknown>[])
               : [parsedPart];
+
+            if (part.recordCount > 0 && records.length !== part.recordCount) {
+              throw new Error(
+                `Part ${part.partNumber} record count mismatch (${records.length} !== ${part.recordCount}).`
+              );
+            }
 
             datasetEntities.push(...records);
             this.emit({ downloadedParts: this.progress.downloadedParts + 1 });
           }
 
-          // 3. Atomically restore into IndexedDB projection
+          if (rDataset.totalRecords > 0 && datasetEntities.length !== rDataset.totalRecords) {
+            throw new Error(
+              `Generation record count mismatch for ${datasetType} (${datasetEntities.length} !== ${rDataset.totalRecords}).`
+            );
+          }
+
+          // 3. Atomically restore into IndexedDB projection. The snapshot
+          //    replacement removes records that no longer exist remotely while
+          //    preserving entities that still have pending outbox operations.
           this.emit({ state: "RESTORING_LOCAL_INDEX" });
-          const { insertedCount } = await bulkHydrateDatasetEntities(
+          const hydrationResult = await bulkHydrateDatasetEntities(
             ownerId,
             datasetType,
             datasetEntities,
@@ -241,12 +322,18 @@ class CloudHydrationService {
             currentRevision
           );
 
-          totalRestoredRecords += insertedCount;
+          totalRestoredRecords += hydrationResult.insertedCount;
           completedCount++;
           this.emit({
             completedDatasets: completedCount,
-            restoredRecords: this.progress.restoredRecords + insertedCount,
+            restoredRecords: this.progress.restoredRecords + hydrationResult.insertedCount,
           });
+
+          if (hydrationResult.removedCount > 0) {
+            console.info(
+              `[hydration] ${datasetType}: restored ${hydrationResult.insertedCount}, removed ${hydrationResult.removedCount} stale local records, preserved ${hydrationResult.preservedPendingCount} pending.`
+            );
+          }
         } catch (datasetErr) {
           console.error(`[hydration] Error hydrating dataset ${datasetType}:`, datasetErr);
           hasPartialFailures = true;

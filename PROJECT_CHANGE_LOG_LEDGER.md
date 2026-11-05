@@ -4024,3 +4024,188 @@ Applied: `20261104200000_device_identity_and_origin_metadata` (pre-existing loca
 ### Whether `db:apply` was run
 
 `npx prisma migrate deploy` was run. No `db:apply` or `prisma migrate reset`.
+
+---
+
+## 2026-11-05 — Canonical Resource Taxonomy, R2 Save/Hydrate Hardening, Saved Titles & Links, Worker Batch Verification
+
+### Date/time
+
+2026-11-05 (local workspace time; remote verification commands were run during this task).
+
+### Agent/model if known
+
+OpenCode agent (DeepSeek V4.1 Flash Free).
+
+### Task summary
+
+Performed an evidence-based audit and surgical hardening pass across Frontend → Backend → Supabase Auth/PostgreSQL → NEW Cloudflare Worker → R2 → verified read pipeline → UI. The pass established a canonical eight-type resource taxonomy, fixed the save-all owner/commit failure, converted hydration to verified snapshot replacement, hardened the NEW Worker with batch verification and owner-namespace enforcement, added the `/saved-titles-links` page, made Manifest Explorer classification taxonomy-driven, added an additive database migration, and updated the architecture docs, example manifests, and ledgers.
+
+### Reason/root cause
+
+The audit found real correctness and safety problems rather than cosmetic issues:
+
+1. `POST /api/sync/save-all` resolved `storageOwnerUuid` from `auth.admin.userId` (the Supabase Auth UUID) instead of `user_profiles.storage_owner_uuid`. The subsequent profile lookup failed, no database generation was committed, and the route could still return `ok: true`.
+2. Routes inconsistently used the auth UUID, profile id, and storage owner UUID as if they were interchangeable.
+3. Generations were written as deltas but hydration treated each generation as a full snapshot, so stale local records survived hydration.
+4. `partitionRecordsIntoManifestParts` passed `datasetId` as the dataset type when building part paths, producing invalid canonical keys.
+5. Hydration did not verify part SHA-256; the R2 fallback used the object `etag` as `sha256` and estimated record counts from file size.
+6. `bulkHydrateDatasetEntities` only inserted records and never removed stale records.
+7. `isShortsLike` is duration-derived; it must never drive the `VIDEO_SHORT` resource type. Only explicit `/shorts/` URL evidence or an authoritative Shorts field may do so.
+8. Manifest Explorer inferred resource type from loose `itemType` / `type` / `kind` string matching instead of the canonical taxonomy.
+9. There was no active Saved Titles & Links page; only the legacy archive at `/old/saved-titles-links`. The `saved_references` table existed without an API/UI, and its enum/columns did not model the new resource types.
+10. The NEW Worker lacked a batch-verify endpoint, per-item size/type limits, duplicate-key rejection, owner-prefix enforcement, and strict temp-only DELETE.
+11. Client code still preferred `"asdy-admin"` or the auth `userId` as the local/cloud owner in several places.
+
+### Files changed
+
+Canonical taxonomy and ownership:
+
+- `src/lib/resources/resource-taxonomy.ts` (created)
+- `src/lib/auth/storage-owner.ts` (created)
+- `src/lib/storage/canonical-paths.ts`
+- `src/lib/storage/manifest-serializer.ts`
+
+Authoritative sync and hydration:
+
+- `src/app/api/sync/save-all/route.ts`
+- `src/app/api/sync/hydrate/route.ts`
+- `src/app/api/sync/hydrate/part/route.ts`
+- `src/lib/sync/sync-coordinator.ts`
+- `src/lib/sync/cloud-hydration-service.ts`
+- `src/lib/sync/use-cloud-hydration.ts`
+- `src/lib/storage/indexeddb-store.ts`
+- `src/lib/storage/use-merged-dataset.ts`
+- `src/lib/storage/use-research-reminders.ts`
+- `src/lib/state/youtube-workspace-store.ts`
+
+Manifest, storage, and Worker:
+
+- `src/app/api/manifests/part-records/route.ts`
+- `src/app/api/manifests/tree/route.ts`
+- `src/app/api/manifests/reconcile/route.ts`
+- `src/app/api/manifests/upload/route.ts`
+- `src/app/api/manifests/export/route.ts`
+- `src/app/api/manifests/export-selected/route.ts`
+- `src/app/api/manifests/download/route.ts`
+- `src/app/api/migration/upload/route.ts`
+- `src/app/api/save/batch/route.ts`
+- `src/app/api/download-center/inventory/route.ts`
+- `src/app/api/download-center/export/route.ts`
+- `src/app/api/playlists/route.ts`
+- `src/app/api/playlists/[id]/route.ts`
+- `src/lib/storage/r2-capability-token.ts`
+- `src/lib/storage/r2-worker-storage-client.ts`
+- `src/lib/storage/r2-blob-backend.ts`
+- `cloudflare/workers/new-youtube-discovery-api/src/index.ts`
+- `cloudflare/workers/new-youtube-discovery-api/README.md`
+
+Saved Titles & Links and Manifest Explorer UI:
+
+- `src/components/saved/saved-titles-links-workspace.tsx` (created)
+- `src/app/saved-titles-links/page.tsx` (created)
+- `src/components/saved/saved-items-workspace.tsx`
+- `src/components/layout/navigation.tsx`
+- `src/components/manifests/manifest-storage-explorer.tsx`
+
+Database and tests:
+
+- `prisma/schema.prisma`
+- `prisma/migrations/20261104230000_canonical_resource_classification/migration.sql` (created)
+- `scripts/test-resource-taxonomy-and-contracts.mjs` (created)
+- `scripts/test-manifest-serializer.mjs`
+- `scripts/test-cloud-hydration-and-canonical-sync.mjs`
+- `scripts/lib/compile-ts-entry.mjs` (created)
+- `package.json`
+
+Docs and examples:
+
+- `docs/data-architecture/current-state.md`
+- `docs/data-architecture/manifest-format.md`
+- `docs/data-architecture/sync-and-recovery.md`
+- `docs/data-architecture/data-dictionary.md`
+- `docs/data-architecture/erd.md`
+- `public/manifest-example/canonical-v2/README.md`
+- `public/manifest-example/canonical-v2/manifest.json`
+- `public/manifest-example/canonical-v2/part-000001.json`
+- `public/manifest-example/canonical-v2/part-000002.json`
+- `public/manifest-example/canonical-v2/version.json`
+- `youtube_discovery_ledger.md`
+- `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+
+1. **Canonical resource taxonomy.** Added eight persisted resource types: `VIDEO`, `VIDEO_SHORT`, `CHANNEL`, `YOUTUBE_PLAYLIST`, `USER_PLAYLIST`, `SAVED_TITLE`, `SAVED_LINK`, `SAVED_SEARCH`. The taxonomy is explicitly separate from the five dataset types. `classifyResourceRecord` uses explicit platform URLs, authoritative fields, and dataset-aware fallbacks; `VIDEO_SHORT` requires explicit `/shorts/` evidence. Records without enough evidence classify as `UNKNOWN`/`LEGACY`, never silently as `SAVED_TITLE`. Stable `recordId`, `resourceId`, and `buildStableRecordId` helpers prevent title/filename/index-based identity.
+2. **Canonical owner resolution.** `storage-owner.ts` resolves `storageOwnerUuid` first, then a verified Auth `userId` only for legacy profile shapes, and fails closed when neither exists. Routes no longer use the auth UUID as the R2 path owner. Client sync restores the persisted owner, migrates legacy local partitions (`"asdy-admin"`, auth UUID, prior owner) via `migrateLocalOwnerId`, and refuses to claim success when the owner is unresolved.
+3. **Save All is snapshot-based and commit-gated.** `save-all` validates the payload with Zod, resolves the profile and canonical owner, rejects stale `expectedRevision`, supports idempotent replay, merges legacy delta bases from verified R2 manifests, validates every record through the taxonomy, writes `manifest.json` + parts through the canonical path builder, calls Worker `batch_verify`, and commits the generation, parts, revision, dataset pointer, and relational indexes in one Prisma transaction. The response is `ok: true` only after the commit. The version pointer is written after commit and reported separately as `WRITTEN` / `FAILED` / `DEFERRED`.
+4. **Manifest format v2.** Part envelopes carry `schemaVersion: 2`, `resourceSchemaVersion: 2`, `datasetType`, `datasetId`, `ownerId`, `storageOwnerUuid`, `generationId`, `partNumber`, `totalPartsInGeneration`, `recordCount`, `resourceTypeCounts`, and normalized items. Paths delegate to the single canonical builder and use the dataset type (not the dataset UUID) for the dataset slug. Empty snapshots still produce one hydratable part.
+5. **Verified hydration.** Hydration reads the manifest, verifies each part's exact UTF-8 byte count and SHA-256 before parsing, checks envelope dataset/generation identity and record counts, and rejects missing checksums. `bulkHydrateDatasetEntities` replaces the dataset projection, removes stale records, preserves pending outbox entities, and returns inserted/removed/preserved counts. The R2 fallback now reports real part SHA/record counts instead of `etag` and size estimates.
+6. **Worker hardening.** Added `batch_verify` and `/v1/batches/verify`; tokens now require `storageOwnerUuid`. Writes must stay under `asdy/persistence/<owner>/` or `asdy/temp/<owner>/` (legacy prefixes are read-only). CORS rejects disallowed origins. Batch uploads are capped at 50 items, 45 MiB per item, 200 MiB per batch, JSON-only, with duplicate-key rejection, idempotent identical objects, 409 on immutable conflicts, size/SHA-256 verification, immutable generation protection, and DELETE restricted to canonical temp keys. No secrets are returned in errors.
+7. **Saved Titles & Links.** Added the exact page `/saved-titles-links` titled “Saved Titles & Links” and a local-first `REFERENCES` workspace for `SAVED_TITLE` / `SAVED_LINK` records: create/edit/delete, search, kind filter, sort, URL validation, duplicate detection, pending/committed badges, and Save All. It is distinct from saved searches and from the legacy `/old/saved-titles-links` archive.
+8. **Manifest Explorer.** Record cards now use `classifyResourceRecord`, `RESOURCE_TYPE_METADATA`, canonical badges, classification source/evidence, `recordId`, origin device, and canonical URL fallbacks. Unknown/legacy records are displayed honestly rather than guessed.
+9. **Docs and examples.** Updated `current-state.md`, `manifest-format.md`, `sync-and-recovery.md`, `data-dictionary.md`, `erd.md`, the NEW Worker README, and added an internally consistent `canonical-v2` example. The example's part byte counts, SHA-256 digests, aggregate digest, and record counts are mechanically verified against the included files; UUIDs remain illustrative.
+
+### Architecture impact
+
+The write path is now: UI → local IndexedDB + outbox → `POST /api/sync/save-all` → canonical owner/profile resolution → taxonomy validation → canonical R2 manifest/parts → Worker `batch_verify` → single PostgreSQL transaction → derived version pointer. The read path is: `GET /api/sync/hydrate` → manifest/part metadata → byte/SHA-256 verification → snapshot replacement in IndexedDB → merged UI. PostgreSQL remains authoritative for the active generation; R2 is authoritative for immutable bytes; the version pointer is a derived convenience artifact. OLD Worker and `asdy/old/...` historical paths remain untouched.
+
+### Environment impact
+
+No new environment variables were introduced. Existing `R2_NEW_WORKER_URL`, `R2_NEW_WORKER_AUTH_SECRET`, `R2_OLD_WORKER_URL`, `R2_OLD_WORKER_AUTH_SECRET`, Supabase, and database variables are unchanged. No secret values were printed.
+
+### Database/migration impact
+
+Created and applied the additive migration `prisma/migrations/20261104230000_canonical_resource_classification/migration.sql`:
+
+- `saved_items_index`: adds `resource_type`, `resource_id`, `record_id`, and owner/resource index.
+- `saved_references`: makes `url` nullable; adds `record_id`, `resource_type`, `resource_id`, `origin_device_id`, `origin_device_label`, `saved_at`; unique `(owner_id, record_id)`; indexes.
+- `saved_search_presets`: adds classification/origin fields; unique `(owner_id, record_id)`; indexes.
+- `storage_datasets`: unique `(owner_id, dataset_type)`.
+
+`npx prisma migrate deploy` reported all 6 migrations applied, and `prisma generate` succeeded. No reset, no destructive migration, and no `db:apply` was run. Storage datasets/generations/parts remained empty at audit time.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube Data API calls and zero quota consumed. All work was local storage, database, Worker, UI, docs, and tests.
+
+### AI scope/safety impact when relevant
+
+None. No AI prompts, scopes, or model calls were changed.
+
+### Verification run and results
+
+- `npx tsc --noEmit --incremental false`: passed (0 errors).
+- Targeted ESLint on touched files: 0 errors, warnings only. Full-repository `npm run lint` still reports pre-existing unrelated errors.
+- `npm run test:taxonomy`: 40/40 assertions passed.
+- `npm run test:manifest`: 97/97 assertions passed.
+- `npm run test:canonical-sync`: 44/44 assertions passed.
+- `npm run test:saved-lifecycle`: 25/25 assertions passed.
+- `npm run test:pipeline`: 10/10 assertions passed.
+- `npx prisma migrate deploy`: all 6 migrations applied successfully; `prisma generate` succeeded.
+- `public/manifest-example/canonical-v2` mechanical check: part byte counts, SHA-256 digests, aggregate digest, total bytes, and version pointer all match the included files.
+
+### Blocked checks, if any
+
+- The hardened NEW Worker has **not been deployed** in this task. `save-all` now calls `verifyBatch`, so a real end-to-end Save All → R2 → hydrate round-trip cannot be claimed until the Worker is deployed and remotely tested.
+- `npm run test:r2` was not run because it targets live Workers and would exercise the old deployment, not the local hardened source.
+- No remote hydration/save round-trip was performed; local unit/integration tests and static type checks are the verified evidence.
+- `npm run build` was started but interrupted by an environment/server restart before completion, so no production-build success is claimed for this change set.
+
+### Remaining risks/limitations
+
+- Deploy the NEW Worker and run a real save/hydrate round-trip before treating the pipeline as production-verified.
+- Legacy R2 parts without checksums cannot pass strict hydration; they require a verified re-export or a documented compatibility path.
+- Full-repository lint has pre-existing unrelated errors; this task did not expand scope to fix them.
+- The canonical-v2 example uses illustrative UUIDs; only its byte/checksum math is authoritative.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+Created and applied: `20261104230000_canonical_resource_classification`.
+
+### Whether `db:apply` was run
+
+No. `npx prisma migrate deploy` was run; no `prisma migrate reset`, no destructive migration.

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://youtube-discovery.app/schemas/dataset-version-v2.json",
+  "schemaVersion": 2,
+  "datasetType": "SAVED_ITEMS",
+  "datasetId": "8b2f4c1a-3d6e-4a7b-9c10-5e6f7a8b9c0d",
+  "ownerId": "c129bb2a-0f40-49d8-b8c8-42424d44cf3e",
+  "storageOwnerUuid": "c987539d-246a-4817-b958-b0ea32c590f9",
+  "currentGenerationId": "f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b",
+  "currentRevision": 1,
+  "aggregateSha256": "3319ed25a0090db13d5a853491f5be86df54c9581bfd7f9f12bf4b9c48c413c2",
+  "totalRecords": 2,
+  "resourceTypeCounts": {
+    "VIDEO": 1,
+    "VIDEO_SHORT": 1
+  },
+  "lastSyncedAt": "2026-11-05T12:00:05.000Z"
+}

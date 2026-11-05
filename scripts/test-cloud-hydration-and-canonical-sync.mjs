@@ -27,7 +27,7 @@ import {
   isLegacyPath,
   parseStorageKey,
   CANONICAL_DATASET_TYPES,
-} from "../src/lib/storage/canonical-paths.js";
+} from "../src/lib/storage/canonical-paths.ts";
 
 let passedCount = 0;
 let failedCount = 0;

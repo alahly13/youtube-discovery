@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import {
+  resolveProfileId,
+  resolveStorageOwnerId,
+} from "@/lib/auth/storage-owner";
 import { prisma } from "@/lib/db/prisma";
 import {
   getStorageBackendForBucket,
@@ -26,8 +30,14 @@ export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const ownerId = auth.admin.profileId || auth.admin.userId || "00000000-0000-0000-0000-000000000001";
-  const storageOwnerUuid = auth.admin.storageOwnerUuid || auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  const ownerId = resolveProfileId(auth.admin);
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!ownerId || !storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve the canonical profile/storage owner for this session." },
+      { status: 500 }
+    );
+  }
 
   try {
     const body = await request.json();

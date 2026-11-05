@@ -38,6 +38,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatBytes, formatCompactCount, formatDate, formatDuration } from "@/lib/utils/format";
 import { ExpandableDescription } from "@/components/youtube/expandable-description";
+import {
+  classifyResourceRecord,
+  resourceTypeTone,
+  RESOURCE_TYPE_METADATA,
+} from "@/lib/resources/resource-taxonomy";
 
 export interface StoragePartItem {
   id: string;
@@ -577,21 +582,46 @@ export function ManifestStorageExplorer() {
                       </div>
                     ) : (
                       filteredRecords.map((record, idx) => {
-                        const rawType = String(record.itemType || record.type || record.kind || "VIDEO").toUpperCase();
-                        const isChannel = rawType.includes("CHANNEL");
-                        const isPlaylist = rawType.includes("PLAYLIST");
-                        const isVideo = !isChannel && !isPlaylist;
+                        // Canonical taxonomy classification. Never infer a
+                        // resource type from arbitrary itemType/type/kind text:
+                        // that is how duration-derived "shorts" markers used to
+                        // become fake YouTube Shorts.
+                        const classification = classifyResourceRecord(record, {
+                          datasetType: inspectedPart?.datasetType,
+                        });
+                        const resourceType = classification.resourceType;
+                        const typeDescriptor = RESOURCE_TYPE_METADATA[resourceType];
+                        const isChannel = resourceType === "CHANNEL";
+                        const isPlaylist =
+                          resourceType === "YOUTUBE_PLAYLIST" ||
+                          resourceType === "USER_PLAYLIST";
+                        const isVideo =
+                          resourceType === "VIDEO" || resourceType === "VIDEO_SHORT";
 
-                        const id = String(record.platformItemId || record.id || record.videoId || `rec_${idx}`);
-                        const title = String(record.title || record.name || record.queryText || "Untitled Item");
+                        const id = String(
+                          record.recordId ||
+                            record.platformItemId ||
+                            record.resourceId ||
+                            record.id ||
+                            `rec_${idx}`
+                        );
+                        const title = String(
+                          record.title ||
+                            record.name ||
+                            record.queryText ||
+                            record.query ||
+                            "Untitled Item"
+                        );
                         const description = typeof record.description === "string" ? record.description : null;
                         const channelTitle = typeof record.channelTitle === "string" ? record.channelTitle : null;
                         const thumbnail = typeof record.thumbnailUrl === "string" ? record.thumbnailUrl : null;
                         const originalUrl = typeof record.url === "string"
                           ? record.url
+                          : typeof record.canonicalUrl === "string"
+                          ? record.canonicalUrl
                           : isVideo
                           ? `https://www.youtube.com/watch?v=${id}`
-                          : isPlaylist
+                          : resourceType === "YOUTUBE_PLAYLIST"
                           ? `https://www.youtube.com/playlist?list=${id}`
                           : isChannel
                           ? `https://www.youtube.com/channel/${id}`
@@ -653,17 +683,30 @@ export function ManifestStorageExplorer() {
                               {/* Details */}
                               <div className="flex-1 min-w-0 space-y-1.5">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <Badge
-                                    tone={
-                                      isChannel
-                                        ? "warning"
-                                        : isPlaylist
-                                        ? "primary"
-                                        : "success"
-                                    }
-                                  >
-                                    {rawType}
+                                  <Badge tone={resourceTypeTone(resourceType)}>
+                                    {typeDescriptor.shortLabel}
                                   </Badge>
+                                  {classification.source !== "AUTHORITATIVE" && (
+                                    <span
+                                      className="rounded bg-surface-muted px-1.5 py-0.5 text-[10px] font-medium text-muted"
+                                      title={classification.evidence}
+                                    >
+                                      {classification.source}
+                                    </span>
+                                  )}
+                                  {typeof record.recordId === "string" && record.recordId && (
+                                    <span
+                                      className="font-mono text-[10px] text-muted/80 truncate max-w-[220px]"
+                                      title={`recordId: ${record.recordId}`}
+                                    >
+                                      record: {record.recordId}
+                                    </span>
+                                  )}
+                                  {typeof record.originDeviceLabel === "string" && record.originDeviceLabel && (
+                                    <span className="text-[10px] text-muted/80">
+                                      via {record.originDeviceLabel}
+                                    </span>
+                                  )}
 
                                   {channelTitle && (
                                     <span className="text-xs font-medium text-foreground/80">
@@ -675,7 +718,7 @@ export function ManifestStorageExplorer() {
                                     type="button"
                                     onClick={() => copyToClipboard(id, id)}
                                     className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] text-muted hover:text-foreground transition"
-                                    title="Copy YouTube platform ID"
+                                    title="Copy canonical record/resource ID"
                                   >
                                     {copiedId === id ? (
                                       <Check className="h-3 w-3 text-emerald-500" />

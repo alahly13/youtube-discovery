@@ -1,17 +1,20 @@
-# YouTube Discovery — Phase 1: Canonical Entity-Relationship Diagram (ERD) (v1.4)
+# YouTube Discovery — Canonical Entity-Relationship Diagram (ERD) (v2.0)
 
 **Document:** `docs/data-architecture/erd.md`  
-**Version:** 1.4 (Final Architecture Correction & Local Implementation Baseline)  
+**Version:** 2.0 (Canonical Resource Taxonomy + Cloudflare R2 Reconciliation)  
 **Baseline Date:** 2 November 2026  
-**Status:** **v1.4 CANONICAL ARCHITECTURE SPECIFICATION**  
+**Reconciled:** 5 November 2026  
+**Status:** **CANONICAL ARCHITECTURE SPECIFICATION**  
 **Execution Mode:** AUTHORIZED LOCAL IMPLEMENTATION ACTIVE  
-**Migration Boundary:** MIGRATION FILES GENERATED ONLY — NEVER APPLIED OR DEPLOYED
+**Migration Boundary:** 6 MIGRATIONS APPLIED ON REMOTE SUPABASE POSTGRESQL (LATEST: `20261104230000_canonical_resource_classification`)
+
+> **2026-11-05 reconciliation:** The live Prisma schema and applied migrations are authoritative. Storage is Cloudflare R2 (`new-youtube-discovery-private` / `old-youtube-discovery-private`), not Supabase Storage. Canonical paths are `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/...`. `REFERENCES` is the dataset type; `SAVED_TITLE` and `SAVED_LINK` are resource types. The ERD below includes the canonical taxonomy columns added by the latest migration.
 
 ---
 
-## 1. Architectural Strategy & Entity Inventory (v1.4)
+## 1. Architectural Strategy & Entity Inventory (v2.0)
 
-This specification (v1.4) finalizes the relational architecture across six foundational pillars:
+This specification (v2.0) finalizes the relational architecture across six foundational pillars:
 
 1. **Administrator as Primary Owner Today:** The application operates currently as a single-administrator platform. Every piece of application data created by this administrator is explicitly bound to `owner_id = <admin_profile_id>`. There is no global unowned data, shared libraries, or ambient ownership.
 2. **Strict Multi-User Isolation for the Future:** When ordinary users are introduced in a future phase, User A cannot read, modify, delete, download, or export User B's data. Enforced at Database (RLS), Application Service, and Object Storage boundaries.
@@ -19,7 +22,7 @@ This specification (v1.4) finalizes the relational architecture across six found
    - **Identity:** `auth.users.id` (Supabase Auth cryptographically verified JWT).
    - **Role:** `user_profiles.role` (`'admin'` | `'user'`) for platform operation and diagnostics. Administrative privilege is NOT shared data ownership.
    - **Ownership:** `owner_id` (pointing to `user_profiles.id`) for all business records.
-   - **Storage Namespace:** `storage_owner_uuid` (immutable UUID in `user_profiles`) permanently anchors physical storage paths (`<storage_owner_uuid>/persistence/...`), surviving authentication detachment.
+   - **Storage Namespace:** `storage_owner_uuid` (immutable UUID in `user_profiles`) permanently anchors physical storage paths (`asdy/persistence/<storage_owner_uuid>/...`), surviving authentication detachment.
 4. **Complete Owner-Safe Composite Foreign Keys:**
    - Direct `owner_id` on all 13 leaf/child tables eliminates recursive joins in RLS.
    - Full generational chain: `user_profiles(id) -> storage_datasets(owner_id, id) -> storage_generations(owner_id, dataset_id, id) -> storage_manifest_parts(owner_id, dataset_id, generation_id, id)`.
@@ -66,7 +69,7 @@ Operational, Quota & Audit Domain (4 Tables):
 
 ---
 
-## 2. Canonical Mermaid ERD (v1.4)
+## 2. Canonical Mermaid ERD (v2.0)
 
 ```mermaid
 erDiagram
@@ -148,9 +151,9 @@ erDiagram
     STORAGE_DATASETS {
         uuid id PK
         uuid owner_id FK "FK user_profiles(id) ON DELETE RESTRICT"
-        varchar dataset_type "SAVED_ITEMS | PLAYLIST | SEARCH_HISTORY | RESEARCH_QUEUE | SAVED_REFERENCES"
+        varchar dataset_type "SAVED_ITEMS | PLAYLIST | SEARCH_HISTORY | RESEARCH_QUEUE | REFERENCES"
         varchar entity_id "Nullable logical entity ID"
-        varchar storage_prefix "<storage-owner-uuid>/persistence/..."
+        varchar storage_prefix "asdy/persistence/<storage_owner_uuid>/<dataset-slug>/"
         uuid current_generation_id "FK storage_generations(id) ON DELETE RESTRICT"
         bigint current_revision "Starts at 0; advances to 1 on first commit"
         integer schema_version
@@ -211,8 +214,12 @@ erDiagram
         varchar title
         varchar channel_title
         varchar thumbnail_url
-        boolean is_shorts_like "Presentation classification"
+        boolean is_shorts_like "Legacy heuristic only; never evidence for VIDEO_SHORT"
         boolean is_age_restricted
+        varchar origin_device_id "Stable device identity"
+        varchar origin_device_label "Human-friendly device label"
+        varchar resource_type "Canonical taxonomy discriminator"
+        varchar resource_id "Platform or application entity identity"
         timestamptz published_at
         bigint views_count "Nullable; 0 is distinct from NULL"
         bigint likes_count "Nullable; 0 is distinct from NULL"
@@ -298,11 +305,14 @@ erDiagram
         uuid manifest_part_id FK "Nullable Composite FK storage_manifest_parts ON DELETE SET NULL"
         integer item_position
         varchar title
-        text url "Arbitrary validated web URL"
-        text description
+        varchar url "Nullable for SAVED_TITLE; required for SAVED_LINK"
         text notes
-        text[] tags
-        varchar category
+        varchar record_id "Stable application record identity"
+        varchar resource_type "SAVED_TITLE | SAVED_LINK"
+        varchar resource_id "Platform or application entity identity"
+        varchar origin_device_id
+        varchar origin_device_label
+        timestamptz saved_at
         timestamptz created_at
         timestamptz updated_at
     }
@@ -311,11 +321,17 @@ erDiagram
         uuid id PK
         uuid owner_id FK "FK user_profiles(id) ON DELETE CASCADE"
         varchar title
-        varchar query
-        varchar resource_selection "ALL | video | channel | playlist"
-        jsonb settings_snapshot
+        varchar query_text
+        jsonb search_settings
+        jsonb filter_snapshot
         boolean is_pinned
-        text notes
+        text[] tags
+        varchar record_id "Stable application record identity"
+        varchar resource_type "SAVED_SEARCH"
+        varchar resource_id
+        varchar origin_device_id
+        varchar origin_device_label
+        timestamptz saved_at
         timestamptz created_at
         timestamptz updated_at
     }
@@ -566,7 +582,7 @@ FOR EACH ROW EXECUTE FUNCTION trg_verify_dataset_current_generation();
 To prevent duplicate datasets while handling nullable `entity_id`:
 
 ```sql
--- 1. Singleton datasets (SAVED_ITEMS, RESEARCH_QUEUE, SAVED_REFERENCES, SEARCH_HISTORY)
+-- 1. Singleton datasets (SAVED_ITEMS, RESEARCH_QUEUE, REFERENCES, SEARCH_HISTORY)
 -- Exactly ONE per owner per dataset type
 CREATE UNIQUE INDEX uq_storage_datasets_singleton
 ON public.storage_datasets (owner_id, dataset_type)

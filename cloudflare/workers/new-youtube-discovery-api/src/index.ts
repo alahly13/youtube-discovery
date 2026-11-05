@@ -27,7 +27,14 @@ export interface CapabilityClaims {
   profile_id?: string;
   storage_owner_uuid: string;
   bucket_kind: "NEW" | "OLD";
-  operation: "upload" | "download" | "head" | "list" | "delete" | "batch_upload";
+  operation:
+    | "upload"
+    | "download"
+    | "head"
+    | "list"
+    | "delete"
+    | "batch_upload"
+    | "batch_verify";
   key: string;
   batch_id?: string;
   allowed_keys?: string[];
@@ -45,6 +52,26 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
 ];
+
+/**
+ * Hard storage limits for the NEW bucket.
+ * - A single manifest part may never exceed 45 MiB.
+ * - A whole generation batch may never exceed 200 MiB.
+ * These mirror STORAGE_LIMITS in the Next.js serializer; keep both in sync.
+ */
+const MAX_SINGLE_OBJECT_BYTES = 45 * 1024 * 1024;
+const MAX_BATCH_BYTES = 200 * 1024 * 1024;
+const MAX_BATCH_ITEMS = 50;
+
+/**
+ * Only structured JSON objects belong in the NEW persistence namespace.
+ * Rejecting arbitrary content types prevents the private bucket from being
+ * repurposed as a general file host.
+ */
+const ALLOWED_JSON_CONTENT_TYPES = new Set([
+  "application/json",
+  "application/json; charset=utf-8",
+]);
 
 // Helper: Base64URL decode to Uint8Array
 function base64UrlDecode(str: string): Uint8Array {
@@ -133,8 +160,33 @@ async function verifyCapabilityToken(
       return { valid: false, status: 403, error: `Unauthorized operation. Grant authorizes '${claims.operation}', request requires '${expectedOperation}'.` };
     }
 
+    // Every NEW-bucket capability is owner-scoped. A token without an owner
+    // claim must never be usable, even if it is otherwise well-signed.
+    const owner = (claims.storage_owner_uuid || "").trim();
+    if (!owner) {
+      return { valid: false, status: 403, error: "Capability grant is missing a storage owner scope." };
+    }
+
+    // Reads may reach historical legacy owner layouts; writes may not.
+    const allowLegacy =
+      expectedOperation === "download" ||
+      expectedOperation === "head" ||
+      expectedOperation === "list";
+
+    if (!isOwnerScopedKey(targetKey, owner, { allowLegacy })) {
+      return {
+        valid: false,
+        status: 403,
+        error: `Key '${targetKey}' is outside the authorized owner namespace for '${owner}'.`,
+      };
+    }
+
     // Key / prefix check
-    if (expectedOperation === "list" || expectedOperation === "batch_upload") {
+    if (
+      expectedOperation === "list" ||
+      expectedOperation === "batch_upload" ||
+      expectedOperation === "batch_verify"
+    ) {
       // For listing or batch upload, targetKey is the prefix filter / root; claims.key is the authorized root prefix
       if (!targetKey.startsWith(claims.key)) {
         return { valid: false, status: 403, error: `Scope '${targetKey}' outside authorized scope '${claims.key}'.` };
@@ -146,7 +198,7 @@ async function verifyCapabilityToken(
     }
 
     return { valid: true, claims };
-  } catch (err) {
+  } catch {
     return { valid: false, status: 401, error: "Failed to parse or verify token." };
   }
 }
@@ -171,6 +223,20 @@ function getCorsHeaders(request: Request, env: Env): Headers {
   return headers;
 }
 
+/**
+ * Browser requests must originate from an explicitly allowed origin.
+ * Server-to-server requests (no Origin header) remain allowed because they
+ * authenticate with a capability token, not ambient cookies.
+ */
+function isRequestOriginAllowed(request: Request, env: Env): boolean {
+  const origin = request.headers.get("Origin");
+  if (!origin) return true;
+  const allowed = env.ALLOWED_ORIGINS
+    ? env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
+    : DEFAULT_ALLOWED_ORIGINS;
+  return allowed.includes(origin);
+}
+
 function jsonResponse(data: unknown, status = 200, corsHeaders: Headers): Response {
   const headers = new Headers(corsHeaders);
   headers.set("Content-Type", "application/json");
@@ -179,16 +245,79 @@ function jsonResponse(data: unknown, status = 200, corsHeaders: Headers): Respon
 
 function sanitizeKey(raw: string): string {
   // Strip leading slashes and prevent directory traversal
-  let key = decodeURIComponent(raw).replace(/^\/+/, "");
+  const key = decodeURIComponent(raw).replace(/^\/+/, "");
   if (key.includes("..") || key.includes("\\")) {
     throw new Error("Invalid object key: path traversal not permitted.");
   }
   return key;
 }
 
+/**
+ * Returns true when `key` is inside the caller's canonical owner namespace:
+ *   asdy/persistence/<owner>/...
+ *   asdy/temp/<owner>/...
+ *
+ * Legacy owner layouts (`<owner>/persistence/...`, `<owner>/temp/...`) are
+ * accepted ONLY for read operations so historical objects remain accessible.
+ * New writes are always canonical.
+ */
+function isOwnerScopedKey(
+  key: string,
+  owner: string,
+  options: { allowLegacy: boolean }
+): boolean {
+  if (!owner) return false;
+
+  const canonicalBases = [
+    `asdy/persistence/${owner}`,
+    `asdy/temp/${owner}`,
+  ];
+  for (const base of canonicalBases) {
+    if (key === base || key.startsWith(`${base}/`)) return true;
+  }
+
+  if (options.allowLegacy) {
+    const legacyBases = [`${owner}/persistence`, `${owner}/temp`];
+    for (const base of legacyBases) {
+      if (key === base || key.startsWith(`${base}/`)) return true;
+    }
+  }
+
+  return false;
+}
+
+function isAllowedJsonContentType(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  return ALLOWED_JSON_CONTENT_TYPES.has(contentType.toLowerCase().trim());
+}
+
+function isCanonicalTempKey(key: string, owner: string): boolean {
+  if (!owner) return false;
+  return key.startsWith(`asdy/temp/${owner}/`);
+}
+
+/**
+ * Version pointers and derived root manifests are mutable read indexes.
+ * Generation manifests and parts are immutable and must never be rewritten.
+ */
+function isMutableIndexKey(key: string): boolean {
+  if (key.includes("/generations/")) return false;
+  return key.endsWith("/version.json") || key.endsWith("/manifest.json");
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const cors = getCorsHeaders(request, env);
+
+    // Reject disallowed browser origins outright. Returning a response without
+    // CORS headers is not enough: a hostile page must not be able to drive the
+    // Worker even with a leaked short-lived token.
+    if (!isRequestOriginAllowed(request, env)) {
+      return new Response(
+        JSON.stringify({ error: "Origin is not allowed to access this Worker." }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
@@ -291,19 +420,37 @@ export default {
           }>;
         };
 
-        if (!body.batchId || !Array.isArray(body.items) || body.items.length === 0) {
-          return jsonResponse({ error: "Missing required fields: batchId and non-empty items array." }, 400, cors);
-        }
-
-        if (body.items.length > 50) {
+        if (
+          !body.batchId ||
+          typeof body.batchId !== "string" ||
+          !/^[A-Za-z0-9._:-]{1,128}$/.test(body.batchId)
+        ) {
           return jsonResponse(
-            { error: `Batch item count (${body.items.length}) exceeds maximum limit of 50 items per batch.` },
+            { error: "Missing or invalid batchId. Expected 1-128 safe characters." },
             400,
             cors
           );
         }
 
-        const targetPrefix = body.targetPrefix || sanitizeKey(body.items[0].key.split("/").slice(0, 3).join("/"));
+        if (!Array.isArray(body.items) || body.items.length === 0) {
+          return jsonResponse(
+            { error: "Missing required field: non-empty items array." },
+            400,
+            cors
+          );
+        }
+
+        if (body.items.length > MAX_BATCH_ITEMS) {
+          return jsonResponse(
+            { error: `Batch item count (${body.items.length}) exceeds maximum limit of ${MAX_BATCH_ITEMS} items per batch.` },
+            400,
+            cors
+          );
+        }
+
+        const targetPrefix = sanitizeKey(
+          body.targetPrefix || body.items[0].key.split("/").slice(0, 3).join("/")
+        );
 
         const authCheck = await verifyCapabilityToken(
           request.headers.get("Authorization"),
@@ -316,6 +463,7 @@ export default {
           return jsonResponse({ error: authCheck.error }, authCheck.status, cors);
         }
 
+        const owner = authCheck.claims.storage_owner_uuid;
         const receipts: Array<{
           key: string;
           size: number;
@@ -324,8 +472,22 @@ export default {
           uploaded: string;
         }> = [];
 
+        // Reject duplicate keys before writing anything. A duplicate would
+        // make the batch non-deterministic and could mask a path-builder bug.
+        const seenKeys = new Set<string>();
+        let totalBytes = 0;
+
         for (const item of body.items) {
           const key = sanitizeKey(item.key);
+
+          if (seenKeys.has(key)) {
+            return jsonResponse(
+              { error: `Duplicate object key '${key}' in batch.` },
+              409,
+              cors
+            );
+          }
+          seenKeys.add(key);
 
           // Verify key is in authorized scope
           if (!key.startsWith(authCheck.claims.key)) {
@@ -344,12 +506,48 @@ export default {
             );
           }
 
+          // Writes must use the canonical owner namespace. Legacy layouts are
+          // read-only compatibility paths.
+          if (!isOwnerScopedKey(key, owner, { allowLegacy: false })) {
+            return jsonResponse(
+              { error: `Item key '${key}' is outside the canonical owner namespace.` },
+              403,
+              cors
+            );
+          }
+
+          const contentType = item.contentType || "application/json";
+          if (!isAllowedJsonContentType(contentType)) {
+            return jsonResponse(
+              { error: `Unsupported content type '${contentType}'. Only application/json is accepted in persistence batches.` },
+              415,
+              cors
+            );
+          }
+
           // Decode data
           let bytes: Uint8Array;
           if (item.isBase64) {
             bytes = base64UrlDecode(item.content);
           } else {
             bytes = new TextEncoder().encode(item.content);
+          }
+
+          if (bytes.byteLength > MAX_SINGLE_OBJECT_BYTES) {
+            return jsonResponse(
+              { error: `Object '${key}' is ${bytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte per-object limit.` },
+              413,
+              cors
+            );
+          }
+
+          totalBytes += bytes.byteLength;
+          if (totalBytes > MAX_BATCH_BYTES) {
+            return jsonResponse(
+              { error: `Batch exceeds the ${MAX_BATCH_BYTES} byte total limit.` },
+              413,
+              cors
+            );
           }
 
           // Verify SHA-256 integrity
@@ -366,11 +564,35 @@ export default {
             );
           }
 
-          const contentType = item.contentType || "application/json";
+          // Idempotency: an identical existing object is accepted without a
+          // rewrite. A different object at the same immutable key is a hard
+          // conflict; generation objects must never be silently replaced.
+          const existing = await env.NEW_BUCKET.head(key);
+          if (existing) {
+            const existingSha = existing.customMetadata?.sha256?.toLowerCase();
+            if (existingSha === computedHex) {
+              receipts.push({
+                key,
+                size: existing.size,
+                etag: existing.httpEtag,
+                sha256: computedHex,
+                uploaded: existing.uploaded.toISOString(),
+              });
+              continue;
+            }
+            return jsonResponse(
+              {
+                error: `Immutable object '${key}' already exists with different content. Refusing to overwrite a committed generation object.`,
+              },
+              409,
+              cors
+            );
+          }
+
           const uploadedObj = await env.NEW_BUCKET.put(key, bytes, {
             httpMetadata: { contentType },
             customMetadata: {
-              storage_owner_uuid: authCheck.claims.storage_owner_uuid,
+              storage_owner_uuid: owner,
               batch_id: body.batchId,
               dataset_type: body.datasetType || "",
               sha256: computedHex,
@@ -400,6 +622,168 @@ export default {
       } catch (err) {
         return jsonResponse(
           { error: err instanceof Error ? err.message : "Batch upload failed." },
+          400,
+          cors
+        );
+      }
+    }
+
+    // 2B-2. Batch Verification: POST /v1/batches/verify
+    // Reads every object back, recomputes SHA-256 and compares size. This is
+    // the server-side gate that lets the Next.js route commit PostgreSQL only
+    // after immutable storage is proven to match what it intends to register.
+    if (pathname === "/v1/batches/verify" && request.method === "POST") {
+      try {
+        const body = (await request.json()) as {
+          batchId: string;
+          targetPrefix?: string;
+          items: Array<{
+            key: string;
+            sha256: string;
+            byteCount?: number;
+          }>;
+        };
+
+        if (
+          !body.batchId ||
+          typeof body.batchId !== "string" ||
+          !/^[A-Za-z0-9._:-]{1,128}$/.test(body.batchId)
+        ) {
+          return jsonResponse(
+            { error: "Missing or invalid batchId. Expected 1-128 safe characters." },
+            400,
+            cors
+          );
+        }
+
+        if (!Array.isArray(body.items) || body.items.length === 0) {
+          return jsonResponse(
+            { error: "Missing required field: non-empty items array." },
+            400,
+            cors
+          );
+        }
+
+        if (body.items.length > MAX_BATCH_ITEMS) {
+          return jsonResponse(
+            { error: `Batch item count (${body.items.length}) exceeds maximum limit of ${MAX_BATCH_ITEMS}.` },
+            400,
+            cors
+          );
+        }
+
+        const targetPrefix = sanitizeKey(
+          body.targetPrefix || body.items[0].key.split("/").slice(0, 3).join("/")
+        );
+
+        const authCheck = await verifyCapabilityToken(
+          request.headers.get("Authorization"),
+          env.WORKER_AUTH_SECRET,
+          "batch_verify",
+          targetPrefix
+        );
+
+        if (!authCheck.valid) {
+          return jsonResponse({ error: authCheck.error }, authCheck.status, cors);
+        }
+
+        const owner = authCheck.claims.storage_owner_uuid;
+        const verified: Array<{ key: string; size: number; sha256: string }> = [];
+        const failures: Array<{
+          key: string;
+          reason: string;
+          expectedSha256?: string;
+          actualSha256?: string;
+          expectedBytes?: number;
+          actualBytes?: number;
+        }> = [];
+
+        const seenKeys = new Set<string>();
+        let totalBytes = 0;
+
+        for (const item of body.items) {
+          const key = sanitizeKey(item.key);
+
+          if (seenKeys.has(key)) {
+            failures.push({ key, reason: "duplicate_key_in_batch" });
+            continue;
+          }
+          seenKeys.add(key);
+
+          if (!key.startsWith(authCheck.claims.key)) {
+            failures.push({ key, reason: "outside_authorized_prefix" });
+            continue;
+          }
+          if (authCheck.claims.allowed_keys && !authCheck.claims.allowed_keys.includes(key)) {
+            failures.push({ key, reason: "not_in_allowed_keys" });
+            continue;
+          }
+          if (!isOwnerScopedKey(key, owner, { allowLegacy: true })) {
+            failures.push({ key, reason: "outside_owner_namespace" });
+            continue;
+          }
+
+          const head = await env.NEW_BUCKET.head(key);
+          if (!head) {
+            failures.push({ key, reason: "object_not_found", expectedSha256: item.sha256 });
+            continue;
+          }
+
+          if (typeof item.byteCount === "number" && head.size !== item.byteCount) {
+            failures.push({
+              key,
+              reason: "size_mismatch",
+              expectedBytes: item.byteCount,
+              actualBytes: head.size,
+            });
+            continue;
+          }
+
+          totalBytes += head.size;
+          if (totalBytes > MAX_BATCH_BYTES) {
+            failures.push({ key, reason: "batch_size_limit_exceeded" });
+            break;
+          }
+
+          const obj = await env.NEW_BUCKET.get(key);
+          if (!obj) {
+            failures.push({ key, reason: "object_not_readable" });
+            continue;
+          }
+
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          const digest = await crypto.subtle.digest("SHA-256", bytes);
+          const actualSha256 = bufToHex(digest);
+
+          if (actualSha256.toLowerCase() !== item.sha256.toLowerCase()) {
+            failures.push({
+              key,
+              reason: "sha256_mismatch",
+              expectedSha256: item.sha256,
+              actualSha256,
+              actualBytes: bytes.byteLength,
+            });
+            continue;
+          }
+
+          verified.push({ key, size: bytes.byteLength, sha256: actualSha256 });
+        }
+
+        return jsonResponse(
+          {
+            ok: failures.length === 0,
+            batchId: body.batchId,
+            verifiedCount: verified.length,
+            failedCount: failures.length,
+            failures,
+            verified,
+          },
+          failures.length === 0 ? 200 : 409,
+          cors
+        );
+      } catch (err) {
+        return jsonResponse(
+          { error: err instanceof Error ? err.message : "Batch verification failed." },
           400,
           cors
         );
@@ -442,15 +826,69 @@ export default {
             cors
           );
         }
+        if (contentLength > MAX_SINGLE_OBJECT_BYTES) {
+          return jsonResponse(
+            { error: `Payload length (${contentLength} bytes) exceeds the ${MAX_SINGLE_OBJECT_BYTES} byte object limit.` },
+            413,
+            cors
+          );
+        }
 
         const contentType = request.headers.get("Content-Type") || authCheck.claims.content_type || "application/octet-stream";
+        if (!isAllowedJsonContentType(contentType)) {
+          return jsonResponse(
+            { error: `Unsupported content type '${contentType}'. Only application/json is accepted.` },
+            415,
+            cors
+          );
+        }
+
+        // Buffer the body so size and SHA-256 are verified before any write.
+        const requestBytes = new Uint8Array(await request.arrayBuffer());
+        if (requestBytes.byteLength > MAX_SINGLE_OBJECT_BYTES) {
+          return jsonResponse(
+            { error: `Payload is ${requestBytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte object limit.` },
+            413,
+            cors
+          );
+        }
+
+        const digest = await crypto.subtle.digest("SHA-256", requestBytes);
+        const computedHex = bufToHex(digest);
+
+        // Immutable generation objects are write-once. Re-uploading identical
+        // content is idempotent; different content is a hard conflict.
+        const existing = await env.NEW_BUCKET.head(key);
+        if (existing && !isMutableIndexKey(key)) {
+          const existingSha = existing.customMetadata?.sha256?.toLowerCase();
+          if (existingSha === computedHex) {
+            return jsonResponse(
+              {
+                ok: true,
+                key,
+                size: existing.size,
+                etag: existing.httpEtag,
+                uploaded: existing.uploaded.toISOString(),
+                idempotent: true,
+              },
+              200,
+              cors
+            );
+          }
+          return jsonResponse(
+            { error: `Immutable object '${key}' already exists with different content.` },
+            409,
+            cors
+          );
+        }
 
         const customMetadata: Record<string, string> = {
           storage_owner_uuid: authCheck.claims.storage_owner_uuid,
+          sha256: computedHex,
           uploaded_at: new Date().toISOString(),
         };
 
-        const uploadedObj = await env.NEW_BUCKET.put(key, request.body, {
+        const uploadedObj = await env.NEW_BUCKET.put(key, requestBytes, {
           httpMetadata: { contentType },
           customMetadata,
         });
@@ -463,6 +901,7 @@ export default {
             etag: uploadedObj.httpEtag,
             version: uploadedObj.version,
             uploaded: uploadedObj.uploaded.toISOString(),
+            sha256: computedHex,
           },
           200,
           cors
@@ -544,10 +983,13 @@ export default {
           return jsonResponse({ error: authCheck.error }, authCheck.status, cors);
         }
 
-        // Safety enforcement: Permanent generation parts and committed manifests can NEVER be deleted via REST
-        if (!key.includes("/temp/")) {
+        // Safety enforcement: only disposable temp objects inside the caller's
+        // own canonical namespace may be deleted. Committed generation parts,
+        // manifests, and version pointers can NEVER be deleted via REST.
+        const deleteOwner = authCheck.claims.storage_owner_uuid;
+        if (!isCanonicalTempKey(key, deleteOwner)) {
           return jsonResponse(
-            { error: "Permanent committed generation parts cannot be deleted via Worker API. Only temporary objects are eligible." },
+            { error: "Only temporary objects under asdy/temp/<owner>/ may be deleted via Worker API." },
             403,
             cors
           );

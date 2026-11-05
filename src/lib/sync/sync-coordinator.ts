@@ -29,6 +29,9 @@ import {
   releaseSyncLease,
   recordSyncJournalBatch,
   updateSyncJournalBatch,
+  getLocalEntities,
+  getDatasetCatalogEntry,
+  migrateLocalOwnerId,
   type PendingOperation,
   type PendingOperationsSummary,
   type CanonicalDatasetType,
@@ -51,8 +54,30 @@ export type SyncStateListener = (event: SyncStateEvent) => void;
 const AUTO_SYNC_INTERVAL_HOURS = 12;
 const AUTO_SYNC_INTERVAL_MS = AUTO_SYNC_INTERVAL_HOURS * 60 * 60 * 1000;
 const STORAGE_SYNC_KEY = "yt_discovery_sync_meta_v1";
+const STORAGE_OWNER_KEY = "yt_discovery_owner_id_v1";
 const SYNC_MUTEX_NAME = "sync_coordinator_lease";
 const SYNC_LEASE_TTL_MS = 60000; // 60 seconds lease TTL
+
+/**
+ * Deterministic, retry-stable idempotency key for a dataset batch.
+ *
+ * A random key on every retry would create a new generation for the same
+ * pending operations after a network timeout, duplicating work. Hashing the
+ * sorted operation ids keeps the key stable until the outbox actually changes.
+ */
+function buildStableIdempotencyKey(
+  datasetType: CanonicalDatasetType,
+  operations: PendingOperation[]
+): string {
+  const sortedIds = operations.map((op) => op.operationId).sort();
+  let hash = 0x811c9dc5;
+  const input = `${datasetType}:${sortedIds.join("|")}`;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `idem_${datasetType.toLowerCase()}_${(hash >>> 0).toString(16)}_${sortedIds.length}`;
+}
 
 class SyncCoordinator {
   private status: SyncStatus = "IDLE";
@@ -64,7 +89,13 @@ class SyncCoordinator {
   private lastSuccessfulSyncAt: string | null = null;
   private nextAutoSyncAt: string | null = null;
   private broadcastChannel: BroadcastChannel | null = null;
-  private ownerId: string = "asdy-admin";
+  /**
+   * Canonical local/storage owner. Empty until `/api/auth/status` resolves;
+   * there is deliberately no shared "asdy-admin" fallback because writing
+   * local data under a fake owner makes it invisible to the canonical sync
+   * and hydration pipeline.
+   */
+  private ownerId: string = "";
   private hasHydrated = false;
   private latestSummary: PendingOperationsSummary = {
     totalPending: 0,
@@ -82,39 +113,80 @@ class SyncCoordinator {
     if (typeof window !== "undefined") {
       this.initStoragePersistence();
       this.restoreTimestamps();
+      this.restoreOwnerId();
       this.initBroadcastChannel();
       this.initAutoSyncScheduler();
       this.initTabProtection();
       this.initNetworkListeners();
       this.autoResolveOwnerId();
-      reconcileInterruptedSyncJournal(this.ownerId).catch((err) => {
-        console.warn("[sync] Interrupted sync journal reconciliation check deferred:", err);
-      });
+      if (this.ownerId) {
+        reconcileInterruptedSyncJournal(this.ownerId).catch((err) => {
+          console.warn("[sync] Interrupted sync journal reconciliation check deferred:", err);
+        });
+      }
     }
   }
 
-  private autoResolveOwnerId() {
-    if (typeof fetch !== "undefined") {
-      fetch("/api/auth/status")
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data && (data.userId || data.storageOwnerUuid)) {
-            const resolved = data.userId || data.storageOwnerUuid;
-            if (resolved && resolved !== this.ownerId) {
-              this.setOwnerId(resolved);
-            }
-          }
-          // Trigger first-time cloud hydration if not yet done
-          this.triggerInitialHydration();
-        })
-        .catch(() => {
-          this.triggerInitialHydration();
-        });
+  private restoreOwnerId() {
+    try {
+      const stored = localStorage.getItem(STORAGE_OWNER_KEY);
+      if (stored && stored.trim() && stored.trim() !== "asdy-admin") {
+        this.ownerId = stored.trim();
+      }
+    } catch {
+      // Ignore storage access failures.
     }
+  }
+
+  /**
+   * Resolves the canonical owner from the authenticated session and migrates
+   * any local data previously written under a legacy owner identifier.
+   */
+  private autoResolveOwnerId() {
+    if (typeof fetch === "undefined") return;
+
+    fetch("/api/auth/status", { headers: { "Cache-Control": "no-cache" } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(async (data) => {
+        const canonical = String(data?.storageOwnerUuid || data?.userId || "").trim();
+        if (!canonical) return;
+
+        // Legacy partitions that may still hold unsynced local data.
+        const legacyCandidates = new Set<string>(["asdy-admin"]);
+        if (this.ownerId) legacyCandidates.add(this.ownerId);
+        if (data?.userId) legacyCandidates.add(String(data.userId).trim());
+        legacyCandidates.delete(canonical);
+
+        for (const legacy of legacyCandidates) {
+          if (!legacy) continue;
+          try {
+            const migration = await migrateLocalOwnerId(legacy, canonical);
+            if (
+              migration.migratedRecords > 0 ||
+              migration.migratedOperations > 0 ||
+              migration.migratedCatalogEntries > 0
+            ) {
+              console.info(
+                `[sync] Migrated local owner partition '${legacy}' to canonical owner '${canonical}'.`
+              );
+            }
+          } catch (err) {
+            console.warn(`[sync] Local owner migration '${legacy}' -> '${canonical}' failed:`, err);
+          }
+        }
+
+        this.setOwnerId(canonical);
+      })
+      .catch(() => {
+        // Offline or unauthenticated: keep the restored owner if available.
+      })
+      .finally(() => {
+        this.triggerInitialHydration();
+      });
   }
 
   private triggerInitialHydration() {
-    if (this.hasHydrated) return;
+    if (this.hasHydrated || !this.ownerId) return;
     this.hasHydrated = true;
 
     // Run hydration asynchronously in background
@@ -134,8 +206,31 @@ class SyncCoordinator {
   }
 
   public setOwnerId(ownerId: string) {
-    this.ownerId = ownerId;
+    const clean = ownerId?.trim();
+    if (!clean || clean === "asdy-admin") return;
+
+    const changed = clean !== this.ownerId;
+    this.ownerId = clean;
+
+    try {
+      localStorage.setItem(STORAGE_OWNER_KEY, clean);
+    } catch {
+      // Ignore storage access failures.
+    }
+
+    if (changed) {
+      reconcileInterruptedSyncJournal(clean).catch((err) => {
+        console.warn("[sync] Interrupted sync journal reconciliation check deferred:", err);
+      });
+    }
+
     this.refreshSummary();
+
+    if (changed && typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("yt-discovery-owner-changed", { detail: { ownerId: clean } })
+      );
+    }
   }
 
   public getOwnerId(): string {
@@ -349,6 +444,19 @@ class SyncCoordinator {
       return { ok: false, syncedCount: 0, error: "Sync already in progress" };
     }
 
+    // Fail closed until the canonical owner is known. Syncing under a guessed
+    // owner would either miss pending data or write into the wrong partition.
+    if (!this.ownerId) {
+      this.status = "FAILED";
+      await this.emitCurrentState();
+      this.scheduleRetry();
+      return {
+        ok: false,
+        syncedCount: 0,
+        error: "Canonical storage owner has not resolved yet. Sign in again or retry shortly.",
+      };
+    }
+
     // Pre-check pending operations: zero-op bypass
     let summary: PendingOperationsSummary;
     try {
@@ -430,13 +538,75 @@ class SyncCoordinator {
       const allOpIds = pendingOps.map((op) => op.operationId);
       await setOperationsStatus(allOpIds, "IN_FLIGHT");
 
+      const deviceMeta = getOriginDeviceMeta();
+
+      // Build a FULL local snapshot per dataset. The server treats
+      // `snapshotRecords` as authoritative and applies DELETE operations on
+      // top. Sending deltas only would make every generation a partial dataset
+      // and hydration would incorrectly replace the local projection with it.
+      const datasetPayloads: Array<{
+        datasetType: CanonicalDatasetType;
+        idempotencyKey: string;
+        expectedRevision?: number;
+        originDeviceId: string;
+        originDeviceLabel: string;
+        operations: Array<{
+          operationId: string;
+          entityId: string;
+          operationType: PendingOperation["operationType"];
+          payload: Record<string, unknown>;
+          originDeviceId?: string;
+          originDeviceLabel?: string;
+        }>;
+        snapshotRecords: Record<string, unknown>[];
+      }> = [];
+
+      for (const [datasetType, ops] of datasetGroups.entries()) {
+        const [snapshotRecords, catalog] = await Promise.all([
+          getLocalEntities<Record<string, unknown>>(this.ownerId, datasetType),
+          getDatasetCatalogEntry(this.ownerId, datasetType).catch(() => null),
+        ]);
+
+        // Only send an expected revision when this device has actually
+        // hydrated a generation. Otherwise the server would reject a
+        // legitimate first sync from a fresh browser.
+        const expectedRevision =
+          catalog && catalog.lastHydratedGenerationId
+            ? catalog.lastHydratedRevision
+            : undefined;
+
+        datasetPayloads.push({
+          datasetType,
+          idempotencyKey: buildStableIdempotencyKey(datasetType, ops),
+          expectedRevision,
+          originDeviceId: deviceMeta.originDeviceId,
+          originDeviceLabel: deviceMeta.originDeviceLabel,
+          operations: ops.map((op) => ({
+            operationId: op.operationId,
+            entityId: op.entityId,
+            operationType: op.operationType,
+            payload: op.payload,
+            originDeviceId: op.originDeviceId || deviceMeta.originDeviceId,
+            originDeviceLabel: op.originDeviceLabel || deviceMeta.originDeviceLabel,
+          })),
+          snapshotRecords,
+        });
+      }
+
+      const expectedRevisions: Record<string, number> = {};
+      for (const payload of datasetPayloads) {
+        if (payload.expectedRevision !== undefined) {
+          expectedRevisions[payload.datasetType] = payload.expectedRevision;
+        }
+      }
+
       // Record sync journal batch in IndexedDB
       await recordSyncJournalBatch({
         syncBatchId: batchId,
         ownerId: this.ownerId,
         snapshotWatermark: Date.now(),
         affectedDatasets: Array.from(datasetGroups.keys()),
-        expectedRevisions: {},
+        expectedRevisions,
         targetGenerationIds: {},
         batchStatus: "UPLOADING",
         createdAt: new Date().toISOString(),
@@ -445,23 +615,6 @@ class SyncCoordinator {
         dbCommitStatus: "PENDING",
       });
 
-      const deviceMeta = getOriginDeviceMeta();
-
-      const datasetsPayload = Array.from(datasetGroups.entries()).map(([datasetType, ops]) => ({
-        datasetType,
-        idempotencyKey: `idemp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-        originDeviceId: deviceMeta.originDeviceId,
-        originDeviceLabel: deviceMeta.originDeviceLabel,
-        operations: ops.map((op) => ({
-          operationId: op.operationId,
-          entityId: op.entityId,
-          operationType: op.operationType,
-          payload: op.payload,
-          originDeviceId: op.originDeviceId || deviceMeta.originDeviceId,
-          originDeviceLabel: op.originDeviceLabel || deviceMeta.originDeviceLabel,
-        })),
-      }));
-
       const res = await fetch("/api/sync/save-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -469,48 +622,81 @@ class SyncCoordinator {
           batchId,
           originDeviceId: deviceMeta.originDeviceId,
           originDeviceLabel: deviceMeta.originDeviceLabel,
-          datasets: datasetsPayload,
+          datasets: datasetPayloads,
         }),
       });
+
+      if (res.status === 409) {
+        const conflictText = await res.text();
+        await updateSyncJournalBatch(batchId, {
+          batchStatus: "FAILED",
+          dbCommitStatus: "FAILED",
+          lastErrorCode: "REVISION_CONFLICT",
+          lastAttemptAt: new Date().toISOString(),
+        });
+
+        // Another device advanced the dataset. Pull the committed snapshot
+        // before retrying; pending local operations are preserved by
+        // bulkHydrateDatasetEntities and will be rebased on the next attempt.
+        await cloudHydrationService.hydrateAllDatasets(this.ownerId, true);
+        throw new Error(
+          `Revision conflict: the dataset changed on another device. Latest cloud snapshot restored; local changes remain queued. ${conflictText.slice(0, 300)}`
+        );
+      }
 
       if (!res.ok) {
         const errText = await res.text();
         throw new Error(`Sync API rejected with status ${res.status}: ${errText}`);
       }
 
-      const syncResult = await res.json();
+      const syncResult = (await res.json()) as {
+        ok?: boolean;
+        results?: Array<{
+          datasetType: string;
+          generationId: string;
+          revision: number;
+          syncedOperationIds: string[];
+          syncedEntityIds: string[];
+        }>;
+      };
+
+      if (syncResult.ok !== true || !Array.isArray(syncResult.results) || syncResult.results.length === 0) {
+        throw new Error(
+          "Sync API returned success without committed dataset results. Outbox preserved."
+        );
+      }
 
       // Collect all successfully acknowledged operation IDs
       const committedOpIds: string[] = [];
       let primaryGenerationId: string | undefined;
 
-      if (Array.isArray(syncResult.results)) {
-        for (const r of syncResult.results) {
-          if (Array.isArray(r.syncedOperationIds)) {
-            committedOpIds.push(...r.syncedOperationIds);
-          }
-          if (r.generationId && !primaryGenerationId) {
-            primaryGenerationId = r.generationId;
-          }
-          // Mark local entities committed and update catalog/revision
-          if (Array.isArray(r.syncedEntityIds) && r.syncedEntityIds.length > 0) {
-            await markEntitiesCommitted(this.ownerId, r.datasetType as CanonicalDatasetType, r.syncedEntityIds, {
-              generationId: r.generationId,
-              revision: r.revision || 1,
-              syncedAt: new Date().toISOString(),
-              originDeviceId: deviceMeta.originDeviceId,
-              originDeviceLabel: deviceMeta.originDeviceLabel,
-            });
-          }
+      for (const r of syncResult.results) {
+        if (Array.isArray(r.syncedOperationIds)) {
+          committedOpIds.push(...r.syncedOperationIds);
+        }
+        if (r.generationId && !primaryGenerationId) {
+          primaryGenerationId = r.generationId;
+        }
+        // Mark local entities committed and update catalog/revision
+        if (Array.isArray(r.syncedEntityIds) && r.syncedEntityIds.length > 0) {
+          await markEntitiesCommitted(this.ownerId, r.datasetType as CanonicalDatasetType, r.syncedEntityIds, {
+            generationId: r.generationId,
+            revision: r.revision || 1,
+            syncedAt: new Date().toISOString(),
+            originDeviceId: deviceMeta.originDeviceId,
+            originDeviceLabel: deviceMeta.originDeviceLabel,
+          });
         }
       }
 
-      // ONLY AFTER entity state transition, prune confirmed committed operations from IndexedDB Outbox
-      if (committedOpIds.length > 0) {
-        await pruneCommittedOperations(committedOpIds);
-      } else {
-        await pruneCommittedOperations(allOpIds);
+      if (committedOpIds.length === 0) {
+        throw new Error(
+          "Sync API acknowledged no committed operations. Outbox preserved to prevent data loss."
+        );
       }
+
+      // ONLY AFTER entity state transition, prune confirmed committed operations from IndexedDB Outbox
+      await pruneCommittedOperations(committedOpIds);
 
       // Update sync journal to COMMITTED
       await updateSyncJournalBatch(batchId, {

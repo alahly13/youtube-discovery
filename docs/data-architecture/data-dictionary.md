@@ -1,11 +1,14 @@
-# YouTube Discovery — Phase 1: Canonical Data Dictionary (v1.4)
+# YouTube Discovery — Canonical Data Dictionary (v2.0)
 
 **Document:** `docs/data-architecture/data-dictionary.md`  
-**Version:** 1.4 (Final Architecture Correction & Local Implementation Baseline)  
+**Version:** 2.0 (Canonical Resource Taxonomy + Cloudflare R2 Reconciliation)  
 **Baseline Date:** 2 November 2026  
-**Status:** **v1.4 CANONICAL ARCHITECTURE SPECIFICATION**  
+**Reconciled:** 5 November 2026  
+**Status:** **CANONICAL ARCHITECTURE SPECIFICATION**  
 **Execution Mode:** AUTHORIZED LOCAL IMPLEMENTATION ACTIVE  
-**Migration Boundary:** MIGRATION FILES GENERATED ONLY — NEVER APPLIED OR DEPLOYED
+**Migration Boundary:** 6 MIGRATIONS APPLIED ON REMOTE SUPABASE POSTGRESQL (LATEST: `20261104230000_canonical_resource_classification`)
+
+> **2026-11-05 reconciliation:** The live Prisma schema and applied migrations are authoritative. The physical object store is Cloudflare R2 (`new-youtube-discovery-private` / `old-youtube-discovery-private`), not Supabase Storage. Canonical paths are `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/...`. `REFERENCES` is the dataset type; `SAVED_TITLE` and `SAVED_LINK` are resource types. Where this document and the live schema differ, the schema and migration SQL win.
 
 ---
 
@@ -19,7 +22,7 @@
 - **Zero-Value Guarantee:** `views_count`, `likes_count`, `comments_count` are nullable; `0` is a valid distinct metric and NEVER coerced to `NULL`.
 - **Zero-Coercion Rule for Foreign Keys:** Missing optional parent relationships must be stored as standard SQL `NULL`, strictly forbidding synthetic zero UUIDs (`00000000-0000-0000-0000-000000000000`).
 - **Strict Owner Isolation Rule:** Every user-owned table includes `owner_id UUID NOT NULL REFERENCES user_profiles(id)`. No ambient or global personal data exists.
-- **Stable Storage Owner Identifier:** `user_profiles.storage_owner_uuid` is an immutable UUID generated at provisioning that permanently anchors physical storage paths (`<storage_owner_uuid>/persistence/...`), surviving authentication account detachment.
+- **Stable Storage Owner Identifier:** `user_profiles.storage_owner_uuid` is an immutable UUID generated at provisioning that permanently anchors physical storage paths (`asdy/persistence/<storage_owner_uuid>/...`), surviving authentication account detachment.
 - **Composite Integrity Rule:** All parent-child relationships enforce matching `owner_id`, `dataset_id`, or `generation_id` via composite foreign keys.
 - **Option A Synchronization:** Each cloud save batch operates on exactly ONE logical dataset and creates exactly ONE generation. There is NO `save_sync_batch_items` entity.
 - **Linear Revision History:** Generations form a strict linear sequence (`uq_storage_generations_linear`). Branching is prohibited.
@@ -106,7 +109,7 @@ Authoritative transactional registry of logical datasets owned by users.
 | `owner_id` | `uuid` | No | None | FK to `user_profiles(id)` ON DELETE RESTRICT |
 | `dataset_type` | `varchar(50)` | No | None | Type enum constraint |
 | `entity_id` | `varchar(100)`| Yes | `NULL` | Logical entity ID (e.g. playlist ID); NULL for singleton datasets |
-| `storage_prefix`| `varchar(500)`| No | None | Object storage path prefix (`<storage-owner-uuid>/persistence/...`) |
+| `storage_prefix`| `varchar(500)`| No | None | Object storage path prefix (`asdy/persistence/<storage_owner_uuid>/<dataset-slug>/`) |
 | `current_generation_id`| `uuid`| Yes | `NULL` | Pointer to current committed generation |
 | `current_revision`| `bigint` | No | `0` | Monotonic revision counter (starts at 0 when empty; advances to 1 on first commit) |
 | `schema_version`| `integer` | No | `1` | Schema version of dataset items |
@@ -116,7 +119,7 @@ Authoritative transactional registry of logical datasets owned by users.
 - **Constraints:**
   - `PRIMARY KEY (id)`
   - `UNIQUE (owner_id, id)` (enables composite FKs on child generations)
-  - `CHECK (dataset_type IN ('SAVED_ITEMS', 'PLAYLIST', 'SEARCH_HISTORY', 'RESEARCH_QUEUE', 'SAVED_REFERENCES'))`
+  - `CHECK (dataset_type IN ('SAVED_ITEMS', 'PLAYLIST', 'SEARCH_HISTORY', 'RESEARCH_QUEUE', 'REFERENCES'))`
   - `CHECK (current_revision >= 0)`
   - `CHECK (schema_version > 0)`
   - `FOREIGN KEY (owner_id, id, current_generation_id) REFERENCES storage_generations(owner_id, dataset_id, id) ON DELETE RESTRICT` (Current generation must belong to this exact dataset and owner)
@@ -177,7 +180,7 @@ Committed immutable generation snapshots representing point-in-time dataset vers
 ---
 
 #### `storage_manifest_parts`
-Individual immutable JSON chunk files physically stored in Supabase Storage (<= 45 MiB).
+Individual immutable JSON chunk files physically stored in Cloudflare R2 (<= 45 MiB).
 
 | Column | Type | Nullable | Default | Description / Constraint |
 |---|---|---|---|---|
@@ -186,7 +189,7 @@ Individual immutable JSON chunk files physically stored in Supabase Storage (<= 
 | `dataset_id` | `uuid` | No | None | FK to `storage_datasets(id)` ON DELETE CASCADE |
 | `generation_id`| `uuid` | No | None | FK to `storage_generations(id)` ON DELETE CASCADE |
 | `part_number` | `integer` | No | None | Ordered 1-based index (`part-000001.json`) |
-| `storage_path`| `varchar(500)`| No | None | Direct physical storage path (`<storage-owner-uuid>/persistence/.../part-000001.json`) |
+| `storage_path`| `varchar(500)`| No | None | Direct physical storage path (`asdy/persistence/<storage_owner_uuid>/<dataset-slug>/generations/<generation-id>/parts/part-000001.json`) |
 | `record_count`| `integer` | No | None | Record count in this part file (>= 0) |
 | `byte_count` | `bigint` | No | None | Exact UTF-8 byte count (Target: <= 40 MiB; Hard ceiling: <= 47,185,920 bytes) |
 | `sha256_checksum`| `varchar(64)`| No | None | Hexadecimal 64-character SHA-256 digest |
@@ -249,8 +252,12 @@ Relational search, filter, and daily grouping index. Full immutable payload snap
 | `title` | `varchar(500)`| No | None | Item title |
 | `channel_title`| `varchar(255)`| Yes | `NULL` | Channel title |
 | `thumbnail_url`| `text` | Yes | `NULL` | High-resolution thumbnail image URL |
-| `is_shorts_like`| `boolean`| No | `false` | Visual presentation classification (orthogonal to entity_type) |
+| `is_shorts_like`| `boolean`| No | `false` | Legacy visual heuristic only; NEVER evidence for `VIDEO_SHORT` |
 | `is_age_restricted`| `boolean`| No| `false` | Age restriction indicator |
+| `origin_device_id`| `varchar(128)`| Yes | `NULL` | Stable device identity that created the record |
+| `origin_device_label`| `varchar(128)`| Yes | `NULL` | Human-friendly device label |
+| `resource_type` | `varchar(32)` | Yes | `NULL` | Canonical taxonomy discriminator (`VIDEO`, `VIDEO_SHORT`, `CHANNEL`, `YOUTUBE_PLAYLIST`, `USER_PLAYLIST`, ...) |
+| `resource_id` | `varchar(128)` | Yes | `NULL` | Platform or application entity identity |
 | `published_at`| `timestamptz` | Yes | `NULL` | YouTube publication date |
 | `views_count` | `bigint` | Yes | `NULL` | Distinct NULL vs ZERO rule (0 is valid metric) |
 | `likes_count` | `bigint` | Yes | `NULL` | Distinct NULL vs ZERO rule |
@@ -283,7 +290,11 @@ Relational search, filter, and daily grouping index. Full immutable payload snap
 - **Indexes:**
   - `idx_saved_items_owner_date ON saved_items_index(owner_id, saved_date DESC, saved_at DESC)`
   - `idx_saved_items_owner_type ON saved_items_index(owner_id, entity_type)`
+  - `idx_saved_items_owner_resource_type ON saved_items_index(owner_id, resource_type)`
+  - `idx_saved_items_owner_device ON saved_items_index(owner_id, origin_device_id)`
+  - `idx_saved_items_owner_published ON saved_items_index(owner_id, published_at)`
 - **Role of Manifest:** PostgreSQL is authoritative for live mutable index; Manifest parts store immutable snapshots. Pruning old generation snapshots sets foreign keys to NULL without deleting the user's bookmarks.
+- **Taxonomy Rule:** `resource_type` is the exact discriminator. `entity_type` is only a coarse relational bucket. `VIDEO_SHORT` requires explicit `/shorts/` evidence; duration and `is_shorts_like` never decide it.
 
 ---
 
@@ -423,7 +434,7 @@ Ordered playlist memberships: YouTube items or custom notes/links.
 ---
 
 #### `saved_references`
-Manually saved titles, articles, and external links.
+Manually saved titles and links (`SAVED_TITLE` / `SAVED_LINK`), mirrored from the local-first `REFERENCES` dataset.
 
 | Column | Type | Nullable | Default | Description / Constraint |
 |---|---|---|---|---|
@@ -433,17 +444,22 @@ Manually saved titles, articles, and external links.
 | `generation_id`| `uuid` | Yes | `NULL` | FK to `storage_generations(id)` ON DELETE SET NULL |
 | `manifest_part_id`| `uuid` | Yes | `NULL` | FK to `storage_manifest_parts(id)` ON DELETE SET NULL |
 | `item_position`| `integer`| Yes | `NULL` | Index within part `items[]` (>= 0) |
-| `title` | `varchar(500)`| No | None | Manual reference title |
-| `url` | `text` | No | None | Arbitrary validated web URL |
-| `description` | `text` | Yes | `NULL` | Context summary |
+| `title` | `varchar(512)`| No | None | Saved title or link label |
+| `url` | `varchar(2048)`| Yes | `NULL` | Required for `SAVED_LINK`; nullable for `SAVED_TITLE` |
 | `notes` | `text` | Yes | `NULL` | Personal research notes |
-| `tags` | `text[]` | No | `'{}'` | Categorization tags |
-| `category` | `varchar(100)`| Yes | `NULL` | Classification category |
-| `created_at` | `timestamptz` | No | `now()` | Bookmark creation timestamp |
+| `record_id` | `varchar(256)`| Yes | `NULL` | Stable application record identity |
+| `resource_type` | `varchar(32)`| Yes | `NULL` | `SAVED_TITLE` or `SAVED_LINK` |
+| `resource_id` | `varchar(256)`| Yes | `NULL` | Platform or application entity identity |
+| `origin_device_id`| `varchar(128)`| Yes | `NULL` | Stable device identity |
+| `origin_device_label`| `varchar(128)`| Yes | `NULL` | Human-friendly device label |
+| `saved_at` | `timestamptz` | No | `now()` | Authoritative save instant |
+| `created_at` | `timestamptz` | No | `now()` | Row creation timestamp |
 | `updated_at` | `timestamptz` | No | `now()` | Last modification timestamp |
 
 - **Constraints:**
   - `PRIMARY KEY (id)`
+  - `UNIQUE (owner_id, record_id)` (stable per-owner identity)
+  - `SAVED_LINK` rows must carry a URL; the API validates this before writing.
   - All-or-none provenance check constraint:
     `CHECK ((manifest_part_id IS NULL AND item_position IS NULL AND generation_id IS NULL) OR (manifest_part_id IS NOT NULL AND item_position IS NOT NULL AND generation_id IS NOT NULL))`
   - Column-specific nullification composite FK:
@@ -452,7 +468,7 @@ Manually saved titles, articles, and external links.
       REFERENCES storage_manifest_parts(owner_id, dataset_id, generation_id, id)
       ON DELETE SET NULL (generation_id, manifest_part_id);
     ```
-- **Indexes:** `idx_saved_references_owner ON saved_references(owner_id, created_at DESC)`
+- **Indexes:** `idx_saved_references_owner ON saved_references(owner_id, created_at DESC)`, `idx_saved_references_resource_type ON saved_references(owner_id, resource_type)`, `idx_saved_references_dataset ON saved_references(owner_id, dataset_id)`
 
 ---
 
@@ -464,19 +480,26 @@ Reusable query presets with filters and pinning (relational-only storage; no man
 | `id` | `uuid` | No | `gen_random_uuid()` | Primary Key |
 | `owner_id` | `uuid` | No | None | FK to `user_profiles(id)` ON DELETE CASCADE |
 | `title` | `varchar(255)`| No | None | Preset title |
-| `query` | `varchar(500)`| No | None | YouTube search query string |
-| `resource_selection`| `varchar(20)`| No| `'ALL'` | `'ALL'`, `'video'`, `'channel'`, `'playlist'` |
-| `settings_snapshot`| `jsonb` | No | `'{}'::jsonb`| Provider settings snapshot |
+| `query_text` | `varchar(512)`| No | None | YouTube search query string |
+| `search_settings` | `jsonb` | No | `'{}'::jsonb`| Provider settings snapshot |
+| `filter_snapshot` | `jsonb` | Yes | `NULL` | Local filter state snapshot |
 | `is_pinned` | `boolean` | No | `false` | Pin to top of search shelf |
-| `notes` | `text` | Yes | `NULL` | Research notes |
+| `tags` | `text[]` | No | `'{}'` | Categorization tags |
+| `record_id` | `varchar(256)`| Yes | `NULL` | Stable application record identity |
+| `resource_type` | `varchar(32)`| Yes | `NULL` | `SAVED_SEARCH` |
+| `resource_id` | `varchar(256)`| Yes | `NULL` | Platform or application entity identity |
+| `origin_device_id`| `varchar(128)`| Yes | `NULL` | Stable device identity |
+| `origin_device_label`| `varchar(128)`| Yes | `NULL` | Human-friendly device label |
+| `saved_at` | `timestamptz` | No | `now()` | Authoritative save instant |
 | `created_at` | `timestamptz` | No | `now()` | Creation timestamp |
 | `updated_at` | `timestamptz` | No | `now()` | Modification timestamp |
 
 - **Constraints:**
   - `PRIMARY KEY (id)`
-  - `UNIQUE (owner_id, title)`
+  - `UNIQUE (owner_id, record_id)` (stable per-owner identity)
 - **Architectural Justification:** Small, query-level configurations consumed directly by the search input UI; relational PostgreSQL storage is optimal with zero object storage overhead.
-- **Indexes:** `idx_search_presets_owner ON saved_search_presets(owner_id, is_pinned DESC, title)`
+- **Taxonomy Rule:** A saved preset is `SAVED_SEARCH`, never a search-history execution record.
+- **Indexes:** `idx_search_presets_owner ON saved_search_presets(owner_id, is_pinned DESC, title)`, `idx_search_presets_resource_type ON saved_search_presets(owner_id, resource_type)`
 
 ---
 
@@ -487,26 +510,19 @@ Permanent audit of executed searches linked directly to historical manifest gene
 |---|---|---|---|---|
 | `id` | `uuid` | No | `gen_random_uuid()` | Primary Key |
 | `owner_id` | `uuid` | No | None | FK to `user_profiles(id)` ON DELETE CASCADE |
-| `dataset_id` | `uuid` | No | None | FK to `storage_datasets(id)` ON DELETE RESTRICT |
-| `generation_id`| `uuid` | No | None | FK to `storage_generations(id)` ON DELETE RESTRICT |
-| `title` | `varchar(500)`| No | None | Search display label |
-| `query` | `varchar(500)`| No | None | Executed query string |
-| `resource_selection`| `varchar(20)`| No| `'ALL'` | Resource selection |
-| `settings_snapshot`| `jsonb` | No | `'{}'::jsonb`| Provider settings at execution |
-| `results_count`| `integer` | No | `0` | Number of items returned (>= 0) |
-| `video_count` | `integer` | No | `0` | Video count in result set (>= 0) |
-| `channel_count`| `integer` | No | `0` | Channel count in result set (>= 0) |
-| `playlist_count`| `integer`| No | `0` | Playlist count in result set (>= 0) |
-| `quota_cost_estimate`| `integer`| No | `100` | Estimated quota cost (>= 0) |
-| `status` | `varchar(20)` | No | `'complete'` | `'complete'`, `'failed'`, `'partial'`, `'empty'` |
-| `top_thumbnails`| `text[]` | No | `'{}'` | First 4 thumbnail URLs for card gallery |
+| `query_text` | `varchar(512)`| No | None | Executed query string |
+| `search_settings` | `jsonb` | No | None | Provider settings at execution |
+| `result_count`| `integer` | No | `0` | Number of items returned (>= 0) |
+| `quota_units_consumed`| `integer`| No | `100` | Quota units consumed by the execution |
+| `manifest_id` | `varchar(64)`| No | None | Runtime manifest identity |
+| `generation_id`| `uuid` | Yes | `NULL` | Optional immutable generation snapshot link |
 | `executed_at` | `timestamptz` | No | `now()` | Execution timestamp |
 
 - **Constraints:**
   - `PRIMARY KEY (id)`
-  - `CHECK (results_count >= 0 AND video_count >= 0 AND channel_count >= 0 AND playlist_count >= 0 AND quota_cost_estimate >= 0)`
-  - `FOREIGN KEY (owner_id, dataset_id, generation_id) REFERENCES storage_generations(owner_id, dataset_id, id) ON DELETE RESTRICT` (Guarantees historical manifest generation snapshot cannot be deleted while search history record exists)
-- **Historical Retrieval Guarantee:** The `generation_id` points to the exact immutable snapshot of search results, allowing instant zero-quota reloading from storage.
+  - `CHECK (result_count >= 0 AND quota_units_consumed >= 0)`
+- **Historical Retrieval Guarantee:** When `generation_id` is present it points to the exact immutable snapshot of search results, allowing instant zero-quota reloading from storage.
+- **Taxonomy Rule:** A search-history execution record is NOT a saved search preset. It must never be classified as `SAVED_SEARCH`.
 - **Indexes:** `idx_search_history_owner ON search_history_records(owner_id, executed_at DESC)`
 
 ---

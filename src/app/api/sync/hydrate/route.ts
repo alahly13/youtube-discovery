@@ -2,6 +2,11 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import {
+  resolveLegacyOwnerIds,
+  resolveProfileId,
+  resolveStorageOwnerId,
+} from "@/lib/auth/storage-owner";
 import { prisma } from "@/lib/db/prisma";
 import { getR2WorkerStorageClient } from "@/lib/storage/r2-worker-storage-client";
 import {
@@ -48,7 +53,17 @@ export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const storageOwnerUuid = auth.admin.userId || "asdy-admin";
+  // Hydration must use the same owner namespace as save-all. Using the auth
+  // user id here would silently read a different (empty) partition.
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
+  const profileId = resolveProfileId(auth.admin);
   const datasetsMap = new Map<CanonicalDatasetType, HydrateDatasetInfo>();
 
   // Initialize all 5 canonical datasets with default empty state
@@ -82,7 +97,8 @@ export async function GET(request: Request) {
       where: {
         OR: [
           { storage_owner_uuid: storageOwnerUuid },
-          { id: storageOwnerUuid },
+          ...(profileId ? [{ id: profileId }] : []),
+          ...(auth.admin.userId ? [{ auth_user_id: auth.admin.userId }] : []),
         ],
       },
       include: {
@@ -151,54 +167,144 @@ export async function GET(request: Request) {
     console.warn("[sync/hydrate] PostgreSQL registry query error, trying R2 discovery:", err);
   }
 
-  // 2. If PostgreSQL had no active generations or was disconnected, inspect Cloudflare R2
+  // 2. If PostgreSQL had no active generations or was disconnected, inspect
+  // Cloudflare R2. The manifest is authoritative for part checksums and
+  // record counts; object size/etag must never be treated as SHA-256.
   const hasCommittedGenerations = Array.from(datasetsMap.values()).some((d) => d.generationId !== null);
   if (!dbSuccess || !hasCommittedGenerations) {
     try {
       const r2Client = getR2WorkerStorageClient();
 
-      // Check both canonical prefix and legacy prefix
-      const canonicalPrefix = `asdy/persistence/${storageOwnerUuid}/`;
-      const legacyPrefix = `${storageOwnerUuid}/persistence/`;
+      // Canonical prefix plus every legitimate historical owner layout.
+      const ownerIds = resolveLegacyOwnerIds(auth.admin);
+      const prefixes = [
+        `asdy/persistence/${storageOwnerUuid}/`,
+        ...ownerIds
+          .filter((owner) => owner !== storageOwnerUuid)
+          .map((owner) => `${owner}/persistence/`),
+      ];
 
-      const [canonicalList, legacyList] = await Promise.all([
-        r2Client.listObjects("NEW", canonicalPrefix, { limit: 500 }).catch(() => ({ objects: [] })),
-        r2Client.listObjects("NEW", legacyPrefix, { limit: 500 }).catch(() => ({ objects: [] })),
-      ]);
+      const listAll = async (prefix: string) => {
+        const collected: Array<{ key: string; size: number; etag: string; uploaded: string; customMetadata?: Record<string, string> }> = [];
+        let cursor: string | undefined;
+        for (let page = 0; page < 5; page += 1) {
+          const listed = await r2Client
+            .listObjects("NEW", prefix, { limit: 500, cursor, storageOwnerUuid })
+            .catch(() => null);
+          if (!listed) break;
+          collected.push(...(listed.objects || []));
+          if (!listed.truncated || !listed.cursor) break;
+          cursor = listed.cursor;
+        }
+        return collected;
+      };
 
-      const allObjects = [...(canonicalList.objects || []), ...(legacyList.objects || [])];
+      const lists = await Promise.all(prefixes.map((prefix) => listAll(prefix)));
+      const allObjects = lists.flat();
 
-      for (const obj of allObjects) {
+      // Prefer real generation manifests. Historical `before-app-updating`
+      // branches are archives, never the current dataset head.
+      const manifestObjects = allObjects.filter((obj) => {
         const parsed = parseStorageKey(obj.key);
-        if (!parsed || !parsed.datasetType || !parsed.generationId) continue;
+        return Boolean(parsed?.isManifest && parsed.generationId && !parsed.isBeforeAppUpdating);
+      });
 
-        const current = datasetsMap.get(parsed.datasetType)!;
+      for (const obj of manifestObjects) {
+        const parsed = parseStorageKey(obj.key);
+        if (!parsed?.datasetType || !parsed.generationId) continue;
 
-        if (parsed.partNumber !== null) {
-          const exists = current.parts.some((p) => p.storagePath === obj.key);
-          if (!exists) {
-            current.parts.push({
-              partNumber: parsed.partNumber,
-              storagePath: obj.key,
-              sha256: (obj.etag || "").replace(/"/g, ""),
-              byteCount: obj.size,
-              recordCount: Math.max(1, Math.round(obj.size / 200)),
-            });
-            current.totalParts = current.parts.length;
-            current.totalBytes += obj.size;
-            current.totalRecords += Math.max(1, Math.round(obj.size / 200));
-            current.generationId = parsed.generationId;
-            current.currentRevision = Math.max(current.currentRevision, 1);
-          }
-        } else if (parsed.isManifest) {
+        const current = datasetsMap.get(parsed.datasetType);
+        if (!current || current.generationId !== null) continue;
+
+        try {
+          const { data } = await r2Client.getObject("NEW", obj.key, { storageOwnerUuid });
+          const manifest = JSON.parse(data.toString("utf8")) as {
+            generationId?: string;
+            generationNumber?: number;
+            currentRevision?: number;
+            aggregateSha256?: string;
+            totalRecords?: number;
+            totalParts?: number;
+            totalBytes?: number;
+            parts?: Array<{
+              partNumber?: number;
+              storagePath?: string;
+              sha256?: string;
+              byteCount?: number;
+              recordCount?: number;
+            }>;
+          };
+
+          const parts = (manifest.parts || [])
+            .filter(
+              (part): part is { partNumber: number; storagePath: string; sha256: string; byteCount: number; recordCount: number } =>
+                typeof part.partNumber === "number" &&
+                typeof part.storagePath === "string" &&
+                typeof part.sha256 === "string" &&
+                part.sha256.length === 64
+            )
+            .map((part) => ({
+              partNumber: part.partNumber,
+              storagePath: part.storagePath,
+              sha256: part.sha256,
+              byteCount: Number(part.byteCount || 0),
+              recordCount: Number(part.recordCount || 0),
+            }))
+            .sort((a, b) => a.partNumber - b.partNumber);
+
+          if (parts.length === 0) continue;
+
+          current.generationId = manifest.generationId || parsed.generationId;
           current.manifestKey = obj.key;
-          current.generationId = parsed.generationId;
+          current.aggregateSha256 = manifest.aggregateSha256 || null;
+          current.currentRevision = Number(
+            manifest.generationNumber ?? manifest.currentRevision ?? 1
+          );
+          current.parts = parts;
+          current.totalParts = parts.length;
+          current.totalRecords = Number(
+            manifest.totalRecords ?? parts.reduce((sum, part) => sum + part.recordCount, 0)
+          );
+          current.totalBytes = Number(
+            manifest.totalBytes ?? parts.reduce((sum, part) => sum + part.byteCount, 0)
+          );
+        } catch (manifestErr) {
+          console.warn(
+            `[sync/hydrate] Unable to read R2 manifest '${obj.key}':`,
+            manifestErr
+          );
         }
       }
 
-      // Sort parts
-      for (const d of datasetsMap.values()) {
-        d.parts.sort((a, b) => a.partNumber - b.partNumber);
+      // Legacy generations without a manifest: expose them for recovery but
+      // only with a real checksum recorded by the Worker. Missing checksums
+      // are surfaced as empty and hydration will treat them as unverified.
+      for (const obj of allObjects) {
+        const parsed = parseStorageKey(obj.key);
+        if (!parsed?.datasetType || !parsed.generationId || parsed.partNumber === null) continue;
+        if (parsed.isBeforeAppUpdating) continue;
+
+        const current = datasetsMap.get(parsed.datasetType);
+        if (!current || current.generationId !== null) continue;
+        if (current.parts.some((part) => part.storagePath === obj.key)) continue;
+
+        const checksum = obj.customMetadata?.sha256 || "";
+        current.parts.push({
+          partNumber: parsed.partNumber,
+          storagePath: obj.key,
+          sha256: checksum,
+          byteCount: obj.size,
+          recordCount: 0,
+        });
+        current.generationId = parsed.generationId;
+        current.manifestKey = obj.key.replace(/parts\/part-\d+\.json$/, "manifest.json");
+        current.currentRevision = Math.max(current.currentRevision, 1);
+        current.totalParts = current.parts.length;
+        current.totalBytes += obj.size;
+      }
+
+      for (const dataset of datasetsMap.values()) {
+        dataset.parts.sort((a, b) => a.partNumber - b.partNumber);
       }
     } catch (r2Err) {
       console.warn("[sync/hydrate] R2 fallback discovery error:", r2Err);

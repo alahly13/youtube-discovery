@@ -1,0 +1,44 @@
+{
+  "$schema": "https://youtube-discovery.app/schemas/dataset-manifest-v2.json",
+  "schemaVersion": 2,
+  "resourceSchemaVersion": 2,
+  "datasetType": "SAVED_ITEMS",
+  "datasetId": "8b2f4c1a-3d6e-4a7b-9c10-5e6f7a8b9c0d",
+  "ownerId": "c129bb2a-0f40-49d8-b8c8-42424d44cf3e",
+  "storageOwnerUuid": "c987539d-246a-4817-b958-b0ea32c590f9",
+  "generationId": "f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b",
+  "generationNumber": 1,
+  "totalParts": 2,
+  "totalRecords": 2,
+  "totalBytes": 2917,
+  "aggregateSha256": "3319ed25a0090db13d5a853491f5be86df54c9581bfd7f9f12bf4b9c48c413c2",
+  "resourceTypeCounts": {
+    "VIDEO": 1,
+    "VIDEO_SHORT": 1
+  },
+  "committedAt": "2026-11-05T12:00:00.000Z",
+  "originDeviceId": "dev_576eefe91b4e46bc",
+  "originDeviceLabel": "Main Research Rig",
+  "parts": [
+    {
+      "partNumber": 1,
+      "storagePath": "asdy/persistence/c987539d-246a-4817-b958-b0ea32c590f9/saved-items/generations/f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b/parts/part-000001.json",
+      "byteCount": 1456,
+      "recordCount": 1,
+      "sha256": "86cfb91fe30ec84deb8784969b210cb471f49c1e188052494432f24f96abc837",
+      "resourceTypeCounts": {
+        "VIDEO": 1
+      }
+    },
+    {
+      "partNumber": 2,
+      "storagePath": "asdy/persistence/c987539d-246a-4817-b958-b0ea32c590f9/saved-items/generations/f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b/parts/part-000002.json",
+      "byteCount": 1461,
+      "recordCount": 1,
+      "sha256": "1c6746f45d3be819795ee45830ccc63919f35d24c83021aa03e6b9473c782a39",
+      "resourceTypeCounts": {
+        "VIDEO_SHORT": 1
+      }
+    }
+  ]
+}

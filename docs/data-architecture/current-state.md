@@ -1,9 +1,22 @@
-# YouTube Discovery — Phase 0: Repository & Data-Contract Audit
+# YouTube Discovery — Repository & Data-Contract Audit (Current State)
 
 **Document:** `docs/data-architecture/current-state.md`  
 **Audit Date:** 2 November 2026  
-**Auditor:** Antigravity AI Assistant  
-**Status:** Completed & Verified — Authoritative Baseline for Phase 1 Database Design  
+**Implementation Reconciliation:** 5 November 2026  
+**Status:** Completed & Verified — Baseline for Phase 1 Database Design, reconciled against the live repository on 2026-11-05  
+
+---
+
+## 0. Implementation Reconciliation (2026-11-05)
+
+The original Phase 0 audit correctly described the repository at the time, but several storage and persistence statements are now historical. The current codebase is authoritative:
+
+- **Object storage is Cloudflare R2, not Supabase Storage.** Active datasets use `new-youtube-discovery-private` through the NEW Worker (`new-youtube-discovery-api`); historical archives use `old-youtube-discovery-private` through the OLD Worker. Supabase Storage is retired; `src/lib/storage/supabase-storage-backend.ts` is only a compatibility re-export.
+- **The canonical storage owner is `user_profiles.storage_owner_uuid`, never `auth.users.id`.** All NEW R2 paths are rooted at `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/...`; temporary objects use `asdy/temp/<storage_owner_uuid>/...`.
+- **Six Prisma migrations are applied on remote Supabase PostgreSQL**, including `20261104230000_canonical_resource_classification` (applied 2026-11-04/05). The schema contains 19 models (18 canonical + `archived_manifests`).
+- **Canonical resource taxonomy is explicit.** `VIDEO`, `VIDEO_SHORT`, `CHANNEL`, `YOUTUBE_PLAYLIST`, `USER_PLAYLIST`, `SAVED_TITLE`, `SAVED_LINK`, and `SAVED_SEARCH` are persisted as discriminators. `VIDEO_SHORT` requires explicit `/shorts/` evidence; duration and aspect ratio never decide it.
+- **Saved Titles & Links has a first-class page** at `/saved-titles-links`, backed by the local-first `REFERENCES` dataset and mirrored to `saved_references`.
+- **Hydration is snapshot-based and checksum-verified.** Incoming generations replace dataset snapshots, stale local records are removed, pending outbox changes are preserved, and SHA-256 is mandatory.
 
 ---
 
@@ -14,7 +27,7 @@ This document presents the complete repository, data-contract, route, and persis
 The platform operates as a personal, single-administrator metadata intelligence and research system around the official YouTube Data API v3. Access is securely tied to the single administrator account:
 - **Supabase Auth Identity:** `asdy@youtube.discov.com` (with underlying immutable `auth.users.id` UUID).
 - **Relational Data Target:** PostgreSQL on Supabase managed via Prisma 7 (`7.10.1`, pinned).
-- **Object Storage Target:** Supabase Storage private bucket `youtube-discovery` with local `data/storage/` fallback.
+- **Object Storage Target:** Cloudflare R2 private buckets `new-youtube-discovery-private` (active) and `old-youtube-discovery-private` (historical archives), accessed only through dedicated Workers. Local `data/storage/` remains a development fallback.
 - **Local Client Durability:** Local-first IndexedDB stores + atomic outbox queue + last-session recovery.
 
 All existing features, data shapes, YouTube Data API integrations, quota accounting semantics, and historical remote storage objects remain fully protected under this audit.
@@ -30,6 +43,7 @@ The application is structured under Next.js 16.4.2 App Router with React 19.2.4:
 | `/login` | Public Page | Single-administrator authentication | Supabase Auth (`@supabase/ssr`) with fallback | Admin credentials |
 | `/` | Protected Page | System dashboard, product posture, boundaries | Aggregated client/server state | Manifest & quota summaries |
 | `/saved` | Protected Page | Dedicated Saved Items workspace with **Daily Calendar Grouping** (Videos, Channels, Playlists) | Zustand store with local persistence | `NormalizedYouTubeDiscoveryItem[]`, `savedAt` |
+| `/saved-titles-links` | Protected Page | Dedicated Saved Titles & Links workspace for `SAVED_TITLE` / `SAVED_LINK` references | Local-first `REFERENCES` dataset + `saved_references` | Canonical taxonomy records, `recordId`, `savedAt` |
 | `/playlist-manager` | Protected Page | Dedicated Personal Playlist Manager workspace (thumbnail galleries, counts, CRUD) | Server REST `/api/playlists` + Zustand | `UserPlaylistIndexEntry[]` |
 | `/saved/[playlistId]` | Protected Page | Dedicated personal playlist workspace (12 sorts, groups/sections, drag-and-drop, export) | Server REST `/api/playlists/[id]` | `UserPlaylistManifest` |
 | `/saved-searches` | Protected Page | Reusable pinned search queries, quick rerun links, and notes | LocalStorage / Zustand | `SavedSearch[]` |
@@ -107,14 +121,22 @@ POST /api/admin/migrate               -> Protected: idempotent data migration fr
   - Search History: `youtube-discovery/v1/saved-history/<search-id>/manifest.json`
   - Encrypted Managed Keys: `youtube-discovery/v1/api-keys/state.json`
   - Admin Credentials/Sessions: `youtube-discovery/v1/admin/account.json`
-- **Data Preservation Rule:** Remote Blob objects MUST NOT be deleted, truncated, or overwritten until full migration to Supabase Storage is verified and explicitly approved.
+- **Data Preservation Rule:** Remote Blob objects MUST NOT be deleted, truncated, or overwritten. They remain a read-only historical source and are never treated as active application truth.
 
-### 4.2 Supabase Storage (Authoritative Object Store)
-- **Status:** Implemented in `src/lib/storage/supabase-storage-backend.ts`.
-- **Bucket:** Private bucket `youtube-discovery`.
-- **Planned Hierarchical Path Structure:**
-  `<owner-auth-uuid>/persistence/...` and `<owner-auth-uuid>/temp/...`
-- **Fallback:** Transparent fallback to `DiskStorageBackend` (`data/storage/`) for offline/local development when Supabase Storage credentials are unconfigured.
+### 4.2 Cloudflare R2 (Authoritative Object Store)
+
+- **Status:** Implemented in `src/lib/storage/r2-blob-backend.ts` and `src/lib/storage/r2-worker-storage-client.ts`.
+- **Buckets:**
+  - `new-youtube-discovery-private` — active application datasets, immutable generations, manifest parts, and temporary exports (`NEW` Worker: `new-youtube-discovery-api`).
+  - `old-youtube-discovery-private` — historical legacy archives under `asdy/old/...` (`OLD` Worker: `old-youtube-discovery-api`).
+- **Canonical Active Paths:**
+  `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/version.json` and
+  `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/generations/<generation-id>/...`
+- **Canonical Temporary Paths:**
+  `asdy/temp/<storage_owner_uuid>/<syncBatchId>/...` and `asdy/temp/<storage_owner_uuid>/exports/<exportId>/...`
+- **Legacy Read Compatibility:** Historical `<owner-id>/persistence/...` paths remain readable and are never rewritten in place. New writes use only the canonical `asdy/` hierarchy.
+- **Fallback:** Transparent fallback to `DiskStorageBackend` (`data/storage/`) for offline/local development when Worker credentials are unconfigured.
+- **Supabase Storage:** Retired for object persistence. `src/lib/storage/supabase-storage-backend.ts` only re-exports the R2 backend for backward compatibility.
 
 ### 4.3 Browser LocalStorage & Zustand (Client Cache)
 - **`youtube-workspace-store.ts`:**
@@ -133,7 +155,7 @@ POST /api/admin/migrate               -> Protected: idempotent data migration fr
 
 | Domain | Entity | Stable Identifier | Deduplication Rule |
 |---|---|---|---|
-| Saved Items | Video / Shorts-like | `platformItemId` (YouTube Video ID) | Unique per `(itemType, platformItemId)`. Shorts and Videos share the canonical video identity. |
+| Saved Items | Video (`VIDEO`) / Short (`VIDEO_SHORT`) | `platformItemId` (YouTube Video ID) | Unique per `(resourceType, platformItemId)`. `VIDEO_SHORT` requires explicit `/shorts/` URL evidence or an authoritative provider field; duration/aspect ratio never classify a record. |
 | Saved Items | Channel | `platformItemId` (YouTube Channel ID `UC...`) | Unique per `platformItemId`. |
 | Saved Items | YouTube Playlist | `platformItemId` (YouTube Playlist ID `PL...`) | Unique per `platformItemId`. |
 | Personal Playlists | User Playlist | `id` (UUID generated on creation) | Permanent UUID; playlist renames do not alter identity. |
@@ -142,8 +164,33 @@ POST /api/admin/migrate               -> Protected: idempotent data migration fr
 | Search History | Search History Item | `id` (UUID / timestamp ID) | Unique per search run. Preserves full query, settings, counts, and raw manifest. |
 | Saved Searches | Saved Search Preset | `id` (UUID generated on creation) | Unique preset ID. Pinned and sorted independently. |
 | Research Queue | Queued Item | `platformItemId` + `queuedAt` | Unique queued entity. Can coexist with Saved Items and Playlists. |
-| Saved References | Saved Reference Link | `id` (UUID) | Unique reference ID. Accepts arbitrary web URLs and non-YouTube titles. |
+| Saved References | Saved Title (`SAVED_TITLE`) / Saved Link (`SAVED_LINK`) | `recordId` (stable) | Unique per owner + `recordId`. `SAVED_TITLE` may be title-only; `SAVED_LINK` requires a URL. |
 | Managed API Keys | YouTube API Key | `id` (UUID) | Unique per registered key. AES-256-GCM encrypted. Plaintext never stored. |
+
+### 5.1 Canonical Resource Taxonomy (2026)
+
+Resource type is a discriminator, not a UI label. It is persisted on manifest records, database index rows, Worker uploads, R2 parts, hydration, exports, and the Manifest Explorer.
+
+| Resource Type | Meaning | Classification Evidence |
+|---|---|---|
+| `VIDEO` | Standard YouTube video | Video ID / watch URL / authoritative `video` entity |
+| `VIDEO_SHORT` | YouTube Short | Explicit `/shorts/<id>` URL or authoritative provider field only |
+| `CHANNEL` | YouTube channel | `UC...` channel ID / channel URL |
+| `YOUTUBE_PLAYLIST` | Public YouTube playlist | Playlist ID / `playlist?list=` URL |
+| `USER_PLAYLIST` | Personal playlist owned by the user | `user_playlists` record; never confused with a YouTube playlist |
+| `SAVED_TITLE` | Title-only saved reference | `REFERENCES` dataset with a title and no required URL |
+| `SAVED_LINK` | Saved external/bookmark link | `REFERENCES` dataset with a URL |
+| `SAVED_SEARCH` | Saved search preset | `saved_search_presets`; never search history |
+
+Distinct concepts that must not be collapsed:
+
+- Resource type ≠ dataset type (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`).
+- Saved search ≠ search history.
+- User playlist ≠ YouTube playlist.
+- Original title ≠ user custom title.
+- Stable IDs (`recordId`, `resourceType`, `resourceId`, `ownerId`, `datasetId`, `generationId`, `originDeviceId`) are never derived from title, filename, array index, or date.
+
+Records that cannot be classified with reliable evidence are returned as `UNKNOWN`/`LEGACY`, never silently coerced into a plausible type. Historical data is read through compatibility adapters that preserve the original values.
 
 ---
 
@@ -176,8 +223,9 @@ POST /api/admin/migrate               -> Protected: idempotent data migration fr
    - Cross-schema reference: `admin_profiles.auth_user_id` -> `auth.users.id`.
    - Passwords: Never stored or processed in application tables or manifests.
 3. **Storage Security:**
-   - Bucket `youtube-discovery` is strictly private.
-   - Zero public URLs generated. Reads and writes proceed through authenticated server endpoints.
+   - R2 buckets `new-youtube-discovery-private` and `old-youtube-discovery-private` are strictly private.
+   - Zero public URLs are generated. Reads and writes proceed through authenticated server endpoints and HMAC capability tokens.
+   - The NEW Worker enforces owner namespaces (`asdy/persistence/<storage_owner_uuid>/`, `asdy/temp/<storage_owner_uuid>/`), rejects path traversal, validates size/SHA-256, and restricts DELETE to disposable temp objects.
 
 ---
 
@@ -185,12 +233,20 @@ POST /api/admin/migrate               -> Protected: idempotent data migration fr
 
 - **Prisma Version:** `7.10.1` (pinned across `prisma`, `@prisma/client`, and `@prisma/adapter-pg`).
 - **Driver Adapter:** `@prisma/adapter-pg` with `pg.Pool`.
-- **Datasource Configuration:** `prisma.config.ts` loads `DATABASE_URL` (pooled) and `DIRECT_URL` (direct).
-- **Prisma Schema (`prisma/schema.prisma`):** Contains minimal foundation (PostgreSQL datasource + client generator).
-- **Database Status:** Live Supabase database verified `CONNECTED` over TLS.
-- **Migration History Table:** `public._prisma_migrations` is NOT yet initialized (`REGCLASS: null`).
-- **Local Migrations:** `prisma/migrations` does not exist yet. No migrations have been created or applied.
-- **Integrity Statement:** Application domain schema is intentionally deferred to Phase 1 for owner approval before any migrations are created or applied.
+- **Datasource Configuration:** `prisma.config.ts` loads `DATABASE_URL` (pooled) and `DIRECT_URL` (direct), with automatic Session Pooler fallback for IPv6-only Supabase direct hosts.
+- **Prisma Schema (`prisma/schema.prisma`):** 19 models (18 canonical + `archived_manifests`), including canonical resource classification fields.
+- **Database Status:** Live Supabase PostgreSQL 17 verified `CONNECTED` over TLS.
+- **Migration History Table:** `public._prisma_migrations` initialized and synchronized.
+- **Applied Migrations (6):**
+  1. `20261102000000_canonical_v1_4_foundation`
+  2. `20261102220000_phase1_5_security_and_old_archive`
+  3. `20261103150000_canonical_private_storage_bucket`
+  4. `20261103173000_old_and_new_buckets_separation`
+  5. `20261104200000_device_identity_and_origin_metadata`
+  6. `20261104230000_canonical_resource_classification`
+- **Latest additive migration:** adds `saved_items_index.resource_type/resource_id`, `saved_references.record_id/resource_type/resource_id/origin_device_*` and nullable `url`, `saved_search_presets` classification/origin fields, unique `(owner_id, record_id)` guards, and `storage_datasets` unique `(owner_id, dataset_type)`.
+- **No reset was performed.** The migration was applied with `npx prisma migrate deploy`; existing data was preserved.
+- **Integrity Statement:** The live schema and applied migrations are authoritative. Documentation is descriptive; code and migrations win on any disagreement.
 
 ---
 
@@ -198,4 +254,4 @@ POST /api/admin/migrate               -> Protected: idempotent data migration fr
 
 Phase 0 audit is complete and verified against the live repository. All data contracts, boundaries, storage systems, and retention rules have been mapped without executing destructive actions or altering production state.
 
-Proceed to Phase 1: Canonical Database Design, ERD, Data Dictionary, and Manifest Strategy.
+The 2026-11-05 reconciliation updates the storage target to Cloudflare R2, records the six applied migrations, and adds the canonical resource taxonomy and Saved Titles & Links workspace. No historical objects were deleted or rewritten.

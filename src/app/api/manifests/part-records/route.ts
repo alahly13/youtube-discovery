@@ -2,6 +2,11 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import {
+  isOwnerScopedStorageKey,
+  resolveLegacyOwnerIds,
+  resolveStorageOwnerId,
+} from "@/lib/auth/storage-owner";
 import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { getR2WorkerStorageClient } from "@/lib/storage/r2-worker-storage-client";
 import { parseStorageKey } from "@/lib/storage/canonical-paths";
@@ -21,7 +26,13 @@ export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
   const { searchParams } = new URL(request.url);
   const targetPath = searchParams.get("path");
 
@@ -37,11 +48,14 @@ export async function GET(request: Request) {
   const clean = targetPath.replace(/^\/+/, "");
   const parsed = parseStorageKey(clean);
 
-  // Partition check: ensure caller accesses their own partition or admin access
-  const isCanonicalOwner = clean.startsWith(`asdy/persistence/${storageOwnerUuid}/`);
-  const isLegacyOwner = clean.startsWith(`${storageOwnerUuid}/persistence/`);
+  // Strict owner partition isolation. There is no username-based bypass:
+  // every administrator has their own canonical storage partition.
+  const allowedOwners = resolveLegacyOwnerIds(auth.admin);
+  const isAuthorizedOwner =
+    isOwnerScopedStorageKey(clean, allowedOwners) ||
+    (parsed?.ownerId ? allowedOwners.includes(parsed.ownerId) : false);
 
-  if (!isCanonicalOwner && !isLegacyOwner && parsed?.ownerId !== storageOwnerUuid && auth.admin.username !== "asdy") {
+  if (!isAuthorizedOwner) {
     return NextResponse.json(
       { ok: false, error: "Access denied: requested storage path outside caller's authorized partition." },
       { status: 403 }

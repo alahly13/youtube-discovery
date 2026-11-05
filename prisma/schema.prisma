@@ -166,6 +166,7 @@ model StorageDataset {
   save_sync_batches SaveSyncBatch[]
 
   @@unique([owner_id, id])
+  @@unique([owner_id, dataset_type])
   @@index([owner_id, dataset_type])
   @@map("storage_datasets")
 }
@@ -268,6 +269,14 @@ model SavedItemIndex {
   generation_id     String?         @db.Uuid
   manifest_part_id  String?         @db.Uuid
   item_position     Int?
+  /**
+   * Canonical resource discriminator. `entity_type` is a coarse relational
+   * bucket (VIDEO/CHANNEL/PLAYLIST); `resource_type` preserves the exact
+   * taxonomy value (VIDEO_SHORT, YOUTUBE_PLAYLIST, ...). Never infer this from
+   * duration or title.
+   */
+  resource_type     String?         @db.VarChar(32)
+  resource_id       String?         @db.VarChar(128)
 
   owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
@@ -275,6 +284,7 @@ model SavedItemIndex {
   @@index([owner_id, saved_date])
   @@index([owner_id, origin_device_id])
   @@index([owner_id, entity_type])
+  @@index([owner_id, resource_type])
   @@index([owner_id, published_at])
   @@map("saved_items_index")
 }
@@ -367,18 +377,31 @@ model SavedReference {
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   owner_id         String      @db.Uuid
   title            String      @db.VarChar(512)
-  url              String      @db.VarChar(1024)
+  /**
+   * Nullable because a SAVED_TITLE is a legitimate title-only reference.
+   * SAVED_LINK rows must still provide a URL; the API validates that.
+   */
+  url              String?     @db.VarChar(2048)
   notes            String?
   dataset_id       String?     @db.Uuid
   generation_id    String?     @db.Uuid
   manifest_part_id String?     @db.Uuid
   item_position    Int?
+  record_id        String?     @db.VarChar(256)
+  resource_type    String?     @db.VarChar(32)
+  resource_id      String?     @db.VarChar(256)
+  origin_device_id String?     @db.VarChar(128)
+  origin_device_label String?  @db.VarChar(128)
+  saved_at         DateTime    @default(now()) @db.Timestamptz(6)
   created_at       DateTime    @default(now()) @db.Timestamptz(6)
   updated_at       DateTime    @updatedAt @db.Timestamptz(6)
 
   owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
+  @@unique([owner_id, record_id])
   @@index([owner_id, created_at])
+  @@index([owner_id, resource_type])
+  @@index([owner_id, dataset_id])
   @@map("saved_references")
 }
 
@@ -391,12 +414,20 @@ model SavedSearchPreset {
   filter_snapshot Json?
   is_pinned       Boolean     @default(false)
   tags            String[]    @default([])
+  record_id       String?     @db.VarChar(256)
+  resource_type   String?     @db.VarChar(32)
+  resource_id     String?     @db.VarChar(256)
+  origin_device_id String?    @db.VarChar(128)
+  origin_device_label String? @db.VarChar(128)
+  saved_at        DateTime    @default(now()) @db.Timestamptz(6)
   created_at      DateTime    @default(now()) @db.Timestamptz(6)
   updated_at      DateTime    @updatedAt @db.Timestamptz(6)
 
   owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
+  @@unique([owner_id, record_id])
   @@index([owner_id, is_pinned, created_at])
+  @@index([owner_id, resource_type])
   @@map("saved_search_presets")
 }
 

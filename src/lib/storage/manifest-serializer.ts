@@ -3,10 +3,16 @@ import {
   buildPartKey,
   buildManifestKey,
   buildVersionPointerKey,
-  buildTempItemKey,
-  datasetTypeToSlug,
+  buildDatasetRootManifestKey,
+  buildTempExportKey,
   type CanonicalDatasetType,
 } from "./canonical-paths";
+import {
+  RESOURCE_SCHEMA_VERSION,
+  normalizeResourceRecord,
+  summarizeResourceTypes,
+  type ResourceType,
+} from "../resources/resource-taxonomy";
 
 export * from "./canonical-paths";
 
@@ -45,26 +51,30 @@ export interface GenerationDescriptor {
   totalRecords: number;
   totalBytes: number;
   aggregateSha256: string;
+  resourceTypeCounts: Partial<Record<ResourceType, number>>;
   parts: ManifestPartDescriptor[];
 }
 
 /**
  * Builds the canonical physical object path for an immutable manifest part.
  * Formatted as: asdy/persistence/<storageOwnerUuid>/<datasetSlug>/generations/<generationId>/parts/part-<number>.json
+ *
+ * IMPORTANT: `datasetType` must be a canonical dataset type (SAVED_ITEMS,
+ * PLAYLIST, ...). Passing a dataset ID here silently produced wrong paths in
+ * the past; canonical-paths now throws on unknown values instead of guessing.
  */
 export function buildManifestPartStoragePath(
   storageOwnerUuid: string,
-  datasetTypeOrId: string,
+  datasetType: string,
   generationId: string,
   partNumber: number
 ): string {
-  try {
-    return buildPartKey(storageOwnerUuid, datasetTypeOrId as CanonicalDatasetType, generationId, partNumber);
-  } catch {
-    const slug = datasetTypeOrId.toLowerCase().replace(/_/g, "-");
-    const padded = String(partNumber).padStart(6, "0");
-    return `asdy/persistence/${storageOwnerUuid}/${slug}/generations/${generationId}/parts/part-${padded}.json`;
-  }
+  return buildPartKey(
+    storageOwnerUuid,
+    datasetType as CanonicalDatasetType,
+    generationId,
+    partNumber
+  );
 }
 
 /**
@@ -72,15 +82,14 @@ export function buildManifestPartStoragePath(
  */
 export function buildGenerationManifestPath(
   storageOwnerUuid: string,
-  datasetTypeOrId: string,
+  datasetType: string,
   generationId: string
 ): string {
-  try {
-    return buildManifestKey(storageOwnerUuid, datasetTypeOrId as CanonicalDatasetType, generationId);
-  } catch {
-    const slug = datasetTypeOrId.toLowerCase().replace(/_/g, "-");
-    return `asdy/persistence/${storageOwnerUuid}/${slug}/generations/${generationId}/manifest.json`;
-  }
+  return buildManifestKey(
+    storageOwnerUuid,
+    datasetType as CanonicalDatasetType,
+    generationId
+  );
 }
 
 /**
@@ -88,14 +97,9 @@ export function buildGenerationManifestPath(
  */
 export function buildDatasetVersionPointerPath(
   storageOwnerUuid: string,
-  datasetTypeOrId: string
+  datasetType: string
 ): string {
-  try {
-    return buildVersionPointerKey(storageOwnerUuid, datasetTypeOrId as CanonicalDatasetType);
-  } catch {
-    const slug = datasetTypeOrId.toLowerCase().replace(/_/g, "-");
-    return `asdy/persistence/${storageOwnerUuid}/${slug}/version.json`;
-  }
+  return buildVersionPointerKey(storageOwnerUuid, datasetType as CanonicalDatasetType);
 }
 
 /**
@@ -103,10 +107,9 @@ export function buildDatasetVersionPointerPath(
  */
 export function buildDerivedRootManifestPath(
   storageOwnerUuid: string,
-  datasetId: string
+  datasetType: string
 ): string {
-  const slug = datasetId.toLowerCase().replace(/_/g, "-");
-  return `asdy/persistence/${storageOwnerUuid}/${slug}/manifest.json`;
+  return buildDatasetRootManifestKey(storageOwnerUuid, datasetType as CanonicalDatasetType);
 }
 
 /**
@@ -117,7 +120,7 @@ export function buildTemporaryExportPath(
   exportId: string,
   filename: string
 ): string {
-  return `asdy/temp/${storageOwnerUuid}/${exportId}/${filename}`;
+  return buildTempExportKey(storageOwnerUuid, exportId, filename);
 }
 
 /**
@@ -182,17 +185,28 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
   records: T[];
   targetBytes?: number;
   ceilingBytes?: number;
+  createdAt?: string;
 }): GenerationDescriptor {
   const targetBytes = params.targetBytes ?? STORAGE_LIMITS.PART_TARGET_BYTES;
+  const createdAt = params.createdAt || new Date().toISOString();
+
+  // Every serialized record carries the canonical discriminator and stable
+  // identity fields. This is where the taxonomy becomes part of the immutable
+  // storage contract, not just transient UI state.
+  const normalizedRecords = params.records.map((record) =>
+    normalizeResourceRecord(record, { datasetType: params.datasetType })
+  );
 
   const parts: ManifestPartDescriptor[] = [];
   let currentPartNumber = 1;
 
-  // Header template builder
+  // Header template builder. `totalPartsInGeneration` is patched after all
+  // parts are known so the envelope remains self-describing.
   function buildPartEnvelope(items: T[], partNum: number, totalPartsPlaceholder: number): string {
     const payload = {
-      $schema: "https://youtube-discovery.app/schemas/manifest-part-v1.json",
-      schemaVersion: 1,
+      $schema: "https://youtube-discovery.app/schemas/manifest-part-v2.json",
+      schemaVersion: RESOURCE_SCHEMA_VERSION,
+      resourceSchemaVersion: RESOURCE_SCHEMA_VERSION,
       datasetType: params.datasetType,
       datasetId: params.datasetId,
       ownerId: params.ownerId,
@@ -200,16 +214,17 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
       generationId: params.generationId,
       partNumber: partNum,
       totalPartsInGeneration: totalPartsPlaceholder,
-      createdAt: new Date().toISOString(),
+      createdAt,
       recordCount: items.length,
+      resourceTypeCounts: summarizeResourceTypes(items, { datasetType: params.datasetType }),
       items,
     };
     return JSON.stringify(payload);
   }
 
-  // Group items into batches
+  // Group items into batches using exact UTF-8 byte lengths.
   let runningItems: T[] = [];
-  for (const record of params.records) {
+  for (const record of normalizedRecords) {
     const recordBytes = Buffer.byteLength(JSON.stringify(record), "utf8");
     if (recordBytes > STORAGE_LIMITS.MAX_SINGLE_RECORD_BYTES) {
       throw new Error(
@@ -229,7 +244,7 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
       const sha256 = computePartSha256(finalJson);
       const storagePath = buildManifestPartStoragePath(
         params.storageOwnerUuid,
-        params.datasetId,
+        params.datasetType,
         params.generationId,
         currentPartNumber
       );
@@ -250,14 +265,15 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
     }
   }
 
-  // Final remaining items
+  // Final remaining items. An empty dataset still produces one empty part so
+  // a delete-all generation is a real, hydratable snapshot.
   if (runningItems.length > 0 || parts.length === 0) {
     const finalJson = buildPartEnvelope(runningItems, currentPartNumber, 0);
     const byteCount = Buffer.byteLength(finalJson, "utf8");
     const sha256 = computePartSha256(finalJson);
     const storagePath = buildManifestPartStoragePath(
       params.storageOwnerUuid,
-      params.datasetId,
+      params.datasetType,
       params.generationId,
       currentPartNumber
     );
@@ -296,6 +312,9 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
     totalRecords,
     totalBytes,
     aggregateSha256,
+    resourceTypeCounts: summarizeResourceTypes(normalizedRecords, {
+      datasetType: params.datasetType,
+    }),
     parts,
   };
 }

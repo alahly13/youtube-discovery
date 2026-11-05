@@ -13,7 +13,7 @@ import {
  * Provides real-time reactive hydration progress and a manual retry action.
  * ═══════════════════════════════════════════════════════════════════════════
  */
-export function useCloudHydration(ownerId = "asdy-admin", autoStart = true) {
+export function useCloudHydration(ownerId = "", autoStart = true) {
   const [progress, setProgress] = useState<HydrationProgress>(() =>
     cloudHydrationService.getProgress()
   );
@@ -23,7 +23,11 @@ export function useCloudHydration(ownerId = "asdy-admin", autoStart = true) {
       setProgress(p);
     });
 
-    if (autoStart && cloudHydrationService.getProgress().state === "NOT_HYDRATED") {
+    if (
+      autoStart &&
+      ownerId &&
+      cloudHydrationService.getProgress().state === "NOT_HYDRATED"
+    ) {
       cloudHydrationService.hydrateAllDatasets(ownerId).catch(() => {});
     }
 
@@ -33,6 +37,13 @@ export function useCloudHydration(ownerId = "asdy-admin", autoStart = true) {
   }, [ownerId, autoStart]);
 
   const retryHydration = useCallback(() => {
+    if (!ownerId) {
+      return Promise.resolve({
+        success: false,
+        restoredRecords: 0,
+        error: "Canonical storage owner is not resolved yet.",
+      });
+    }
     return cloudHydrationService.hydrateAllDatasets(ownerId, true);
   }, [ownerId]);
 

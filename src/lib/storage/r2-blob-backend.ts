@@ -83,16 +83,37 @@ export class R2StorageBackend implements BlobBackend {
     return pathname.replace(/^\/+/, "");
   }
 
+  /**
+   * Derives the canonical storage owner from a NEW-bucket path.
+   *
+   * NEW Worker capability tokens must carry an owner scope. Deriving it from
+   * the path (instead of a shared default) keeps every backend call inside the
+   * same namespace the Worker will independently enforce. Routes that accept
+   * user-supplied paths still perform their own owner check first.
+   */
+  private resolveOwnerFromPath(pathname: string): string | undefined {
+    const canonical = pathname.match(/^asdy\/(?:persistence|temp)\/([^/]+)/);
+    if (canonical) return canonical[1];
+
+    const legacy = pathname.match(/^([^/]+)\/(?:persistence|temp)\//);
+    if (legacy) return legacy[1];
+
+    return undefined;
+  }
+
   async getBytes(pathname: string): Promise<Buffer> {
     const clean = this.cleanPath(pathname);
     const bucketKind = this.resolveBucketKind(clean);
+    const storageOwnerUuid = this.resolveOwnerFromPath(clean);
 
     if (!this.isWorkerConfigured(bucketKind)) {
       return this.diskFallback.getBytes(clean);
     }
 
     try {
-      const { data } = await this.client.getObject(bucketKind, clean);
+      const { data } = await this.client.getObject(bucketKind, clean, {
+        storageOwnerUuid,
+      });
       return data;
     } catch (err) {
       if (err instanceof BlobNotFoundError) throw err;
@@ -108,13 +129,16 @@ export class R2StorageBackend implements BlobBackend {
   async head(pathname: string): Promise<BlobObjectMeta | null> {
     const clean = this.cleanPath(pathname);
     const bucketKind = this.resolveBucketKind(clean);
+    const storageOwnerUuid = this.resolveOwnerFromPath(clean);
 
     if (!this.isWorkerConfigured(bucketKind)) {
       return this.diskFallback.head(clean);
     }
 
     try {
-      const meta = await this.client.headObject(bucketKind, clean);
+      const meta = await this.client.headObject(bucketKind, clean, {
+        storageOwnerUuid,
+      });
       if (!meta) {
         return this.diskFallback.head(clean);
       }
@@ -141,6 +165,7 @@ export class R2StorageBackend implements BlobBackend {
   ): Promise<BlobObjectMeta> {
     const clean = this.cleanPath(pathname);
     const bucketKind = this.resolveBucketKind(clean);
+    const storageOwnerUuid = this.resolveOwnerFromPath(clean);
     const allowOverwrite = options?.allowOverwrite ?? true;
 
     if (!this.isWorkerConfigured(bucketKind)) {
@@ -160,6 +185,7 @@ export class R2StorageBackend implements BlobBackend {
       const result = await this.client.putObject(bucketKind, clean, data, {
         contentType: options?.contentType || "application/json",
         allowOverwrite,
+        storageOwnerUuid,
       });
 
       return {
@@ -182,6 +208,7 @@ export class R2StorageBackend implements BlobBackend {
   async delete(pathname: string): Promise<void> {
     const clean = this.cleanPath(pathname);
     const bucketKind = this.resolveBucketKind(clean);
+    const storageOwnerUuid = this.resolveOwnerFromPath(clean);
 
     if (!this.isWorkerConfigured(bucketKind)) {
       await this.diskFallback.delete(clean);
@@ -195,7 +222,7 @@ export class R2StorageBackend implements BlobBackend {
         return;
       }
 
-      await this.client.deleteObject(bucketKind, clean);
+      await this.client.deleteObject(bucketKind, clean, { storageOwnerUuid });
       await this.diskFallback.delete(clean).catch(() => {});
     } catch {
       // Deletion of missing objects is idempotent
@@ -205,6 +232,7 @@ export class R2StorageBackend implements BlobBackend {
   async list(prefix: string): Promise<BlobObjectMeta[]> {
     const clean = this.cleanPath(prefix);
     const bucketKind = this.resolveBucketKind(clean);
+    const storageOwnerUuid = this.resolveOwnerFromPath(clean);
 
     if (!this.isWorkerConfigured(bucketKind)) {
       return this.diskFallback.list(clean);
@@ -213,6 +241,7 @@ export class R2StorageBackend implements BlobBackend {
     try {
       const result = await this.client.listObjects(bucketKind, clean, {
         limit: 1000,
+        storageOwnerUuid,
       });
 
       const workerObjects: BlobObjectMeta[] = (result.objects || []).map((o) => ({

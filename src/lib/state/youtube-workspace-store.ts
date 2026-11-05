@@ -87,6 +87,22 @@ import {
 } from "@/lib/config/search-storage-config";
 
 /**
+ * Resolves the local IndexedDB owner partition.
+ *
+ * The old `"asdy-admin"` value is intentionally treated as unset: it was a
+ * shared demo partition, not a real owner. Writes without a resolved owner are
+ * skipped so local data can never be stranded in an invisible partition.
+ */
+function resolveLocalOwnerId(stateOwnerId: string | null | undefined): string | null {
+  const candidate =
+    stateOwnerId && stateOwnerId !== "asdy-admin"
+      ? stateOwnerId
+      : syncCoordinator.getOwnerId();
+  const clean = candidate?.trim();
+  return clean && clean !== "asdy-admin" ? clean : null;
+}
+
+/**
  * Validates whether a persisted search session is still fresh against the configurable TTL
  * and contains valid manifest items.
  */
@@ -116,7 +132,7 @@ export function formatSearchCacheAge(
 export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
   persist(
     (set) => ({
-      currentOwnerId: "asdy-admin",
+      currentOwnerId: "",
       currentManifest: null,
       savedManifestIds: [],
       savedItems: [],
@@ -139,13 +155,13 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         })),
       toggleItemSaved: (item) =>
         set((state) => {
-          const owner = state.currentOwnerId || "asdy-admin";
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
           const isSaved = state.savedItems.some(
             (i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType
           );
           if (isSaved) {
             // Local deletion from IndexedDB and queue DELETE in Outbox
-            if (typeof window !== "undefined") {
+            if (typeof window !== "undefined" && owner) {
               deleteEntityLocally(owner, "SAVED_ITEMS", item.platformItemId)
                 .then(() => syncCoordinator.refreshSummary())
                 .catch(console.error);
@@ -165,7 +181,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           };
 
           // Local persistence into IndexedDB and queue UPSERT in Outbox
-          if (typeof window !== "undefined") {
+          if (typeof window !== "undefined" && owner) {
             saveEntityLocally(owner, "SAVED_ITEMS", item.platformItemId, itemToSave as Record<string, unknown>)
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
@@ -181,8 +197,8 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           createdAt: new Date().toISOString(),
         };
         set((state) => {
-          const owner = state.currentOwnerId || "asdy-admin";
-          if (typeof window !== "undefined") {
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
+          if (typeof window !== "undefined" && owner) {
             saveEntityLocally(owner, "REFERENCES", id, newSearch as unknown as Record<string, unknown>)
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
@@ -195,12 +211,12 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       },
       updateSavedSearch: (id, patch) =>
         set((state) => {
-          const owner = state.currentOwnerId || "asdy-admin";
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
           const updated = state.savedSearches.map((s) =>
             s.id === id ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s
           );
           const found = updated.find((s) => s.id === id);
-          if (found && typeof window !== "undefined") {
+          if (found && typeof window !== "undefined" && owner) {
             saveEntityLocally(owner, "REFERENCES", id, found as unknown as Record<string, unknown>)
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
@@ -209,8 +225,8 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         }),
       deleteSavedSearch: (id) =>
         set((state) => {
-          const owner = state.currentOwnerId || "asdy-admin";
-          if (typeof window !== "undefined") {
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
+          if (typeof window !== "undefined" && owner) {
             deleteEntityLocally(owner, "REFERENCES", id)
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
@@ -233,8 +249,8 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           timestamp: new Date().toISOString(),
         };
         set((state) => {
-          const owner = state.currentOwnerId || "asdy-admin";
-          if (typeof window !== "undefined") {
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
+          if (typeof window !== "undefined" && owner) {
             saveEntityLocally(owner, "SEARCH_HISTORY", id, newItem as unknown as Record<string, unknown>, "APPEND")
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
@@ -248,8 +264,8 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       },
       deleteSearchHistoryItem: (id) =>
         set((state) => {
-          const owner = state.currentOwnerId || "asdy-admin";
-          if (typeof window !== "undefined") {
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
+          if (typeof window !== "undefined" && owner) {
             deleteEntityLocally(owner, "SEARCH_HISTORY", id)
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
@@ -311,13 +327,15 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
   ),
 );
 
-// Automatic client-side owner UUID synchronization on mount
+// Automatic client-side owner UUID synchronization on mount.
+// The canonical storage owner is authoritative; the auth user id is only a
+// compatibility fallback for legacy profiles without a storage owner value.
 if (typeof window !== "undefined") {
   fetch("/api/auth/status")
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
-      if (data && (data.userId || data.storageOwnerUuid)) {
-        const id = data.userId || data.storageOwnerUuid;
+      const id = String(data?.storageOwnerUuid || data?.userId || "").trim();
+      if (id && id !== "asdy-admin") {
         useYouTubeWorkspaceStore.getState().setCurrentOwnerId(id);
       }
     })

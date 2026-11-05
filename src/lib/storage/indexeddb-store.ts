@@ -444,6 +444,283 @@ export async function getLocalEntities<T = Record<string, unknown>>(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Owner Partition Migration (legacy local owner -> canonical storage owner)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LocalOwnerMigrationResult {
+  migratedRecords: number;
+  migratedOperations: number;
+  migratedCatalogEntries: number;
+  migratedJournalEntries: number;
+  migratedWorkspaceSnapshots: number;
+  migratedReminders: number;
+  skippedConflicts: number;
+}
+
+function readAllFromStore<T>(db: IDBDatabase, storeName: string): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([storeName], "readonly");
+    const store = tx.objectStore(storeName);
+    const req = store.getAll();
+    req.onsuccess = () => resolve((req.result as T[]) || []);
+    req.onerror = () => reject(req.error || new Error(`Failed to read ${storeName}`));
+  });
+}
+
+/**
+ * Chooses the freshest timestamp available on a local record. Used only to
+ * decide which copy survives when two owner partitions contain the same
+ * logical entity during a one-time migration.
+ */
+function localRecordFreshness(record: Record<string, unknown>): number {
+  const candidates = [
+    "_updatedAt",
+    "updatedAt",
+    "lastSuccessfulSyncAt",
+    "lastLocalMutationAt",
+    "savedAt",
+    "createdAt",
+    "queuedAt",
+    "addedAt",
+    "timestamp",
+  ];
+  for (const key of candidates) {
+    const value = record[key];
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+/**
+ * Migrates every local-first record from a legacy owner partition to the
+ * canonical storage owner UUID.
+ *
+ * Why this exists:
+ *   Older builds used `"asdy-admin"` or the Supabase auth user id as the
+ *   IndexedDB owner. Cloud writes and hydration use `storage_owner_uuid`.
+ *   Without this migration, previously saved local data becomes invisible to
+ *   the canonical sync pipeline and a fresh generation could overwrite it.
+ *
+ * Safety rules:
+ *   - Runs inside IndexedDB read/write transactions per store.
+ *   - Never deletes a canonical record in favor of an older legacy copy.
+ *   - Pending outbox operations are re-owned, never dropped.
+ *   - Idempotent: re-running with the same arguments is a no-op.
+ */
+export async function migrateLocalOwnerId(
+  fromOwnerId: string,
+  toOwnerId: string
+): Promise<LocalOwnerMigrationResult> {
+  const result: LocalOwnerMigrationResult = {
+    migratedRecords: 0,
+    migratedOperations: 0,
+    migratedCatalogEntries: 0,
+    migratedJournalEntries: 0,
+    migratedWorkspaceSnapshots: 0,
+    migratedReminders: 0,
+    skippedConflicts: 0,
+  };
+
+  const from = fromOwnerId?.trim();
+  const to = toOwnerId?.trim();
+  if (!from || !to || from === to) return result;
+
+  const db = await openLocalDatabase();
+
+  // 1. Dataset projection stores. SAVED_ITEMS is keyed by
+  //    [ownerId, platformItemId]; every other store is keyed by entity id.
+  const datasetStores: Array<{ storeName: string; datasetType: CanonicalDatasetType }> = [
+    { storeName: IDB_STORES.SAVED_ITEMS, datasetType: "SAVED_ITEMS" },
+    { storeName: IDB_STORES.USER_PLAYLISTS, datasetType: "PLAYLIST" },
+    { storeName: IDB_STORES.SEARCH_HISTORY, datasetType: "SEARCH_HISTORY" },
+    { storeName: IDB_STORES.RESEARCH_QUEUE, datasetType: "RESEARCH_QUEUE" },
+    { storeName: IDB_STORES.SAVED_REFERENCES, datasetType: "REFERENCES" },
+  ];
+
+  for (const { storeName, datasetType } of datasetStores) {
+    const allRecords = await readAllFromStore<Record<string, unknown>>(db, storeName);
+    const owned = allRecords.filter((record) => record.ownerId === from);
+    if (owned.length === 0) continue;
+
+    const targetByPlatformId = new Map<string, Record<string, unknown>>();
+    if (datasetType === "SAVED_ITEMS") {
+      for (const record of allRecords) {
+        if (record.ownerId !== to) continue;
+        const platformItemId = String(record.platformItemId ?? record.id ?? "");
+        if (platformItemId) targetByPlatformId.set(platformItemId, record);
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = createReadWriteTransaction(db, [storeName]);
+      const store = tx.objectStore(storeName);
+
+      for (const record of owned) {
+        if (datasetType === "SAVED_ITEMS") {
+          const platformItemId = String(record.platformItemId ?? record.id ?? "");
+          if (!platformItemId) continue;
+          const target = targetByPlatformId.get(platformItemId);
+
+          if (target && localRecordFreshness(target) >= localRecordFreshness(record)) {
+            // The canonical copy is newer; drop only the stale legacy copy.
+            store.delete([from, platformItemId]);
+            result.skippedConflicts += 1;
+            continue;
+          }
+
+          if (target) store.delete([to, platformItemId]);
+          store.delete([from, platformItemId]);
+          store.put({ ...record, ownerId: to, platformItemId });
+          result.migratedRecords += 1;
+          continue;
+        }
+
+        // Id-keyed stores cannot contain two rows with the same key, so the
+        // record being migrated is by definition the only copy.
+        const id = String(record.id ?? "");
+        if (!id) continue;
+        store.put({ ...record, ownerId: to });
+        result.migratedRecords += 1;
+      }
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error(`Failed to migrate ${storeName}`));
+    });
+  }
+
+  // 2. Outbox operations. Ownership must follow the canonical partition or
+  //    `saveAll()` will never see previously queued local changes.
+  {
+    const allOps = await readAllFromStore<PendingOperation>(db, IDB_STORES.PENDING_OPERATIONS);
+    const owned = allOps.filter((op) => op.ownerId === from);
+    if (owned.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = createReadWriteTransaction(db, [IDB_STORES.PENDING_OPERATIONS]);
+        const store = tx.objectStore(IDB_STORES.PENDING_OPERATIONS);
+        for (const op of owned) {
+          store.put({ ...op, ownerId: to });
+          result.migratedOperations += 1;
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Failed to migrate pending operations"));
+      });
+    }
+  }
+
+  // 3. Dataset catalog and legacy sync metadata (keyed by [ownerId, datasetType]).
+  const ownerKeyedStores: Array<{
+    storeName: string;
+    idField: string;
+    counter: "migratedCatalogEntries" | "migratedWorkspaceSnapshots";
+  }> = [
+    { storeName: IDB_STORES.DATASET_CATALOG, idField: "datasetType", counter: "migratedCatalogEntries" },
+    { storeName: IDB_STORES.LOCAL_SYNC_METADATA, idField: "datasetType", counter: "migratedCatalogEntries" },
+    { storeName: IDB_STORES.WORKSPACE_SNAPSHOTS, idField: "route", counter: "migratedWorkspaceSnapshots" },
+  ];
+
+  for (const { storeName, idField, counter } of ownerKeyedStores) {
+    const allRecords = await readAllFromStore<Record<string, unknown>>(db, storeName);
+    const owned = allRecords.filter((record) => record.ownerId === from);
+    if (owned.length === 0) continue;
+
+    const targetByKey = new Map<string, Record<string, unknown>>();
+    for (const record of allRecords) {
+      if (record.ownerId !== to) continue;
+      const key = String(record[idField] ?? "");
+      if (key) targetByKey.set(key, record);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const tx = createReadWriteTransaction(db, [storeName]);
+      const store = tx.objectStore(storeName);
+
+      for (const record of owned) {
+        const key = String(record[idField] ?? "");
+        if (!key) continue;
+        const target = targetByKey.get(key);
+
+        if (target && localRecordFreshness(target) >= localRecordFreshness(record)) {
+          store.delete([from, key]);
+          result.skippedConflicts += 1;
+          continue;
+        }
+
+        store.delete([from, key]);
+        if (target) store.delete([to, key]);
+        store.put({ ...record, ownerId: to });
+        result[counter] += 1;
+      }
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error(`Failed to migrate ${storeName}`));
+    });
+  }
+
+  // 4. Sync journal batches (keyed by syncBatchId).
+  {
+    const batches = await readAllFromStore<SyncJournalBatch>(db, IDB_STORES.SYNC_JOURNAL);
+    const owned = batches.filter((batch) => batch.ownerId === from);
+    if (owned.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = createReadWriteTransaction(db, [IDB_STORES.SYNC_JOURNAL]);
+        const store = tx.objectStore(IDB_STORES.SYNC_JOURNAL);
+        for (const batch of owned) {
+          store.put({ ...batch, ownerId: to });
+          result.migratedJournalEntries += 1;
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Failed to migrate sync journal"));
+      });
+    }
+  }
+
+  // 5. Client-only research reminders. This store has a unique
+  //    [ownerId, videoId] index, so a canonical duplicate must win.
+  {
+    const reminders = await readAllFromStore<Record<string, unknown>>(
+      db,
+      IDB_STORES.LOCAL_RESEARCH_REMINDERS
+    );
+    const owned = reminders.filter((reminder) => reminder.ownerId === from);
+    if (owned.length > 0) {
+      const canonicalVideoIds = new Set(
+        reminders
+          .filter((reminder) => reminder.ownerId === to)
+          .map((reminder) => String(reminder.videoId ?? ""))
+          .filter(Boolean)
+      );
+
+      await new Promise<void>((resolve, reject) => {
+        const tx = createReadWriteTransaction(db, [IDB_STORES.LOCAL_RESEARCH_REMINDERS]);
+        const store = tx.objectStore(IDB_STORES.LOCAL_RESEARCH_REMINDERS);
+        for (const reminder of owned) {
+          const reminderId = String(reminder.reminderId ?? "");
+          const videoId = String(reminder.videoId ?? "");
+          if (!reminderId) continue;
+
+          if (videoId && canonicalVideoIds.has(videoId)) {
+            store.delete(reminderId);
+            result.skippedConflicts += 1;
+            continue;
+          }
+
+          store.put({ ...reminder, ownerId: to });
+          result.migratedReminders += 1;
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Failed to migrate research reminders"));
+      });
+    }
+  }
+
+  return result;
+}
+
 /**
  * Returns pending outbox operations waiting to be synchronized to Cloudflare R2 / Supabase.
  */
@@ -766,10 +1043,28 @@ export async function bulkHydrateDatasetEntities(
   entities: Record<string, unknown>[],
   generationId: string,
   revision: number
-): Promise<{ insertedCount: number }> {
-  if (entities.length === 0) return { insertedCount: 0 };
+): Promise<{ insertedCount: number; removedCount: number; preservedPendingCount: number }> {
   const db = await openLocalDatabase();
   const storeName = getStoreNameForDataset(datasetType);
+
+  // Read the current projection and outbox BEFORE opening the write
+  // transaction. Pending local mutations must win over the remote snapshot
+  // until they are committed; otherwise a hydration could silently revert a
+  // user's unsynced edit.
+  const existing = await getLocalEntities<Record<string, unknown>>(ownerId, datasetType);
+  const pendingOps = (await getPendingOperations(ownerId)).filter(
+    (op) => op.datasetType === datasetType
+  );
+  const pendingEntityIds = new Set(pendingOps.map((op) => op.entityId));
+
+  const entityIdOf = (record: Record<string, unknown>): string =>
+    String(record.platformItemId ?? record.id ?? record.recordId ?? "");
+
+  const incomingIds = new Set(entities.map(entityIdOf).filter(Boolean));
+  const stale = existing.filter((record) => {
+    const id = entityIdOf(record);
+    return Boolean(id) && !incomingIds.has(id) && !pendingEntityIds.has(id);
+  });
 
   return new Promise((resolve, reject) => {
     const tx = createReadWriteTransaction(db, [storeName, IDB_STORES.DATASET_CATALOG, IDB_STORES.LOCAL_SYNC_METADATA]);
@@ -778,7 +1073,20 @@ export async function bulkHydrateDatasetEntities(
     const metaStore = tx.objectStore(IDB_STORES.LOCAL_SYNC_METADATA);
 
     let inserted = 0;
+
+    // Snapshot semantics: remove local records that no longer exist remotely,
+    // unless they still have an unsynced outbox operation.
+    for (const record of stale) {
+      const id = entityIdOf(record);
+      if (!id) continue;
+      entityStore.delete(datasetType === "SAVED_ITEMS" ? [ownerId, id] : id);
+    }
+
     for (const raw of entities) {
+      const id = entityIdOf(raw);
+      // A pending local edit is newer than the remote snapshot by definition.
+      if (id && pendingEntityIds.has(id)) continue;
+
       const item = {
         ...raw,
         ownerId,
@@ -804,11 +1112,11 @@ export async function bulkHydrateDatasetEntities(
       currentLocalGenerationId: generationId,
       lastHydratedGenerationId: generationId,
       lastHydratedRevision: revision,
-      pendingOperationCount: 0,
+      pendingOperationCount: pendingEntityIds.size,
       estimatedBytes: 0,
       lastLocalMutationAt: new Date().toISOString(),
       lastSuccessfulSyncAt: new Date().toISOString(),
-      syncStatus: "SYNCED",
+      syncStatus: pendingEntityIds.size > 0 ? "IDLE" : "SYNCED",
       schemaVersion: 1,
     };
     catStore.put(catEntry);
@@ -828,11 +1136,22 @@ export async function bulkHydrateDatasetEntities(
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-hydration-changed", {
-            detail: { datasetType, insertedCount: inserted, generationId, revision },
+            detail: {
+              datasetType,
+              insertedCount: inserted,
+              removedCount: stale.length,
+              preservedPendingCount: pendingEntityIds.size,
+              generationId,
+              revision,
+            },
           })
         );
       }
-      resolve({ insertedCount: inserted });
+      resolve({
+        insertedCount: inserted,
+        removedCount: stale.length,
+        preservedPendingCount: pendingEntityIds.size,
+      });
     };
     tx.onerror = () => reject(tx.error || new Error("Failed to bulk hydrate entities"));
   });
@@ -873,7 +1192,7 @@ export async function markEntitiesCommitted(
       const key = datasetType === "SAVED_ITEMS" ? [ownerId, id] : id;
       const req = entityStore.get(key);
       req.onsuccess = () => {
-        let item = req.result as Record<string, unknown> | undefined;
+        const item = req.result as Record<string, unknown> | undefined;
         if (!item && datasetType === "SAVED_ITEMS") {
           const directReq = entityStore.get(id);
           directReq.onsuccess = () => {

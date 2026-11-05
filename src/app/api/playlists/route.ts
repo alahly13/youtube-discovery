@@ -10,6 +10,7 @@ import {
 import { createPlaylistSchema } from "@/lib/validation/library-schemas";
 import { emptyPlaylistManifest } from "@/types/library";
 import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
+import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +27,13 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   try {
-    const storageOwnerUuid = guard.admin.userId || "00000000-0000-0000-0000-000000000001";
+    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+    if (!storageOwnerUuid) {
+      return NextResponse.json(
+        { error: "Unable to resolve a canonical storage owner for this session." },
+        { status: 500 }
+      );
+    }
 
     // 1. Try PostgreSQL first
     const dbPlaylists = await listPlaylistsFromDb(storageOwnerUuid);
@@ -51,7 +58,13 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
 
   try {
-    const storageOwnerUuid = guard.admin.userId || "00000000-0000-0000-0000-000000000001";
+    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+    if (!storageOwnerUuid) {
+      return NextResponse.json(
+        { error: "Unable to resolve a canonical storage owner for this session." },
+        { status: 500 }
+      );
+    }
     const body: unknown = await request.json();
     const parsed = createPlaylistSchema.safeParse(body);
     if (!parsed.success) {

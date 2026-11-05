@@ -213,6 +213,20 @@ export function buildVersionPointerKey(
 }
 
 /**
+ * Returns the derived convenience root manifest key for a dataset:
+ * `asdy/persistence/<ownerId>/<datasetSlug>/manifest.json`
+ *
+ * This is a derived/index object only. Immutable generations remain the
+ * authoritative source of truth.
+ */
+export function buildDatasetRootManifestKey(
+  ownerId: string,
+  datasetType: CanonicalDatasetType | string
+): string {
+  return `${buildDatasetPrefix(ownerId, datasetType)}manifest.json`;
+}
+
+/**
  * Returns the canonical historical dataset prefix for legacy data migration:
  * `asdy/persistence/<ownerId>/<datasetSlug>/before-app-updating/`
  */
@@ -307,6 +321,24 @@ export function buildTempItemKey(
   const prefix = buildSyncTempPrefix(ownerId, syncBatchId, datasetType);
   const cleanFile = sanitizeFilename(filename);
   return `${prefix}${cleanFile}`;
+}
+
+/**
+ * Returns the canonical temporary export key for user downloads:
+ * `asdy/temp/<ownerId>/exports/<exportId>/<filename>`
+ *
+ * Exports are always disposable temporary objects; committed generations are
+ * never overwritten or deleted by export flows.
+ */
+export function buildTempExportKey(
+  ownerId: string,
+  exportId: string,
+  filename: string
+): string {
+  const cleanOwner = sanitizeOwnerId(ownerId);
+  const cleanExport = sanitizeId(exportId, "exportId");
+  const cleanFile = sanitizeFilename(filename);
+  return `asdy/temp/${cleanOwner}/exports/${cleanExport}/${cleanFile}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

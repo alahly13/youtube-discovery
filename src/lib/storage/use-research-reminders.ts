@@ -15,33 +15,56 @@ import {
   type ResearchRemindersManifest,
 } from "./research-reminders-store";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
+import { syncCoordinator } from "@/lib/sync/sync-coordinator";
 
-export function useResearchReminders(ownerId = "asdy-admin") {
+export function useResearchReminders(ownerId = "") {
   const [reminders, setReminders] = useState<ResearchReminderItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeOwnerId, setActiveOwnerId] = useState(ownerId);
+  const [activeOwnerId, setActiveOwnerId] = useState(
+    () => ownerId || syncCoordinator.getOwnerId()
+  );
 
-  // Synchronize authenticated ownerId from /api/auth/status if not provided
+  // Synchronize the canonical owner from the coordinator first, then from
+  // `/api/auth/status`. The auth user id is only a legacy fallback; research
+  // reminders are client-only but must still live in the same partition as the
+  // rest of the user's local data.
   useEffect(() => {
     let active = true;
-    if (ownerId === "asdy-admin") {
-      fetch("/api/auth/status")
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (active && data && data.userId) {
-            setActiveOwnerId(data.userId);
-          }
-        })
-        .catch(() => {});
-    } else {
+    if (ownerId) {
       setActiveOwnerId(ownerId);
+      return () => {
+        active = false;
+      };
     }
+
+    const coordinatorOwner = syncCoordinator.getOwnerId();
+    if (coordinatorOwner) {
+      setActiveOwnerId(coordinatorOwner);
+      return () => {
+        active = false;
+      };
+    }
+
+    fetch("/api/auth/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const resolved = String(data?.storageOwnerUuid || data?.userId || "").trim();
+        if (active && resolved && resolved !== "asdy-admin") {
+          setActiveOwnerId(resolved);
+        }
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
   }, [ownerId]);
 
   const loadReminders = useCallback(async () => {
+    if (!activeOwnerId) {
+      setReminders([]);
+      setIsLoading(false);
+      return;
+    }
     try {
       const data = await getAllResearchReminders(activeOwnerId);
       setReminders(data);

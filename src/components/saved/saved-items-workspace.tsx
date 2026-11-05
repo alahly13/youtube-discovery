@@ -186,8 +186,7 @@ export function SavedItemsWorkspace() {
     refresh,
   } = useMergedDataset<NormalizedYouTubeDiscoveryItem>(
     "SAVED_ITEMS",
-    inMemorySavedItems,
-    "asdy-admin"
+    inMemorySavedItems
   );
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -219,11 +218,19 @@ export function SavedItemsWorkspace() {
     }
   };
 
-  // Helper to identify historical "Before App Updating" items
-  const isHistorical = (item: any) =>
-    item.isBeforeAppUpdating === true ||
-    (typeof item.manifestId === "string" && (item.manifestId.includes("legacy") || item.manifestId.includes("before-app-updating"))) ||
-    (typeof item.provenance === "string" && item.provenance.includes("before-app-updating"));
+  // Helper to identify historical "Before App Updating" items. Legacy fields
+  // are read defensively because not every hydrated record declares them.
+  const isHistorical = (item: NormalizedYouTubeDiscoveryItem) => {
+    const record = item as unknown as Record<string, unknown>;
+    return (
+      record.isBeforeAppUpdating === true ||
+      (typeof record.manifestId === "string" &&
+        (record.manifestId.includes("legacy") ||
+          record.manifestId.includes("before-app-updating"))) ||
+      (typeof record.provenance === "string" &&
+        record.provenance.includes("before-app-updating"))
+    );
+  };
 
   const beforeUpdatingItems = useMemo(() => {
     return allItems.filter((item) => isHistorical(item));
@@ -780,7 +787,7 @@ function SavedItemCard({
 
         {/* Top-Right: LOCAL vs CLOUD vs Before App Updating Status Badge */}
         <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
-          {Boolean((rawItem as any).isBeforeAppUpdating) ? (
+          {Boolean(rawItem.isBeforeAppUpdating) ? (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-600 text-white shadow-xs">
               <Sparkles className="h-3 w-3" />
               Before App Updating

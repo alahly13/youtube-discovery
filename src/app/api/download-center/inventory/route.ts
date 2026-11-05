@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import {
+  resolveProfileId,
+  resolveStorageOwnerId,
+} from "@/lib/auth/storage-owner";
 import { getDownloadCenterInventory } from "@/lib/download-center/download-center-service";
 
 /**
@@ -15,8 +19,16 @@ export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const ownerId = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
-  const storageOwnerUuid = auth.admin.userId || "00000000-0000-0000-0000-000000000001";
+  // Database ownership uses the profile UUID; R2 ownership uses the canonical
+  // storage owner UUID. They are different identifiers and must not be mixed.
+  const ownerId = resolveProfileId(auth.admin);
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!ownerId || !storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve the canonical profile/storage owner for this session." },
+      { status: 500 }
+    );
+  }
 
   try {
     const inventory = await getDownloadCenterInventory(ownerId, storageOwnerUuid);

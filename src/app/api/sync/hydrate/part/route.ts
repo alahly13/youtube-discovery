@@ -2,6 +2,11 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
+import {
+  isOwnerScopedStorageKey,
+  resolveLegacyOwnerIds,
+  resolveStorageOwnerId,
+} from "@/lib/auth/storage-owner";
 import { getR2WorkerStorageClient } from "@/lib/storage/r2-worker-storage-client";
 import { parseStorageKey } from "@/lib/storage/canonical-paths";
 
@@ -23,7 +28,13 @@ export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return auth.response;
 
-  const storageOwnerUuid = auth.admin.userId || "asdy-admin";
+  const storageOwnerUuid = resolveStorageOwnerId(auth.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { ok: false, error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
   const { searchParams } = new URL(request.url);
   const targetPath = searchParams.get("path");
 
@@ -36,14 +47,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "Invalid path: traversal characters forbidden." }, { status: 400 });
   }
 
-  // Owner partition isolation check
-  const parsed = parseStorageKey(targetPath);
+  // Owner partition isolation check. Historical owner identifiers are allowed
+  // for reads only; the Worker independently enforces the same namespace.
   const clean = targetPath.replace(/^\/+/, "");
+  const allowedOwners = resolveLegacyOwnerIds(auth.admin);
+  const parsed = parseStorageKey(clean);
 
-  const isCanonicalOwner = clean.startsWith(`asdy/persistence/${storageOwnerUuid}/`);
-  const isLegacyOwner = clean.startsWith(`${storageOwnerUuid}/persistence/`);
+  const isAuthorizedOwner =
+    isOwnerScopedStorageKey(clean, allowedOwners) ||
+    (parsed?.ownerId ? allowedOwners.includes(parsed.ownerId) : false);
 
-  if (!isCanonicalOwner && !isLegacyOwner && parsed?.ownerId !== storageOwnerUuid) {
+  if (!isAuthorizedOwner) {
     return NextResponse.json(
       { ok: false, error: "Access denied: requested storage path outside caller's authorized partition." },
       { status: 403 }

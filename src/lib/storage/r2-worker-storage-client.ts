@@ -84,6 +84,30 @@ export interface BatchUploadResult {
   receipts: BatchUploadReceipt[];
 }
 
+export interface BatchVerifyItemInput {
+  key: string;
+  sha256: string;
+  byteCount?: number;
+}
+
+export interface BatchVerifyFailure {
+  key: string;
+  reason: string;
+  expectedSha256?: string;
+  actualSha256?: string;
+  expectedBytes?: number;
+  actualBytes?: number;
+}
+
+export interface BatchVerifyResult {
+  ok: boolean;
+  batchId: string;
+  verifiedCount: number;
+  failedCount: number;
+  failures: BatchVerifyFailure[];
+  verified: Array<{ key: string; size: number; sha256: string }>;
+}
+
 export class R2WorkerStorageClient {
   private newWorkerUrl: string;
   private oldWorkerUrl: string;
@@ -484,17 +508,28 @@ export class R2WorkerStorageClient {
     return this.headObject("NEW", key, { storageOwnerUuid });
   }
 
-  async listNewObjects(prefix?: string, cursor?: string, limit?: number) {
-    return this.listObjects("NEW", prefix, { cursor, limit });
+  async listNewObjects(
+    prefix?: string,
+    cursor?: string,
+    limit?: number,
+    storageOwnerUuid?: string
+  ) {
+    return this.listObjects("NEW", prefix, { cursor, limit, storageOwnerUuid });
   }
 
   async deleteTempObject(key: string, storageOwnerUuid?: string) {
-    if (!key.includes("/temp/")) {
+    // Only canonical disposable temp objects are eligible. The Worker also
+    // enforces the owner namespace; this is defense in depth.
+    const cleanKey = key.replace(/^\/+/, "");
+    const isCanonicalTemp =
+      cleanKey.startsWith("asdy/temp/") ||
+      (Boolean(storageOwnerUuid) && cleanKey.startsWith(`${storageOwnerUuid}/temp/`));
+    if (!isCanonicalTemp) {
       throw new Error(
-        "Only temporary uncommitted objects under /temp/ are eligible for deletion."
+        "Only temporary uncommitted objects under asdy/temp/<owner>/ are eligible for deletion."
       );
     }
-    return this.deleteObject("NEW", key, { storageOwnerUuid });
+    return this.deleteObject("NEW", cleanKey, { storageOwnerUuid });
   }
 
   async uploadOldManifest(
@@ -610,6 +645,100 @@ export class R2WorkerStorageClient {
       if (err instanceof BlobUnavailableError) throw err;
       throw new BlobUnavailableError(
         `Failed to execute batch upload to Cloudflare R2 Worker: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+
+  /**
+   * Verifies that every uploaded object exists with the expected SHA-256 and
+   * byte count. The Worker re-reads each object and recomputes the digest, so
+   * this is an independent server-side proof rather than a client assertion.
+   */
+  async verifyBatch(
+    batchId: string,
+    items: Array<BatchUploadItemInput | BatchVerifyItemInput>,
+    options?: {
+      targetPrefix?: string;
+      storageOwnerUuid?: string;
+    }
+  ): Promise<BatchVerifyResult> {
+    if (items.length === 0) {
+      return {
+        ok: true,
+        batchId,
+        verifiedCount: 0,
+        failedCount: 0,
+        failures: [],
+        verified: [],
+      };
+    }
+
+    const cleanItems = items.map((item) => {
+      const cleanKey = item.key.replace(/^\/+/, "");
+      const buffer =
+        "data" in item && item.data !== undefined
+          ? typeof item.data === "string"
+            ? Buffer.from(item.data, "utf8")
+            : item.data
+          : null;
+      const sha256 = item.sha256 || (buffer ? this.computeSha256(buffer) : "");
+      if (!sha256) {
+        throw new Error(`verifyBatch requires a SHA-256 digest for '${cleanKey}'.`);
+      }
+      return {
+        key: cleanKey,
+        sha256,
+        byteCount: ("byteCount" in item ? item.byteCount : undefined) ?? buffer?.length,
+      };
+    });
+
+    const prefix =
+      options?.targetPrefix || cleanItems[0].key.split("/").slice(0, 3).join("/");
+    const allowedKeys = cleanItems.map((item) => item.key);
+
+    const token = signCapabilityToken({
+      bucketKind: "NEW",
+      operation: "batch_verify",
+      key: prefix,
+      batchId,
+      allowedKeys,
+      storageOwnerUuid: options?.storageOwnerUuid,
+      ttlSeconds: 180,
+    });
+
+    const url = `${this.getWorkerUrl("NEW")}/v1/batches/verify`;
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          batchId,
+          targetPrefix: prefix,
+          items: cleanItems,
+        }),
+        signal: AbortSignal.timeout(120000),
+      });
+
+      // A verification failure is a structured 409, not an infrastructure
+      // error. Parse it so callers can report exactly which objects failed.
+      if (!res.ok && res.status !== 409) {
+        const errorText = await res.text();
+        throw new BlobUnavailableError(
+          `Worker batch verification failed (${res.status}): ${errorText}`
+        );
+      }
+
+      return (await res.json()) as BatchVerifyResult;
+    } catch (err) {
+      if (err instanceof BlobUnavailableError) throw err;
+      throw new BlobUnavailableError(
+        `Failed to execute batch verification on Cloudflare R2 Worker: ${
           err instanceof Error ? err.message : String(err)
         }`
       );

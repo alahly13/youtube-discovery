@@ -1,0 +1,43 @@
+{
+  "$schema": "https://youtube-discovery.app/schemas/manifest-part-v2.json",
+  "schemaVersion": 2,
+  "resourceSchemaVersion": 2,
+  "datasetType": "SAVED_ITEMS",
+  "datasetId": "8b2f4c1a-3d6e-4a7b-9c10-5e6f7a8b9c0d",
+  "ownerId": "c129bb2a-0f40-49d8-b8c8-42424d44cf3e",
+  "storageOwnerUuid": "c987539d-246a-4817-b958-b0ea32c590f9",
+  "generationId": "f1e2d3c4-b5a6-4978-8a9b-0c1d2e3f4a5b",
+  "partNumber": 2,
+  "totalPartsInGeneration": 2,
+  "createdAt": "2026-11-05T12:00:00.000Z",
+  "recordCount": 1,
+  "resourceTypeCounts": {
+    "VIDEO_SHORT": 1
+  },
+  "items": [
+    {
+      "recordId": "video_short:AbCdEf12345",
+      "resourceType": "VIDEO_SHORT",
+      "resourceId": "AbCdEf12345",
+      "classificationSource": "explicit_url",
+      "classificationEvidence": "Explicit /shorts/ URL",
+      "platformItemId": "AbCdEf12345",
+      "entityType": "video",
+      "title": "Example Short Title",
+      "channelTitle": "Example Channel",
+      "url": "https://www.youtube.com/shorts/AbCdEf12345",
+      "thumbnailUrl": "https://i.ytimg.com/vi/AbCdEf12345/hqdefault.jpg",
+      "isShortsLike": true,
+      "isAgeRestricted": false,
+      "publishedAt": "2025-03-20T09:30:00Z",
+      "viewsCount": 0,
+      "likesCount": 0,
+      "commentsCount": 0,
+      "durationSeconds": 42,
+      "savedAt": "2026-11-05T10:16:00Z",
+      "savedDate": "2026-11-05",
+      "originDeviceId": "dev_576eefe91b4e46bc",
+      "originDeviceLabel": "Main Research Rig"
+    }
+  ]
+}

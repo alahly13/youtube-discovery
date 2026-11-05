@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
+import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
 import {
   deleteUserPlaylist,
   readUserPlaylist,
@@ -52,7 +53,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (!guard.ok) return guard.response;
 
   try {
-    const storageOwnerUuid = guard.admin.userId || "00000000-0000-0000-0000-000000000001";
+    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+    if (!storageOwnerUuid) {
+      return NextResponse.json(
+        { error: "Unable to resolve a canonical storage owner for this session." },
+        { status: 500 }
+      );
+    }
     const { id } = await params;
     const body: unknown = await request.json();
 
@@ -147,7 +154,13 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (!guard.ok) return guard.response;
 
   try {
-    const storageOwnerUuid = guard.admin.userId || "00000000-0000-0000-0000-000000000001";
+    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+    if (!storageOwnerUuid) {
+      return NextResponse.json(
+        { error: "Unable to resolve a canonical storage owner for this session." },
+        { status: 500 }
+      );
+    }
     const { id } = await params;
 
     // 1. Delete from R2 / storage backend

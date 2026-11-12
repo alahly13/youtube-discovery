@@ -495,7 +495,7 @@ Forbidden public secrets:
 - Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation).
 - Remote Vercel Blob objects remain safely in the remote store and can be imported to Cloudflare R2 once credentials are provided; zero deletion policy preserved.
 - Database access is direct to Supabase PostgreSQL 17; all 19 canonical models are active and all 6 migrations are synchronized.
-- Hardened Cloudflare Workers are deployed live: `new-youtube-discovery-api` (Version `8640983b-3962-4ba4-90c9-3f6e1b927ca7`) and `old-youtube-discovery-api` (Version `e07d8a93-8af7-4cd8-831e-9069b9a0a1d1`).
+- Hardened Cloudflare Workers are deployed live: `new-youtube-discovery-api` (Version `8c575046-ab33-4d38-b7a3-2f8ee819dbbc`) and `old-youtube-discovery-api` (Version `fc9ef5f7-12b6-4dd3-b351-dce066886480`).
 - Hydration fails closed when a part lacks a valid SHA-256 checksum. Legacy parts written before checksum enforcement are not hydratable through the strict path.
 - Targeted ESLint across all 29 touched/new stabilization files passes with 0 errors (25 pre-existing unused-import/directive warnings remain). Full-repository lint still has pre-existing unrelated issues in untouched files.
 - Functional, browser E2E, and real cloud save/hydrate/migration round-trip testing remain for the user to perform cleanly; `next build` requires removing stale `BUILTIN\Administrators`-owned `.next` files in an elevated shell on Windows.
@@ -671,8 +671,8 @@ Latest verification results on 2026-11-11 (Architecture Stabilization, Persisten
 - `npx tsc --noEmit --incremental false`: passed (0 TypeScript errors across entire repository).
 - Targeted ESLint (`node ./node_modules/eslint/bin/eslint.js` across 29 changed/added files): passed (0 errors, 25 pre-existing unused-import/directive warnings).
 - Cloudflare Workers dry-run & live deploy (`wrangler deploy`):
-  - `new-youtube-discovery-api`: live Version `8640983b-3962-4ba4-90c9-3f6e1b927ca7`.
-  - `old-youtube-discovery-api`: live Version `e07d8a93-8af7-4cd8-831e-9069b9a0a1d1`.
+  - `new-youtube-discovery-api`: live Version `8c575046-ab33-4d38-b7a3-2f8ee819dbbc` (`remote: true`).
+  - `old-youtube-discovery-api`: live Version `fc9ef5f7-12b6-4dd3-b351-dce066886480` (`remote: true`).
 - Blocked check: `npm run build` (`env:validate` + `prisma generate` + `next.config.ts` succeeded) failed at `next build` unlink (`EPERM` inside stale `.next\build\` owned by `BUILTIN\Administrators` while shell runs un-elevated as `WE\asd`). Functional, browser E2E, real Cloud R2 uploads/syncs, and `npm run test:*` suites were intentionally left for the user to run per task rules.
 
 

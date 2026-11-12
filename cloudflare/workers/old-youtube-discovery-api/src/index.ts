@@ -52,7 +52,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
 
 // Helper: Base64URL decode to Uint8Array
 function base64UrlDecode(str: string): Uint8Array {
-  let base64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  let base64 = str.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
   while (base64.length % 4) {
     base64 += "=";
   }
@@ -215,7 +215,7 @@ function sanitizeKey(raw: string): string {
   return key;
 }
 
-export default {
+const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const cors = getCorsHeaders(request, env);
 
@@ -413,6 +413,7 @@ export default {
             etag: uploadedObj.httpEtag,
             version: uploadedObj.version,
             uploaded: uploadedObj.uploaded.toISOString(),
+            sha256: computedHex,
           },
           200,
           cors
@@ -497,7 +498,10 @@ export default {
         // Safety enforcement: Historical committed manifests can NEVER be deleted via REST
         if (!key.includes("/temp/")) {
           return jsonResponse(
-            { error: "Permanent historical archive manifests cannot be deleted via Worker API. Deletion is rejected." },
+            {
+              code: "WORKER_FORBIDDEN",
+              error: "Permanent historical archive manifests cannot be deleted via Worker API. Deletion is rejected.",
+            },
             403,
             cors
           );
@@ -508,6 +512,8 @@ export default {
       }
     }
 
-    return jsonResponse({ error: "Method not allowed or route not found." }, 404, cors);
+    return jsonResponse({ code: "WORKER_ROUTE_NOT_FOUND", error: "Method not allowed or route not found." }, 404, cors);
   },
 };
+
+export default worker;

@@ -4492,3 +4492,35 @@ No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
 
+---
+
+## Entry — 2026-11-12 — Add `remote: true` to Wrangler R2 Bindings, Worker Code Enhancements & Live Redeployment
+
+- **Date/time:** 2026-11-12 21:35 UTC+02
+- **Agent/model:** Antigravity
+- **Task summary:** Added `"remote": true` to `r2_buckets` bindings in both `wrangler.jsonc` files (direct remote R2 bucket connection during `wrangler dev`), enhanced worker code (named exports resolving ESLint `import/no-anonymous-default-export`, whitespace-safe `base64UrlDecode` in OLD worker, receipt `sha256` in OLD worker PUT, structured error codes across both workers), redeployed both workers live to Cloudflare, and pushed to GitHub.
+- **Reason/root cause:** User requested adding `"remote": true` to both `wrangler.jsonc` files, code enhancements, and redeploying.
+- **Files changed:**
+  - `cloudflare/workers/new-youtube-discovery-api/wrangler.jsonc`: Added `"remote": true` to `NEW_BUCKET` R2 binding.
+  - `cloudflare/workers/old-youtube-discovery-api/wrangler.jsonc`: Added `"remote": true` to `OLD_BUCKET` R2 binding.
+  - `cloudflare/workers/new-youtube-discovery-api/src/index.ts`: Converted default export to named `const worker = { ... }; export default worker;` (fixing ESLint warning), added structured `code: "WORKER_INVALID_REQUEST"` / `code: "WORKER_FORBIDDEN"` error fields.
+  - `cloudflare/workers/old-youtube-discovery-api/src/index.ts`: Converted default export to named `const worker = { ... }; export default worker;` (fixing ESLint warning), added whitespace strip `.replace(/\s+/g, "")` to `base64UrlDecode`, added `sha256: computedHex` to PUT upload receipts, added structured error codes (`WORKER_FORBIDDEN`, `WORKER_ROUTE_NOT_FOUND`).
+  - `youtube_discovery_ledger.md`: Updated deployed worker versions and notes.
+- **Architecture impact:** Enables direct remote Cloudflare R2 bucket access for local Wrangler development (`wrangler dev`) while keeping production runtime behavior 100% intact.
+- **Environment impact:** None.
+- **Database/migration impact:** None.
+- **YouTube API/quota impact:** Zero calls.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `npx tsc --noEmit --incremental false`: PASSED (0 errors).
+  - Targeted ESLint (`node ./node_modules/eslint/bin/eslint.js` on both worker files): PASSED (0 errors, 0 warnings).
+  - `wrangler deploy --dry-run` on both configs: PASSED.
+  - Live Cloudflare deployment (`wrangler deploy`):
+    - `new-youtube-discovery-api`: Deployed Version ID `8c575046-ab33-4d38-b7a3-2f8ee819dbbc` (`https://new-youtube-discovery-api.elmahdyabdulla208.workers.dev`).
+    - `old-youtube-discovery-api`: Deployed Version ID `fc9ef5f7-12b6-4dd3-b351-dce066886480` (`https://old-youtube-discovery-api.elmahdyabdulla208.workers.dev`).
+- **Blocked checks, if any:** None.
+- **Remaining risks/limitations:** None.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.
+

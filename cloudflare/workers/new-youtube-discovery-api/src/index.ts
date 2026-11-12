@@ -305,7 +305,7 @@ function isMutableIndexKey(key: string): boolean {
   return key.endsWith("/version.json") || key.endsWith("/manifest.json");
 }
 
-export default {
+const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const cors = getCorsHeaders(request, env);
 
@@ -426,7 +426,7 @@ export default {
           !/^[A-Za-z0-9._:-]{1,128}$/.test(body.batchId)
         ) {
           return jsonResponse(
-            { error: "Missing or invalid batchId. Expected 1-128 safe characters." },
+            { code: "WORKER_INVALID_REQUEST", error: "Missing or invalid batchId. Expected 1-128 safe characters." },
             400,
             cors
           );
@@ -434,7 +434,7 @@ export default {
 
         if (!Array.isArray(body.items) || body.items.length === 0) {
           return jsonResponse(
-            { error: "Missing required field: non-empty items array." },
+            { code: "WORKER_INVALID_REQUEST", error: "Missing required field: non-empty items array." },
             400,
             cors
           );
@@ -442,7 +442,7 @@ export default {
 
         if (body.items.length > MAX_BATCH_ITEMS) {
           return jsonResponse(
-            { error: `Batch item count (${body.items.length}) exceeds maximum limit of ${MAX_BATCH_ITEMS} items per batch.` },
+            { code: "WORKER_INVALID_REQUEST", error: `Batch item count (${body.items.length}) exceeds maximum limit of ${MAX_BATCH_ITEMS} items per batch.` },
             400,
             cors
           );
@@ -1022,7 +1022,7 @@ export default {
         const deleteOwner = authCheck.claims.storage_owner_uuid;
         if (!isCanonicalTempKey(key, deleteOwner)) {
           return jsonResponse(
-            { error: "Only temporary objects under asdy/temp/<owner>/ may be deleted via Worker API." },
+            { code: "WORKER_FORBIDDEN", error: "Only temporary objects under asdy/temp/<owner>/ may be deleted via Worker API." },
             403,
             cors
           );
@@ -1033,6 +1033,8 @@ export default {
       }
     }
 
-    return jsonResponse({ error: "Method not allowed or route not found." }, 404, cors);
+    return jsonResponse({ code: "WORKER_ROUTE_NOT_FOUND", error: "Method not allowed or route not found." }, 404, cors);
   },
 };
+
+export default worker;

@@ -29,10 +29,10 @@ User research data is protected by strict local durability:
 
 ---
 
-## 2. IndexedDB Local Database Schema (`youtube_discovery_local_v1`)
+## 2. IndexedDB Local Database Schema (`youtube_discovery_local_v1`, Version `5`)
 
 ```text
-IndexedDB: youtube_discovery_local_v1
+IndexedDB: youtube_discovery_local_v1 (v5 — additive upgrade, zero record loss)
 ├── entities_saved_items        (Key: [ownerId, platformItemId], Index: savedDate, entityType)
 ├── entities_user_playlists     (Key: id, Index: [ownerId, displayOrder])
 ├── entities_playlist_groups    (Key: id, Index: [playlistId, position])
@@ -42,11 +42,19 @@ IndexedDB: youtube_discovery_local_v1
 ├── entities_saved_searches     (Key: id, Index: [ownerId, isPinned, title])
 ├── entities_search_history     (Key: id, Index: [ownerId, executedAt])
 ├── workspace_snapshots         (Key: [ownerId, route], value: active filters/query/state)
-├── pending_operations          (Key: operationId, Index: [ownerId, datasetId, sequenceNumber], status)
-├── local_sync_metadata         (Key: [ownerId, datasetId], value: currentLocalSequence, lastCloudRevision)
-└── local_research_reminders    (Key: id, Index: ownerId, [ownerId, videoId], [ownerId, status], [ownerId, addedAt])
-                                [100% Client-Local, Excluded from Outbox & Cloud Sync]
+├── pending_operations          (Key: operationId, Index: ownerId, [ownerId, datasetType], status)
+├── local_sync_metadata         (Key: [ownerId, datasetType], value: lastCommittedRevision/GenId)
+├── local_dataset_catalog       (Key: [ownerId, datasetType], syncStatus/revisions/hydration cursors)
+├── sync_journal                (Key: syncBatchId, durable cloud batch receipts & recovery)
+├── sync_leases                 (Key: leaseName, multi-tab mutex fallback)
+├── undo_redo_commands          (v5 — Key: commandId, persistent owner+device Undo/Redo log)
+├── undo_redo_state             (v5 — Key: [ownerId, deviceId], active Undo/Redo cursor)
+├── legacy_migration_staging    (v5 — Key: stagingId, staged legacy backups before Cloud upload)
+└── local_research_reminders    (Key: reminderId, 100% Client-Local, NEVER synced to Cloud)
 ```
+
+- **Undo/Redo & Save to Cloud Checkpoint:** Pre-commit local edits stage in IndexedDB and execute inside `undoRedoService`. On `Save to Cloud R2`, commands transition to `SYNCED_CLOUD` without discarding history; undoing a committed edit later emits a NEW local compensating operation rather than rewriting immutable R2 generations.
+- **Structured Save Receipts (`src/lib/sync/save-receipt.ts`):** Every cloud save tracks `SaveStatusStage` (`LOCAL_SAVED`, `QUEUED_FOR_SYNC`, `SYNCING`, `UPLOADED_UNVERIFIED`, `R2_VERIFIED`, `DATABASE_COMMITTING`, `CLOUD_COMMITTED`, `CLEANUP_PENDING`, `FAILED`, `NEEDS_ATTENTION`, `RECOVERY_REQUIRED`) and explicit `SaveErrorCategory`.
 
 ---
 

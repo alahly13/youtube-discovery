@@ -20,6 +20,16 @@ import {
   validateResourceRecord,
   type ResourceType,
 } from "@/lib/resources/resource-taxonomy";
+import {
+  toEntryUuid,
+  toGroupUuid,
+  toPlaylistUuid,
+} from "@/lib/playlists/playlist-db-service";
+import {
+  classifyHttpOrErrorCategory,
+  type SaveErrorCategory,
+  type SaveStatusStage,
+} from "@/lib/sync/save-receipt";
 import type { Prisma } from "@prisma/client";
 
 /**
@@ -108,11 +118,34 @@ interface DatasetSyncResult {
   revision: number;
   recordsCount: number;
   partsCount: number;
+  bytesUploaded: number;
+  aggregateSha256: string;
+  verifiedCount: number;
+  manifestPath?: string;
+  partPaths?: string[];
   resourceTypeCounts: Partial<Record<ResourceType, number>>;
   syncedOperationIds: string[];
   syncedEntityIds: string[];
   idempotentReplay: boolean;
   versionPointerStatus: "WRITTEN" | "FAILED" | "DEFERRED";
+}
+
+class StageSyncError extends Error {
+  public readonly errorCategory: SaveErrorCategory;
+  public readonly failedStage: SaveStatusStage;
+  public readonly httpStatus: number;
+  constructor(
+    message: string,
+    errorCategory: SaveErrorCategory,
+    failedStage: SaveStatusStage,
+    httpStatus = 500
+  ) {
+    super(message);
+    this.name = "StageSyncError";
+    this.errorCategory = errorCategory;
+    this.failedStage = failedStage;
+    this.httpStatus = httpStatus;
+  }
 }
 
 class RevisionConflictError extends Error {
@@ -551,6 +584,287 @@ async function indexReferences(
   });
 }
 
+async function indexPlaylists(
+  tx: Prisma.TransactionClient,
+  params: {
+    ownerId: string;
+    records: Record<string, unknown>[];
+  }
+): Promise<void> {
+  const activePlaylistUuids: string[] = [];
+
+  for (let pIdx = 0; pIdx < params.records.length; pIdx++) {
+    const rec = params.records[pIdx];
+    const playlistMeta =
+      rec.playlist && typeof rec.playlist === "object"
+        ? (rec.playlist as Record<string, unknown>)
+        : rec;
+    const rawId = readString(playlistMeta, "id", "recordId") || readString(rec, "id", "recordId");
+    if (!rawId) continue;
+
+    const playlistUuid = toPlaylistUuid(rawId);
+    activePlaylistUuids.push(playlistUuid);
+
+    const groups = Array.isArray(rec.groups)
+      ? (rec.groups as Array<Record<string, unknown>>)
+      : [];
+    const items = Array.isArray(rec.items)
+      ? (rec.items as Array<Record<string, unknown>>)
+      : [];
+
+    const thumbnails: string[] = [];
+    for (const it of items) {
+      const snap = it.snapshot as Record<string, unknown> | undefined;
+      const thumb = snap ? readString(snap, "thumbnailUrl") : null;
+      if (thumb && !thumbnails.includes(thumb) && thumbnails.length < 4) {
+        thumbnails.push(thumb);
+      }
+    }
+
+    const title = (readString(playlistMeta, "name", "title") || "Untitled Playlist").slice(0, 255);
+    const description = readString(playlistMeta, "description");
+    const createdAt = parseDate(playlistMeta.createdAt) || new Date();
+    const updatedAt = parseDate(playlistMeta.updatedAt) || new Date();
+
+    await tx.userPlaylist.upsert({
+      where: { owner_id_id: { owner_id: params.ownerId, id: playlistUuid } },
+      create: {
+        id: playlistUuid,
+        owner_id: params.ownerId,
+        title,
+        description,
+        display_order: pIdx,
+        total_items_count: items.length,
+        thumbnail_urls: thumbnails,
+        created_at: createdAt,
+        updated_at: updatedAt,
+      },
+      update: {
+        title,
+        description,
+        display_order: pIdx,
+        total_items_count: items.length,
+        thumbnail_urls: thumbnails,
+        updated_at: updatedAt,
+      },
+    });
+
+    const activeGroupUuids: string[] = [];
+    for (let gIdx = 0; gIdx < groups.length; gIdx++) {
+      const g = groups[gIdx];
+      const gId = readString(g, "id");
+      if (!gId) continue;
+      const gUuid = toGroupUuid(gId);
+      activeGroupUuids.push(gUuid);
+      const gTitle = (readString(g, "title", "name") || "Section").slice(0, 255);
+      const gNotes = readString(g, "description", "notes");
+      const gPos = typeof g.position === "number" ? g.position : gIdx;
+
+      await tx.userPlaylistGroup.upsert({
+        where: { playlist_id_id: { playlist_id: playlistUuid, id: gUuid } },
+        create: {
+          id: gUuid,
+          owner_id: params.ownerId,
+          playlist_id: playlistUuid,
+          title: gTitle,
+          notes: gNotes,
+          position: gPos,
+          is_collapsed: Boolean(g.isCollapsed),
+          created_at: parseDate(g.createdAt) || createdAt,
+          updated_at: parseDate(g.updatedAt) || updatedAt,
+        },
+        update: {
+          title: gTitle,
+          notes: gNotes,
+          position: gPos,
+          is_collapsed: Boolean(g.isCollapsed),
+          updated_at: parseDate(g.updatedAt) || updatedAt,
+        },
+      });
+    }
+
+    await tx.userPlaylistGroup.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        playlist_id: playlistUuid,
+        ...(activeGroupUuids.length > 0 ? { id: { notIn: activeGroupUuids } } : {}),
+      },
+    });
+
+    const activeEntryUuids: string[] = [];
+    for (let eIdx = 0; eIdx < items.length; eIdx++) {
+      const it = items[eIdx];
+      const entryId = readString(it, "entryId", "id");
+      if (!entryId) continue;
+      const entryUuid = toEntryUuid(entryId);
+      activeEntryUuids.push(entryUuid);
+
+      const rawGroupId = readString(it, "groupId");
+      const mappedGroupUuid = rawGroupId ? toGroupUuid(rawGroupId) : null;
+      const validGroupUuid =
+        mappedGroupUuid && activeGroupUuids.includes(mappedGroupUuid) ? mappedGroupUuid : null;
+
+      const isYoutube = it.kind === "youtube";
+      const yKind = readString(it, "youtubeKind");
+      let entityType: "VIDEO" | "CHANNEL" | "PLAYLIST" | "CUSTOM" = "CUSTOM";
+      if (isYoutube) {
+        if (yKind === "channel") entityType = "CHANNEL";
+        else if (yKind === "youtube_playlist") entityType = "PLAYLIST";
+        else entityType = "VIDEO";
+      }
+
+      const snap = (it.snapshot as Record<string, unknown> | undefined) ?? undefined;
+      const platformItemId = isYoutube && snap ? readString(snap, "platformItemId") : null;
+      const customTitle = isYoutube ? null : (readString(it, "title") || "").slice(0, 512) || null;
+      const customUrl = (isYoutube && snap ? readString(snap, "url") : readString(it, "url"))?.slice(0, 1024) ?? null;
+      const notes = readString(it, "customNote", "note");
+      const pos = typeof it.position === "number" ? it.position : eIdx;
+
+      await tx.userPlaylistEntry.upsert({
+        where: { id: entryUuid },
+        create: {
+          id: entryUuid,
+          owner_id: params.ownerId,
+          playlist_id: playlistUuid,
+          group_id: validGroupUuid,
+          entity_type: entityType,
+          platform_item_id: platformItemId?.slice(0, 64) ?? null,
+          custom_title: customTitle,
+          custom_url: customUrl,
+          notes,
+          position: pos,
+          added_at: parseDate(it.addedAt) || new Date(),
+        },
+        update: {
+          group_id: validGroupUuid,
+          entity_type: entityType,
+          platform_item_id: platformItemId?.slice(0, 64) ?? null,
+          custom_title: customTitle,
+          custom_url: customUrl,
+          notes,
+          position: pos,
+        },
+      });
+    }
+
+    await tx.userPlaylistEntry.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        playlist_id: playlistUuid,
+        ...(activeEntryUuids.length > 0 ? { id: { notIn: activeEntryUuids } } : {}),
+      },
+    });
+  }
+
+  await tx.userPlaylist.deleteMany({
+    where: {
+      owner_id: params.ownerId,
+      ...(activePlaylistUuids.length > 0 ? { id: { notIn: activePlaylistUuids } } : {}),
+    },
+  });
+}
+
+async function indexResearchQueue(
+  tx: Prisma.TransactionClient,
+  params: {
+    ownerId: string;
+    datasetId: string;
+    generationId: string;
+    records: Record<string, unknown>[];
+  }
+): Promise<void> {
+  const activeIds: string[] = [];
+  let pos = 0;
+
+  for (const record of params.records) {
+    const rawId = readString(record, "id", "recordId");
+    const queryText = (readString(record, "query", "queryText", "title") || "").slice(0, 512);
+    if (!rawId || !queryText) continue;
+
+    const id = toDatabaseUuid(`research-queue:${params.ownerId}:${rawId}`);
+    activeIds.push(id);
+
+    const rawStatus = (readString(record, "status") || "PENDING").toUpperCase();
+    const status: "PENDING" | "REVIEWED" | "DISMISSED" =
+      rawStatus === "REVIEWED" || rawStatus === "DISMISSED" ? rawStatus : "PENDING";
+
+    const data = {
+      owner_id: params.ownerId,
+      query_text: queryText,
+      source_origin: (readString(record, "sourceOrigin", "source") || "workspace").slice(0, 64),
+      source_entity_id: readString(record, "sourceEntityId", "platformItemId")?.slice(0, 64) ?? null,
+      status,
+      priority: readNumber(record, "priority") ?? 0,
+      dataset_id: params.datasetId,
+      generation_id: params.generationId,
+      item_position: pos++,
+      queued_at: parseDate(record.queuedAt) || parseDate(record.createdAt) || new Date(),
+      reviewed_at: parseDate(record.reviewedAt),
+    };
+
+    await tx.researchQueueItem.upsert({
+      where: { id },
+      create: { id, ...data },
+      update: data,
+    });
+  }
+
+  await tx.researchQueueItem.deleteMany({
+    where: {
+      owner_id: params.ownerId,
+      ...(activeIds.length > 0 ? { id: { notIn: activeIds } } : {}),
+    },
+  });
+}
+
+async function indexSearchHistory(
+  tx: Prisma.TransactionClient,
+  params: {
+    ownerId: string;
+    generationId: string;
+    records: Record<string, unknown>[];
+  }
+): Promise<void> {
+  const activeIds: string[] = [];
+
+  for (const record of params.records) {
+    const rawId = readString(record, "id", "recordId");
+    const queryText = (readString(record, "query", "queryText") || "").slice(0, 512);
+    if (!rawId || !queryText) continue;
+
+    const id = toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`);
+    activeIds.push(id);
+
+    const data = {
+      owner_id: params.ownerId,
+      query_text: queryText,
+      search_settings: (record.settings as Prisma.InputJsonValue) ?? {},
+      result_count: Math.max(0, Math.floor(readNumber(record, "resultCount") ?? 0)),
+      quota_units_consumed: Math.max(0, Math.floor(readNumber(record, "quotaUnits", "quotaCostEstimate") ?? 100)),
+      manifest_id: (readString(record, "manifestId") || rawId).slice(0, 64),
+      generation_id: params.generationId,
+      executed_at:
+        parseDate(record.timestamp) ||
+        parseDate(record.executedAt) ||
+        parseDate(record.createdAt) ||
+        new Date(),
+    };
+
+    await tx.searchHistoryRecord.upsert({
+      where: { id },
+      create: { id, ...data },
+      update: data,
+    });
+  }
+
+  await tx.searchHistoryRecord.deleteMany({
+    where: {
+      owner_id: params.ownerId,
+      ...(activeIds.length > 0 ? { id: { notIn: activeIds } } : {}),
+    },
+  });
+}
+
 export async function POST(request: Request) {
   const originError = assertSameOrigin(request);
   if (originError) return originError;
@@ -704,6 +1018,10 @@ export async function POST(request: Request) {
           revision: Number(existingBatch.committed_revision ?? baseRevision),
           recordsCount: generation?.total_records ?? 0,
           partsCount: generation?.total_parts ?? 0,
+          bytesUploaded: Number(generation?.total_bytes ?? 0),
+          aggregateSha256: generation?.aggregate_sha256 || "",
+          verifiedCount: generation?.parts.length ?? 0,
+          partPaths: generation?.parts.map((p) => p.storage_path) ?? [],
           resourceTypeCounts: {},
           syncedOperationIds: operations.map((op) => op.operationId),
           syncedEntityIds: operations.map((op) => op.entityId),
@@ -843,126 +1161,190 @@ export async function POST(request: Request) {
 
       // Upload immutable objects only. The version pointer is written after
       // the database commit so it can never advertise an uncommitted state.
-      const uploadResult = await r2Client.uploadBatch(batchId, datasetType, uploadItems, {
-        storageOwnerUuid,
-        targetPrefix: `asdy/persistence/${storageOwnerUuid}`,
-      });
-
-      if (uploadResult.uploadedCount !== uploadItems.length) {
-        throw new Error(
-          `R2 batch upload acknowledged ${uploadResult.uploadedCount} of ${uploadItems.length} objects.`
+      let uploadResult;
+      try {
+        uploadResult = await r2Client.uploadBatch(batchId, datasetType, uploadItems, {
+          storageOwnerUuid,
+          targetPrefix: `asdy/persistence/${storageOwnerUuid}`,
+        });
+      } catch (uploadErr) {
+        const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+        const cls = classifyHttpOrErrorCategory({ message: msg });
+        const category =
+          cls.errorCategory === "DATABASE_COMMIT_ERROR" ? "R2_UPLOAD_ERROR" : cls.errorCategory;
+        throw new StageSyncError(
+          `R2 batch upload failed for ${datasetType}: ${msg}`,
+          category,
+          "SYNCING",
+          502
         );
       }
 
-      const verification = await r2Client.verifyBatch(batchId, uploadItems, {
-        storageOwnerUuid,
-        targetPrefix: `asdy/persistence/${storageOwnerUuid}`,
-      });
+      if (uploadResult.uploadedCount !== uploadItems.length) {
+        throw new StageSyncError(
+          `R2 batch upload acknowledged ${uploadResult.uploadedCount} of ${uploadItems.length} objects for ${datasetType}.`,
+          "GENERATION_INCOMPLETE",
+          "UPLOADED_UNVERIFIED",
+          502
+        );
+      }
+
+      let verification;
+      try {
+        verification = await r2Client.verifyBatch(batchId, uploadItems, {
+          storageOwnerUuid,
+          targetPrefix: `asdy/persistence/${storageOwnerUuid}`,
+        });
+      } catch (verifyErr) {
+        const msg = verifyErr instanceof Error ? verifyErr.message : String(verifyErr);
+        throw new StageSyncError(
+          `R2 verification request failed for ${datasetType}: ${msg}`,
+          "R2_VERIFICATION_ERROR",
+          "UPLOADED_UNVERIFIED",
+          502
+        );
+      }
 
       if (!verification.ok) {
-        throw new Error(
+        const hasChecksumFailure = verification.failures.some((f) =>
+          f.reason.includes("sha256")
+        );
+        throw new StageSyncError(
           `R2 verification failed for ${verification.failedCount} object(s): ${verification.failures
-            .map((failure) => failure.key)
-            .join(", ")}`
+            .map((failure) => `${failure.key} (${failure.reason})`)
+            .join(", ")}`,
+          hasChecksumFailure ? "CHECKSUM_MISMATCH" : "R2_VERIFICATION_ERROR",
+          "UPLOADED_UNVERIFIED",
+          502
         );
       }
 
       // PostgreSQL commit gate. Nothing is acknowledged before this succeeds.
-      await prisma.$transaction(async (tx) => {
-        const syncBatch = await tx.saveSyncBatch.create({
-          data: {
-            owner_id: profile.id,
-            dataset_id: dataset.id,
-            idempotency_key: datasetInput.idempotencyKey,
-            request_sha256: requestSha256,
-            expected_revision: BigInt(baseRevision),
-            committed_revision: BigInt(generationNumber),
-            origin_device_id: batchOriginDeviceId,
-            origin_device_label: batchOriginDeviceLabel,
-            state: "COMMITTED",
-            completed_at: new Date(),
-          },
-        });
-
-        await tx.storageGeneration.create({
-          data: {
-            // The DB generation id and the R2 generation id are the SAME UUID.
-            // This keeps generation identity consistent across every layer.
-            id: generationId,
-            owner_id: profile.id,
-            dataset_id: dataset.id,
-            source_batch_id: syncBatch.id,
-            generation_number: generationNumber,
-            state: "COMMITTED",
-            total_parts: generationDesc.parts.length,
-            total_records: generationDesc.totalRecords,
-            total_bytes: BigInt(generationDesc.totalBytes),
-            aggregate_sha256: generationDesc.aggregateSha256,
-            origin_device_id: batchOriginDeviceId,
-            origin_device_label: batchOriginDeviceLabel,
-            committed_at: new Date(),
-          },
-        });
-
-        for (const part of generationDesc.parts) {
-          await tx.storageManifestPart.create({
+      try {
+        await prisma.$transaction(async (tx) => {
+          const syncBatch = await tx.saveSyncBatch.create({
             data: {
               owner_id: profile.id,
               dataset_id: dataset.id,
-              generation_id: generationId,
-              part_number: part.partNumber,
-              storage_path: part.storagePath,
-              bucket_id: "new-youtube-discovery-private",
-              byte_count: BigInt(part.byteCount),
-              record_count: part.recordCount,
-              sha256: part.sha256,
+              idempotency_key: datasetInput.idempotencyKey,
+              request_sha256: requestSha256,
+              expected_revision: BigInt(baseRevision),
+              committed_revision: BigInt(generationNumber),
+              origin_device_id: batchOriginDeviceId,
+              origin_device_label: batchOriginDeviceLabel,
+              state: "COMMITTED",
+              completed_at: new Date(),
             },
           });
-        }
 
-        // Optimistic concurrency gate: only one writer may advance from the
-        // same base revision. If another device won, the whole transaction
-        // (including batch/generation rows) rolls back.
-        const advanced = await tx.storageDataset.updateMany({
-          where: {
-            id: dataset.id,
-            owner_id: profile.id,
-            current_revision: BigInt(baseRevision),
-          },
-          data: {
-            current_revision: BigInt(generationNumber),
-            current_generation_id: generationId,
-          },
+          await tx.storageGeneration.create({
+            data: {
+              // The DB generation id and the R2 generation id are the SAME UUID.
+              // This keeps generation identity consistent across every layer.
+              id: generationId,
+              owner_id: profile.id,
+              dataset_id: dataset.id,
+              source_batch_id: syncBatch.id,
+              parent_generation_id: dataset.current_generation_id || null,
+              generation_number: generationNumber,
+              state: "COMMITTED",
+              total_parts: generationDesc.parts.length,
+              total_records: generationDesc.totalRecords,
+              total_bytes: BigInt(generationDesc.totalBytes),
+              aggregate_sha256: generationDesc.aggregateSha256,
+              origin_device_id: batchOriginDeviceId,
+              origin_device_label: batchOriginDeviceLabel,
+              committed_at: new Date(),
+            },
+          });
+
+          for (const part of generationDesc.parts) {
+            await tx.storageManifestPart.create({
+              data: {
+                owner_id: profile.id,
+                dataset_id: dataset.id,
+                generation_id: generationId,
+                part_number: part.partNumber,
+                storage_path: part.storagePath,
+                bucket_id: "new-youtube-discovery-private",
+                byte_count: BigInt(part.byteCount),
+                record_count: part.recordCount,
+                sha256: part.sha256,
+              },
+            });
+          }
+
+          // Optimistic concurrency gate: only one writer may advance from the
+          // same base revision. If another device won, the whole transaction
+          // (including batch/generation rows) rolls back.
+          const advanced = await tx.storageDataset.updateMany({
+            where: {
+              id: dataset.id,
+              owner_id: profile.id,
+              current_revision: BigInt(baseRevision),
+            },
+            data: {
+              current_revision: BigInt(generationNumber),
+              current_generation_id: generationId,
+            },
+          });
+
+          if (advanced.count !== 1) {
+            const fresh = await tx.storageDataset.findUnique({
+              where: { id: dataset.id },
+              select: { current_revision: true },
+            });
+            throw new RevisionConflictError(Number(fresh?.current_revision ?? baseRevision));
+          }
+
+          if (datasetType === "SAVED_ITEMS") {
+            await indexSavedItems(tx, {
+              ownerId: profile.id,
+              datasetId: dataset.id,
+              generationId,
+              records: snapshotRecords,
+              originDeviceId: batchOriginDeviceId,
+              originDeviceLabel: batchOriginDeviceLabel,
+            });
+          } else if (datasetType === "REFERENCES") {
+            await indexReferences(tx, {
+              ownerId: profile.id,
+              datasetId: dataset.id,
+              generationId,
+              records: snapshotRecords,
+              originDeviceId: batchOriginDeviceId,
+              originDeviceLabel: batchOriginDeviceLabel,
+            });
+          } else if (datasetType === "PLAYLIST") {
+            await indexPlaylists(tx, {
+              ownerId: profile.id,
+              records: snapshotRecords,
+            });
+          } else if (datasetType === "RESEARCH_QUEUE") {
+            await indexResearchQueue(tx, {
+              ownerId: profile.id,
+              datasetId: dataset.id,
+              generationId,
+              records: snapshotRecords,
+            });
+          } else if (datasetType === "SEARCH_HISTORY") {
+            await indexSearchHistory(tx, {
+              ownerId: profile.id,
+              generationId,
+              records: snapshotRecords,
+            });
+          }
         });
-
-        if (advanced.count !== 1) {
-          const fresh = await tx.storageDataset.findUnique({
-            where: { id: dataset.id },
-            select: { current_revision: true },
-          });
-          throw new RevisionConflictError(Number(fresh?.current_revision ?? baseRevision));
-        }
-
-        if (datasetType === "SAVED_ITEMS") {
-          await indexSavedItems(tx, {
-            ownerId: profile.id,
-            datasetId: dataset.id,
-            generationId,
-            records: snapshotRecords,
-            originDeviceId: batchOriginDeviceId,
-            originDeviceLabel: batchOriginDeviceLabel,
-          });
-        } else if (datasetType === "REFERENCES") {
-          await indexReferences(tx, {
-            ownerId: profile.id,
-            datasetId: dataset.id,
-            generationId,
-            records: snapshotRecords,
-            originDeviceId: batchOriginDeviceId,
-            originDeviceLabel: batchOriginDeviceLabel,
-          });
-        }
-      });
+      } catch (dbErr) {
+        if (dbErr instanceof RevisionConflictError) throw dbErr;
+        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+        throw new StageSyncError(
+          `Database commit failed after R2 upload (${datasetType} rev ${generationNumber}): ${msg}. Local changes remain queued safely.`,
+          "DATABASE_COMMIT_ERROR",
+          "DATABASE_COMMITTING",
+          500
+        );
+      }
 
       // Version pointer is a convenience read index. The database is already
       // authoritative; a pointer failure is reported but does not invalidate
@@ -1005,6 +1387,11 @@ export async function POST(request: Request) {
         revision: generationNumber,
         recordsCount: generationDesc.totalRecords,
         partsCount: generationDesc.parts.length,
+        bytesUploaded: generationDesc.totalBytes,
+        aggregateSha256: generationDesc.aggregateSha256,
+        verifiedCount: verification.verifiedCount,
+        manifestPath: manifestKey,
+        partPaths: generationDesc.parts.map((p) => p.storagePath),
         resourceTypeCounts: generationDesc.resourceTypeCounts,
         syncedOperationIds: operations.map((op) => op.operationId),
         syncedEntityIds: operations.map((op) => op.entityId),
@@ -1028,19 +1415,39 @@ export async function POST(request: Request) {
           ok: false,
           error: error.message,
           code: "REVISION_CONFLICT",
+          errorCategory: "REVISION_CONFLICT",
+          failedStage: "DATABASE_COMMITTING",
           currentRevision: error.currentRevision,
         },
         { status: 409 }
       );
     }
 
+    if (error instanceof StageSyncError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+          code: error.errorCategory,
+          errorCategory: error.errorCategory,
+          failedStage: error.failedStage,
+        },
+        { status: error.httpStatus }
+      );
+    }
+
     console.error("[sync/save-all] Fatal error during sync:", error);
+    const classified = classifyHttpOrErrorCategory({
+      message: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       {
         ok: false,
         error:
           "Synchronization failed before the database commit completed. Local changes remain queued.",
-        code: "SYNC_COMMIT_FAILED",
+        code: classified.errorCategory,
+        errorCategory: classified.errorCategory,
+        failedStage: classified.failedStage,
       },
       { status: 500 }
     );

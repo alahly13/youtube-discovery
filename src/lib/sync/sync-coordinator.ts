@@ -38,15 +38,26 @@ import {
 } from "../storage/indexeddb-store";
 import { getOriginDeviceMeta } from "../device/device-identity";
 import { cloudHydrationService } from "./cloud-hydration-service";
+import { undoRedoService } from "../undo-redo/undo-redo-service";
+import {
+  classifyHttpOrErrorCategory,
+  type SaveDatasetReceipt,
+  type SaveErrorCategory,
+  type SaveReceipt,
+  type SaveStatusStage,
+} from "./save-receipt";
 
 export type SyncStatus = "IDLE" | "SYNCING" | "SYNCED" | "FAILED" | "OFFLINE";
 
 export interface SyncStateEvent {
   status: SyncStatus;
+  stage: SaveStatusStage;
   summary: PendingOperationsSummary;
   lastSuccessfulSyncAt: string | null;
   nextAutoSyncAt: string | null;
+  lastSaveReceipt: SaveReceipt | null;
   errorMessage?: string;
+  errorCategory?: SaveErrorCategory;
 }
 
 export type SyncStateListener = (event: SyncStateEvent) => void;
@@ -55,6 +66,7 @@ const AUTO_SYNC_INTERVAL_HOURS = 12;
 const AUTO_SYNC_INTERVAL_MS = AUTO_SYNC_INTERVAL_HOURS * 60 * 60 * 1000;
 const STORAGE_SYNC_KEY = "yt_discovery_sync_meta_v1";
 const STORAGE_OWNER_KEY = "yt_discovery_owner_id_v1";
+const STORAGE_RECEIPT_PREFIX = "yt_discovery_last_save_receipt_v1_";
 const SYNC_MUTEX_NAME = "sync_coordinator_lease";
 const SYNC_LEASE_TTL_MS = 60000; // 60 seconds lease TTL
 
@@ -97,6 +109,10 @@ class SyncCoordinator {
    */
   private ownerId: string = "";
   private hasHydrated = false;
+  private stage: SaveStatusStage = "CLOUD_COMMITTED";
+  private lastErrorMessage: string | undefined;
+  private lastErrorCategory: SaveErrorCategory | undefined;
+  private lastSaveReceipt: SaveReceipt | null = null;
   private latestSummary: PendingOperationsSummary = {
     totalPending: 0,
     byDataset: {
@@ -219,6 +235,10 @@ class SyncCoordinator {
     }
 
     if (changed) {
+      this.lastSaveReceipt = null;
+      this.lastErrorCategory = undefined;
+      this.lastErrorMessage = undefined;
+      this.restoreLastReceipt(clean);
       reconcileInterruptedSyncJournal(clean).catch((err) => {
         console.warn("[sync] Interrupted sync journal reconciliation check deferred:", err);
       });
@@ -247,6 +267,32 @@ class SyncCoordinator {
     return this.status;
   }
 
+  public getLastSaveReceipt(): SaveReceipt | null {
+    return this.lastSaveReceipt;
+  }
+
+  private restoreLastReceipt(ownerId: string) {
+    if (!ownerId || typeof localStorage === "undefined") return;
+    try {
+      const raw = localStorage.getItem(`${STORAGE_RECEIPT_PREFIX}${ownerId}`);
+      if (raw) {
+        this.lastSaveReceipt = JSON.parse(raw) as SaveReceipt;
+      }
+    } catch {
+      this.lastSaveReceipt = null;
+    }
+  }
+
+  private persistLastReceipt(receipt: SaveReceipt) {
+    this.lastSaveReceipt = receipt;
+    if (!this.ownerId || typeof localStorage === "undefined") return;
+    try {
+      localStorage.setItem(`${STORAGE_RECEIPT_PREFIX}${this.ownerId}`, JSON.stringify(receipt));
+    } catch {
+      // Ignore quota errors on cached receipt
+    }
+  }
+
   private async emitCurrentState(targetListener?: SyncStateListener) {
     let summary: PendingOperationsSummary = {
       totalPending: 0,
@@ -267,12 +313,30 @@ class SyncCoordinator {
     }
 
     this.latestSummary = summary;
+    if (this.ownerId && !this.lastSaveReceipt) {
+      this.restoreLastReceipt(this.ownerId);
+    }
+
+    const derivedStage: SaveStatusStage =
+      this.status === "SYNCING"
+        ? this.stage
+        : this.status === "FAILED"
+        ? this.stage === "RECOVERY_REQUIRED" || this.stage === "CLEANUP_PENDING"
+          ? this.stage
+          : "FAILED"
+        : this.status === "OFFLINE" || summary.totalPending > 0
+        ? "QUEUED_FOR_SYNC"
+        : this.lastSaveReceipt?.stage || "CLOUD_COMMITTED";
 
     const event: SyncStateEvent = {
       status: this.status,
+      stage: derivedStage,
       summary,
       lastSuccessfulSyncAt: this.lastSuccessfulSyncAt,
       nextAutoSyncAt: this.nextAutoSyncAt,
+      lastSaveReceipt: this.lastSaveReceipt,
+      errorMessage: this.lastErrorMessage,
+      errorCategory: this.lastErrorCategory,
     };
 
     if (targetListener) {
@@ -429,15 +493,50 @@ class SyncCoordinator {
    *  - Never prunes Outbox until remote server confirms commit.
    *  - Records batch lifecycle in sync_journal.
    */
-  public async saveAll(): Promise<{ ok: boolean; syncedCount: number; error?: string }> {
+  public async saveAll(): Promise<{
+    ok: boolean;
+    syncedCount: number;
+    error?: string;
+    errorCategory?: SaveErrorCategory;
+    receipt?: SaveReceipt;
+  }> {
     if (typeof window === "undefined") {
       return { ok: false, syncedCount: 0 };
     }
 
+    const startedAt = new Date().toISOString();
+
     if (!navigator.onLine) {
       this.status = "OFFLINE";
+      this.stage = "QUEUED_FOR_SYNC";
+      this.lastErrorCategory = "NETWORK_ERROR";
+      this.lastErrorMessage = "Offline: changes preserved locally in IndexedDB";
+      const offlineReceipt: SaveReceipt = {
+        batchId: `offline_${Date.now()}`,
+        stage: "QUEUED_FOR_SYNC",
+        ok: false,
+        offlineDeferred: true,
+        storageOwnerUuid: this.ownerId || undefined,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        totalOperationsSynced: 0,
+        totalRecordsCommitted: 0,
+        totalBytesUploaded: 0,
+        datasets: [],
+        errorCategory: "NETWORK_ERROR",
+        failedStage: "QUEUED_FOR_SYNC",
+        errorMessage: "LOCAL — PENDING CLOUD SYNC (offline). Local edits remain safe in IndexedDB.",
+        recoveryHint: "Reconnect to the internet and press Save to Cloud R2.",
+      };
+      this.persistLastReceipt(offlineReceipt);
       await this.emitCurrentState();
-      return { ok: false, syncedCount: 0, error: "Offline: changes preserved locally in IndexedDB" };
+      return {
+        ok: false,
+        syncedCount: 0,
+        error: offlineReceipt.errorMessage,
+        errorCategory: "NETWORK_ERROR",
+        receipt: offlineReceipt,
+      };
     }
 
     if (this.status === "SYNCING") {
@@ -448,12 +547,33 @@ class SyncCoordinator {
     // owner would either miss pending data or write into the wrong partition.
     if (!this.ownerId) {
       this.status = "FAILED";
+      this.stage = "QUEUED_FOR_SYNC";
+      this.lastErrorCategory = "AUTHENTICATION_ERROR";
+      this.lastErrorMessage = "Sign in to commit locally staged changes to Cloud R2.";
+      const authReceipt: SaveReceipt = {
+        batchId: `auth_${Date.now()}`,
+        stage: "QUEUED_FOR_SYNC",
+        ok: false,
+        offlineDeferred: true,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        totalOperationsSynced: 0,
+        totalRecordsCommitted: 0,
+        totalBytesUploaded: 0,
+        datasets: [],
+        errorCategory: "AUTHENTICATION_ERROR",
+        failedStage: "QUEUED_FOR_SYNC",
+        errorMessage: this.lastErrorMessage,
+        recoveryHint: "Sign in with your account and retry Save to Cloud R2.",
+      };
       await this.emitCurrentState();
       this.scheduleRetry();
       return {
         ok: false,
         syncedCount: 0,
-        error: "Canonical storage owner has not resolved yet. Sign in again or retry shortly.",
+        error: this.lastErrorMessage,
+        errorCategory: "AUTHENTICATION_ERROR",
+        receipt: authReceipt,
       };
     }
 
@@ -468,12 +588,15 @@ class SyncCoordinator {
     if (summary.totalPending === 0) {
       console.debug("[sync] No pending operations in outbox. Advancing 12-hour schedule (no-op).");
       this.status = "SYNCED";
+      this.stage = "CLOUD_COMMITTED";
+      this.lastErrorCategory = undefined;
+      this.lastErrorMessage = undefined;
       this.lastSuccessfulSyncAt = new Date().toISOString();
       this.nextAutoSyncAt = new Date(Date.now() + AUTO_SYNC_INTERVAL_MS).toISOString();
       this.persistTimestamps();
       this.initAutoSyncScheduler();
       await this.emitCurrentState();
-      return { ok: true, syncedCount: 0 };
+      return { ok: true, syncedCount: 0, receipt: this.lastSaveReceipt || undefined };
     }
 
     // Concurrency control: Try Web Lock first, fallback to IndexedDB lease mutex
@@ -493,7 +616,13 @@ class SyncCoordinator {
   /**
    * Acquires the IndexedDB fallback lease mutex before executing the internal sync saga.
    */
-  private async executeWithLeaseMutex(): Promise<{ ok: boolean; syncedCount: number; error?: string }> {
+  private async executeWithLeaseMutex(): Promise<{
+    ok: boolean;
+    syncedCount: number;
+    error?: string;
+    errorCategory?: SaveErrorCategory;
+    receipt?: SaveReceipt;
+  }> {
     const acquired = await acquireSyncLease(SYNC_MUTEX_NAME, SYNC_LEASE_TTL_MS);
 
     if (!acquired) {
@@ -508,10 +637,20 @@ class SyncCoordinator {
     }
   }
 
-  private async executeSyncInternal(): Promise<{ ok: boolean; syncedCount: number; error?: string }> {
+  private async executeSyncInternal(): Promise<{
+    ok: boolean;
+    syncedCount: number;
+    error?: string;
+    errorCategory?: SaveErrorCategory;
+    receipt?: SaveReceipt;
+  }> {
     this.status = "SYNCING";
+    this.stage = "SYNCING";
+    this.lastErrorMessage = undefined;
+    this.lastErrorCategory = undefined;
     await this.emitCurrentState();
 
+    const startedAt = new Date().toISOString();
     const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
     try {
@@ -639,36 +778,77 @@ class SyncCoordinator {
         // before retrying; pending local operations are preserved by
         // bulkHydrateDatasetEntities and will be rebased on the next attempt.
         await cloudHydrationService.hydrateAllDatasets(this.ownerId, true);
-        throw new Error(
+        const err = new Error(
           `Revision conflict: the dataset changed on another device. Latest cloud snapshot restored; local changes remain queued. ${conflictText.slice(0, 300)}`
-        );
+        ) as Error & { errorCategory?: SaveErrorCategory; failedStage?: SaveStatusStage };
+        err.errorCategory = "REVISION_CONFLICT";
+        err.failedStage = "DATABASE_COMMITTING";
+        throw err;
       }
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`Sync API rejected with status ${res.status}: ${errText}`);
+        let parsedErr: { error?: string; errorCategory?: SaveErrorCategory; code?: string; failedStage?: SaveStatusStage } = {};
+        try {
+          parsedErr = JSON.parse(errText);
+        } catch {
+          // Raw text fallback
+        }
+        const classified = parsedErr.errorCategory
+          ? { errorCategory: parsedErr.errorCategory, failedStage: parsedErr.failedStage || "FAILED" }
+          : classifyHttpOrErrorCategory({
+              httpStatus: res.status,
+              code: parsedErr.code,
+              message: parsedErr.error || errText,
+            });
+        const err = new Error(
+          parsedErr.error || `Sync API rejected with status ${res.status}: ${errText}`
+        ) as Error & { errorCategory?: SaveErrorCategory; failedStage?: SaveStatusStage };
+        err.errorCategory = classified.errorCategory;
+        err.failedStage = classified.failedStage;
+        throw err;
       }
 
       const syncResult = (await res.json()) as {
         ok?: boolean;
+        batchId?: string;
+        storageOwnerUuid?: string;
         results?: Array<{
           datasetType: string;
+          datasetId?: string;
           generationId: string;
           revision: number;
+          recordsCount?: number;
+          partsCount?: number;
+          bytesUploaded?: number;
+          aggregateSha256?: string;
+          verifiedCount?: number;
+          manifestPath?: string;
+          partPaths?: string[];
+          versionPointerStatus?: "WRITTEN" | "FAILED" | "DEFERRED";
+          idempotentReplay?: boolean;
           syncedOperationIds: string[];
           syncedEntityIds: string[];
         }>;
       };
 
       if (syncResult.ok !== true || !Array.isArray(syncResult.results) || syncResult.results.length === 0) {
-        throw new Error(
+        const err = new Error(
           "Sync API returned success without committed dataset results. Outbox preserved."
-        );
+        ) as Error & { errorCategory?: SaveErrorCategory; failedStage?: SaveStatusStage };
+        err.errorCategory = "DATABASE_COMMIT_ERROR";
+        err.failedStage = "DATABASE_COMMITTING";
+        throw err;
       }
 
-      // Collect all successfully acknowledged operation IDs
+      this.stage = "CLEANUP_PENDING";
+      await this.emitCurrentState();
+
+      // Collect all successfully acknowledged operation IDs & build structured SaveReceipt
       const committedOpIds: string[] = [];
       let primaryGenerationId: string | undefined;
+      const datasetReceipts: SaveDatasetReceipt[] = [];
+      let cleanupPendingWarning = false;
 
       for (const r of syncResult.results) {
         if (Array.isArray(r.syncedOperationIds)) {
@@ -677,16 +857,43 @@ class SyncCoordinator {
         if (r.generationId && !primaryGenerationId) {
           primaryGenerationId = r.generationId;
         }
-        // Mark local entities committed and update catalog/revision
+        let localCleanupDone = true;
         if (Array.isArray(r.syncedEntityIds) && r.syncedEntityIds.length > 0) {
-          await markEntitiesCommitted(this.ownerId, r.datasetType as CanonicalDatasetType, r.syncedEntityIds, {
-            generationId: r.generationId,
-            revision: r.revision || 1,
-            syncedAt: new Date().toISOString(),
-            originDeviceId: deviceMeta.originDeviceId,
-            originDeviceLabel: deviceMeta.originDeviceLabel,
-          });
+          try {
+            await markEntitiesCommitted(
+              this.ownerId,
+              r.datasetType as CanonicalDatasetType,
+              r.syncedEntityIds,
+              {
+                generationId: r.generationId,
+                revision: r.revision || 1,
+                syncedAt: new Date().toISOString(),
+                originDeviceId: deviceMeta.originDeviceId,
+                originDeviceLabel: deviceMeta.originDeviceLabel,
+              }
+            );
+          } catch {
+            localCleanupDone = false;
+            cleanupPendingWarning = true;
+          }
         }
+        datasetReceipts.push({
+          datasetType: r.datasetType,
+          datasetId: r.datasetId || "",
+          generationId: r.generationId,
+          revision: r.revision || 1,
+          partsCount: r.partsCount ?? 0,
+          recordsCount: r.recordsCount ?? 0,
+          bytesUploaded: r.bytesUploaded ?? 0,
+          aggregateSha256: r.aggregateSha256 || "",
+          verifiedCount: r.verifiedCount ?? 0,
+          manifestPath: r.manifestPath,
+          partPaths: r.partPaths,
+          versionPointerStatus: r.versionPointerStatus || "WRITTEN",
+          dbCommitConfirmed: true,
+          localCleanupDone,
+          idempotentReplay: Boolean(r.idempotentReplay),
+        });
       }
 
       if (committedOpIds.length === 0) {
@@ -695,28 +902,76 @@ class SyncCoordinator {
         );
       }
 
-      // ONLY AFTER entity state transition, prune confirmed committed operations from IndexedDB Outbox
-      await pruneCommittedOperations(committedOpIds);
+      // Prune confirmed committed operations & checkpoint persistent Undo/Redo stack
+      try {
+        await pruneCommittedOperations(committedOpIds);
+        await undoRedoService.markCloudCheckpoint(
+          this.ownerId,
+          batchId,
+          datasetReceipts.map((d) => ({
+            datasetType: String(d.datasetType),
+            generationId: d.generationId,
+            revision: d.revision,
+          }))
+        );
+      } catch {
+        cleanupPendingWarning = true;
+      }
 
-      // Update sync journal to COMMITTED
+      const hasPointerFailure = datasetReceipts.some(
+        (d) => d.versionPointerStatus === "FAILED"
+      );
+      const finalStage: SaveStatusStage = cleanupPendingWarning
+        ? "CLEANUP_PENDING"
+        : hasPointerFailure
+        ? "NEEDS_ATTENTION"
+        : "CLOUD_COMMITTED";
+
       await updateSyncJournalBatch(batchId, {
         batchStatus: "COMMITTED",
         dbCommitStatus: "COMMITTED",
         lastAttemptAt: new Date().toISOString(),
         targetGenerationIds: primaryGenerationId ? { primary: primaryGenerationId } : {},
+        ...(cleanupPendingWarning
+          ? { recoveryState: "CLOUD_COMMITTED_LOCAL_CLEANUP_PENDING" }
+          : {}),
       });
 
-      // Update timestamps
       const now = new Date().toISOString();
+      const totalRecordsCommitted = datasetReceipts.reduce((s, d) => s + d.recordsCount, 0);
+      const totalBytesUploaded = datasetReceipts.reduce((s, d) => s + d.bytesUploaded, 0);
+
+      const receipt: SaveReceipt = {
+        batchId: syncResult.batchId || batchId,
+        stage: finalStage,
+        ok: true,
+        storageOwnerUuid: syncResult.storageOwnerUuid || this.ownerId,
+        startedAt,
+        completedAt: now,
+        totalOperationsSynced: committedOpIds.length,
+        totalRecordsCommitted,
+        totalBytesUploaded,
+        datasets: datasetReceipts,
+        ...(hasPointerFailure
+          ? {
+              recoveryHint:
+                "Cloud R2 & PostgreSQL committed cleanly, though a dataset version.json pointer failed to refresh (will recover on next sync).",
+            }
+          : {}),
+      };
+
       this.lastSuccessfulSyncAt = now;
       this.nextAutoSyncAt = new Date(Date.now() + AUTO_SYNC_INTERVAL_MS).toISOString();
       this.persistTimestamps();
-      this.retryCount = 0; // Reset retry counter on success
+      this.persistLastReceipt(receipt);
+      this.retryCount = 0;
 
       this.status = "SYNCED";
+      this.stage = finalStage;
+      this.lastErrorCategory = undefined;
+      this.lastErrorMessage = undefined;
       await this.emitCurrentState();
 
-      // Broadcast to other tabs
       if (this.broadcastChannel) {
         this.broadcastChannel.postMessage({
           type: "SYNC_COMPLETED",
@@ -726,25 +981,49 @@ class SyncCoordinator {
         });
       }
 
-      // Reset auto-sync timer for 12 hours
       this.initAutoSyncScheduler();
 
-      return { ok: true, syncedCount: pendingOps.length };
+      return { ok: true, syncedCount: pendingOps.length, receipt };
     } catch (err) {
       console.error("[sync] Sync failed, preserving outbox for retry:", err);
       this.status = "FAILED";
       const message = err instanceof Error ? err.message : "Sync failed";
+      const typed = err as { errorCategory?: SaveErrorCategory; failedStage?: SaveStatusStage };
+      const classified = typed.errorCategory
+        ? { errorCategory: typed.errorCategory, failedStage: typed.failedStage || ("FAILED" as SaveStatusStage) }
+        : classifyHttpOrErrorCategory({ message });
+
+      this.stage = classified.failedStage;
+      this.lastErrorCategory = classified.errorCategory;
+      this.lastErrorMessage = message;
+
+      const failedReceipt: SaveReceipt = {
+        batchId,
+        stage: "FAILED",
+        ok: false,
+        storageOwnerUuid: this.ownerId || undefined,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        totalOperationsSynced: 0,
+        totalRecordsCommitted: 0,
+        totalBytesUploaded: 0,
+        datasets: [],
+        errorCategory: classified.errorCategory,
+        failedStage: classified.failedStage,
+        errorMessage: message,
+        recoveryHint: "Your local changes remain safely preserved in IndexedDB. Resolve the error above and retry Save to Cloud R2.",
+      };
+      this.persistLastReceipt(failedReceipt);
 
       try {
         const pendingOps = await getPendingOperations(this.ownerId);
         const opIds = pendingOps.map((op) => op.operationId);
         await setOperationsStatus(opIds, "FAILED", message);
 
-        // Update sync journal to FAILED
         await updateSyncJournalBatch(batchId, {
           batchStatus: "FAILED",
-          dbCommitStatus: "FAILED",
-          lastErrorCode: message,
+          dbCommitStatus: classified.failedStage === "DATABASE_COMMITTING" ? "FAILED" : "PENDING",
+          lastErrorCode: classified.errorCategory,
           lastAttemptAt: new Date().toISOString(),
         });
       } catch {
@@ -752,11 +1031,15 @@ class SyncCoordinator {
       }
 
       await this.emitCurrentState();
-
-      // Schedule exponential backoff retry without advancing 12-hour schedule
       this.scheduleRetry();
 
-      return { ok: false, syncedCount: 0, error: message };
+      return {
+        ok: false,
+        syncedCount: 0,
+        error: message,
+        errorCategory: classified.errorCategory,
+        receipt: failedReceipt,
+      };
     }
   }
 

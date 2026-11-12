@@ -34,10 +34,37 @@ export interface ReconciliationIssue {
   message: string;
 }
 
+export type ReconciliationItemStatus =
+  | "VERIFIED"
+  | "MISSING_FROM_STORAGE"
+  | "UNTRACKED_ORPHAN"
+  | "METADATA_MISMATCH"
+  | "UNCOMMITTED_GENERATION"
+  | "INCOMPLETE_PARTS";
+
+export interface ReconciliationItemEntry {
+  storagePath: string;
+  status: ReconciliationItemStatus;
+  details: string;
+}
+
+export interface ReconciliationCounts {
+  VERIFIED: number;
+  MISSING_FROM_STORAGE: number;
+  UNTRACKED_ORPHAN: number;
+  METADATA_MISMATCH: number;
+  UNCOMMITTED_GENERATION: number;
+  INCOMPLETE_PARTS: number;
+}
+
 export interface ReconciliationReport {
   timestamp: string;
   ownerId: string;
   status: "HEALTHY" | "DRIFT_DETECTED" | "CORRUPTED";
+  overallHealthy: boolean;
+  totalScanned: number;
+  counts: ReconciliationCounts;
+  items: ReconciliationItemEntry[];
   totalDatasetsChecked: number;
   totalGenerationsChecked: number;
   totalPartsChecked: number;
@@ -53,6 +80,15 @@ export class SyncReconciliationService {
   public async reconcileOwnerStorage(storageOwnerUuid: string): Promise<ReconciliationReport> {
     const issues: ReconciliationIssue[] = [];
     const cleanupCandidates: string[] = [];
+    const items: ReconciliationItemEntry[] = [];
+    const counts: ReconciliationCounts = {
+      VERIFIED: 0,
+      MISSING_FROM_STORAGE: 0,
+      UNTRACKED_ORPHAN: 0,
+      METADATA_MISMATCH: 0,
+      UNCOMMITTED_GENERATION: 0,
+      INCOMPLETE_PARTS: 0,
+    };
     const backend = getNewStorageBackend();
 
     // 1. Discover all R2 objects under owner scope
@@ -94,7 +130,28 @@ export class SyncReconciliationService {
     }
 
     // 2. Query Supabase PostgreSQL registries
-    let dbDatasets: any[] = [];
+    type DbPart = {
+      part_number: number;
+      storage_path: string;
+      byte_count: bigint | number;
+      record_count: number;
+      sha256: string;
+    };
+    type DbGen = {
+      id: string;
+      generation_number: number;
+      state: string;
+      total_parts?: number;
+      committed_at?: Date | null;
+      parts: DbPart[];
+    };
+    type DbDataset = {
+      dataset_type: string;
+      current_revision: bigint | number;
+      generations: DbGen[];
+    };
+
+    let dbDatasets: DbDataset[] = [];
     try {
       const profile = await prisma.userProfile.findFirst({
         where: { storage_owner_uuid: storageOwnerUuid },
@@ -112,7 +169,7 @@ export class SyncReconciliationService {
       });
 
       if (profile && profile.storage_datasets) {
-        dbDatasets = profile.storage_datasets;
+        dbDatasets = profile.storage_datasets as unknown as DbDataset[];
       }
     } catch (dbErr) {
       issues.push({
@@ -129,7 +186,7 @@ export class SyncReconciliationService {
     for (const ds of dbDatasets) {
       const currentRev = Number(ds.current_revision);
       const maxGenNumber = ds.generations.reduce(
-        (max: number, g: any) => Math.max(max, g.generation_number),
+        (max: number, g) => (g.state === "COMMITTED" ? Math.max(max, g.generation_number) : max),
         0
       );
 
@@ -144,38 +201,97 @@ export class SyncReconciliationService {
 
       for (const gen of ds.generations) {
         totalGenerationsChecked++;
+        const expectedParts = typeof gen.total_parts === "number" ? gen.total_parts : gen.parts.length;
+        const isIncomplete = gen.parts.length !== expectedParts || expectedParts === 0;
+        const isUncommitted = gen.state !== "COMMITTED";
+
+        if (isUncommitted) {
+          counts.UNCOMMITTED_GENERATION++;
+          items.push({
+            storagePath: `${ds.dataset_type}/generations/${gen.id}`,
+            status: "UNCOMMITTED_GENERATION",
+            details: `Generation ${gen.generation_number} is in state '${gen.state}' (committed: ${gen.committed_at ? "yes" : "no"}).`,
+          });
+        }
+
+        if (isIncomplete) {
+          counts.INCOMPLETE_PARTS++;
+          items.push({
+            storagePath: `${ds.dataset_type}/generations/${gen.id}`,
+            status: "INCOMPLETE_PARTS",
+            details: `Expected ${expectedParts} part(s) in generation ${gen.generation_number}, found ${gen.parts.length}.`,
+          });
+        }
+
         for (const part of gen.parts) {
           totalPartsChecked++;
           dbKnownPaths.add(part.storage_path);
 
-          // Verify part exists in R2
-          const inR2 = r2KeyMap.get(part.storage_path);
-          if (!inR2) {
-            // Also check alternate path prefix
-            const altPath = part.storage_path.startsWith("asdy/")
-              ? part.storage_path.replace(/^asdy\/persistence\/[^/]+\//, `${storageOwnerUuid}/persistence/`)
-              : `asdy/persistence/${storageOwnerUuid}/${part.storage_path.replace(/^[^/]+\/persistence\//, "")}`;
+          const altPath = part.storage_path.startsWith("asdy/")
+            ? part.storage_path.replace(/^asdy\/persistence\/[^/]+\//, `${storageOwnerUuid}/persistence/`)
+            : `asdy/persistence/${storageOwnerUuid}/${part.storage_path.replace(/^[^/]+\/persistence\//, "")}`;
+          dbKnownPaths.add(altPath);
 
-            if (!r2KeyMap.has(altPath)) {
-              issues.push({
-                severity: "CRITICAL",
-                code: "MISSING_PART",
-                datasetType: ds.dataset_type,
-                generationId: gen.id,
-                storagePath: part.storage_path,
-                message: `Part recorded in database is missing from R2: ${part.storage_path}`,
-              });
-            }
+          // Verify part exists in R2
+          const inR2 = r2KeyMap.get(part.storage_path) ?? r2KeyMap.get(altPath);
+          if (!inR2) {
+            counts.MISSING_FROM_STORAGE++;
+            items.push({
+              storagePath: part.storage_path,
+              status: "MISSING_FROM_STORAGE",
+              details: `Part ${part.part_number} (${ds.dataset_type} rev ${gen.generation_number}) recorded in DB is missing from R2.`,
+            });
+            issues.push({
+              severity: "CRITICAL",
+              code: "MISSING_PART",
+              datasetType: ds.dataset_type,
+              generationId: gen.id,
+              storagePath: part.storage_path,
+              message: `Part recorded in database is missing from R2: ${part.storage_path}`,
+            });
+            continue;
           }
+
+          const dbBytes = Number(part.byte_count);
+          if (Number.isFinite(dbBytes) && dbBytes > 0 && inR2.size !== dbBytes) {
+            counts.METADATA_MISMATCH++;
+            items.push({
+              storagePath: part.storage_path,
+              status: "METADATA_MISMATCH",
+              details: `Byte size mismatch: DB expects ${dbBytes} B, R2 object reports ${inR2.size} B.`,
+            });
+            issues.push({
+              severity: "CRITICAL",
+              code: "CHECKSUM_MISMATCH",
+              datasetType: ds.dataset_type,
+              generationId: gen.id,
+              storagePath: part.storage_path,
+              message: `Size mismatch on ${part.storage_path}: DB=${dbBytes}, R2=${inR2.size}.`,
+            });
+            continue;
+          }
+
+          counts.VERIFIED++;
+          items.push({
+            storagePath: part.storage_path,
+            status: "VERIFIED",
+            details: `${part.record_count} record(s), ${inR2.size} B, SHA ${String(part.sha256).slice(0, 12)}...`,
+          });
         }
       }
     }
 
     // 3. Check for orphan permanent R2 objects not registered in PostgreSQL
-    for (const [key, obj] of r2KeyMap.entries()) {
+    for (const [key] of r2KeyMap.entries()) {
       if (key.includes("/parts/part-") && !key.includes("/temp/")) {
         if (!dbKnownPaths.has(key)) {
           const parsed = parseStorageKey(key);
+          counts.UNTRACKED_ORPHAN++;
+          items.push({
+            storagePath: key,
+            status: "UNTRACKED_ORPHAN",
+            details: `Part exists in Cloudflare R2 (${parsed?.datasetType || "unknown dataset"}) without a matching DB registry row.`,
+          });
           issues.push({
             severity: "INFO",
             code: "ORPHAN_R2_OBJECT",
@@ -188,8 +304,15 @@ export class SyncReconciliationService {
       }
     }
 
-    const hasCritical = issues.some((i) => i.severity === "CRITICAL");
-    const hasWarning = issues.some((i) => i.severity === "WARNING");
+    const hasCritical =
+      issues.some((i) => i.severity === "CRITICAL") ||
+      counts.MISSING_FROM_STORAGE > 0 ||
+      counts.METADATA_MISMATCH > 0;
+    const hasWarning =
+      issues.some((i) => i.severity === "WARNING") ||
+      counts.UNCOMMITTED_GENERATION > 0 ||
+      counts.INCOMPLETE_PARTS > 0 ||
+      counts.UNTRACKED_ORPHAN > 0;
 
     const status: ReconciliationReport["status"] = hasCritical
       ? "CORRUPTED"
@@ -197,10 +320,21 @@ export class SyncReconciliationService {
       ? "DRIFT_DETECTED"
       : "HEALTHY";
 
+    const overallHealthy =
+      !hasCritical &&
+      counts.MISSING_FROM_STORAGE === 0 &&
+      counts.METADATA_MISMATCH === 0 &&
+      counts.INCOMPLETE_PARTS === 0 &&
+      counts.UNCOMMITTED_GENERATION === 0;
+
     return {
       timestamp: new Date().toISOString(),
       ownerId: storageOwnerUuid,
       status,
+      overallHealthy,
+      totalScanned: items.length,
+      counts,
+      items,
       totalDatasetsChecked: dbDatasets.length,
       totalGenerationsChecked,
       totalPartsChecked,

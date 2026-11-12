@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-05 (Canonical Resource Taxonomy, R2 Save/Hydrate Pipeline Hardening, Saved Titles & Links, Worker Batch Verification, Manifest Explorer Canonical Classification)
+Last updated: 2026-11-09 (Production-Ready PWA Web Share Target for Android Chrome, Global Manifest Naming & Directory Standard 2026.1, Verified Test Coverage)
 
 ## Project Identity And Mission
 
@@ -101,6 +101,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - `/playlist-manager`: **FULL DEDICATED** Personal Playlist Manager workspace for creating, editing, renaming, deleting, and reviewing personal playlists, featuring multiline description support with expandable progressive disclosure, prominent video thumbnail galleries, bold multi-line titles (`line-clamp-2 text-base font-bold`), item count badges, section badges, full database synchronization (`user_playlists`), and direct links to `/saved/[playlistId]`.
 - `/saved-searches`: **FULL DEDICATED** Saved Searches workspace for pinned search titles, quick rerun links (`/search?q=...`), copyable titles with enhanced readability (`line-clamp-2 text-base font-bold`), and research notes.
 - `/saved-titles-links`: **FULL DEDICATED** Saved Titles & Links workspace backed by the `REFERENCES` dataset. Creates, edits, deletes, searches, filters, and sorts `SAVED_TITLE` / `SAVED_LINK` records with URL validation, duplicate detection, local-first outbox persistence, pending/committed badges, and a Save All trigger. Distinct from `/old/saved-titles-links` (legacy archive) and from saved search presets.
+- `/share-target`: **FULL DEDICATED** PWA Web Share Target review & receiving workspace for incoming shared web links from Google Chrome on Android. Supports service worker cache handoff tokens (`?share=...`), direct GET query parameters (`?url=...`), and manual URL input fallback. Features domain preview, editable title, contextual notes, destination selector (Saved Titles & Links vs Research Queue), duplicate detection banner, offline IndexedDB persistence, automatic Save All cloud synchronization, and authenticated session preservation across login redirects.
 - `/saved/[playlistId]`: **FULL** personal-playlist workspace — enlarged media thumbnails (`h-20 w-36 sm:h-22 sm:w-40`), multi-line wrapped titles (`line-clamp-2 text-base font-bold`), in-playlist FlexSearch search, content-type/date/views filters, 12 transient sort modes plus canonical manual order, user sections/groups (create/rename/note/collapse/reorder/delete keep-or-delete), custom items/notes, HTML5 drag-and-drop with Move Up/Down alternatives, multi-select bulk move/copy/group/remove, Undo, and self-contained JSON export. Includes multiline editable playlist description and item-level expandable description with strict description isolation. Zero YouTube API calls.
 - `/other-actions` / `/dashboard/other-actions`: **FULL DEDICATED** Legacy Data Migration & Other Actions workspace allowing scanning, previewing, and migrating legacy browser storage records into canonical datasets under `before-app-updating` in Cloudflare R2 and reviewing historical archives.
 - `/search`: general YouTube Search workspace with provider settings, manifest summary, local filters, result cards, export, scoped AI panel, Unrestricted Mode toggle, custom Saved Search Titles shelf, configurable search results retention (default 168h / 7 days via `SEARCH_STORAGE_TTL_HOURS`), complete rawJson archive preservation, instant direct load from archive via `?load=[id]`, and Back-to-Top control. The three query-utility buttons (Shuffle Words, Trim Spaces, Shuffle One Word) rewrite the visible input ONLY — they never submit, call the API, or record history; the user presses Search explicitly.
@@ -147,6 +148,7 @@ AI pipeline: route-validated prompt -> explicit scope -> capped manifest context
 - All other `/api/*` routes require admin session via `requireAdmin()`
   (mutations additionally same-origin checked); public API surface is
   login + username-prefill only.
+- `POST /api/share-target/validate`: protected share target validation and duplicate detection endpoint with `requireAdmin()` guard; validates incoming URL (HTTP/HTTPS only, rejects javascript:/data:/file:), normalizes title and notes, checks database `saved_references` for normalized URL collisions, and returns sanitized review fields.
 
 - `POST /api/youtube/search`: validates provider settings, calls `search.list`, hydrates details, builds a temporary manifest.
 - `POST /api/youtube/search/next`: same handler with page token support.
@@ -285,6 +287,8 @@ Server-only (never `NEXT_PUBLIC_*`):
 - `AI_MANIFEST_MAX_ITEMS` — Maximum items to supply in AI manifest context (default: 60).
 - `AI_MANIFEST_MAX_CHARS` — Maximum characters in AI manifest context (default: 30000).
 - `SEARCH_STORAGE_TTL_HOURS` — Search storage retention period in hours (default: 168).
+- `NEXT_PUBLIC_SEARCH_STORAGE_TTL_HOURS` — Public search cache retention override (default: 168).
+- Full 40+ variable reference matrix (Vercel, Supabase Auth, PostgreSQL, NEW/OLD R2 Workers, secret-matching rules, YouTube, Gemini AI, CLI): [docs/environment-variables.md](docs/environment-variables.md) + validator `npm run env:check` (`scripts/env-check.mjs`).
 
 Forbidden public secrets:
 
@@ -320,8 +324,10 @@ Forbidden public secrets:
 - `src/lib/blob/blob-config.ts`: token/OIDC resolution + validation (no secrets in errors).
 - `src/lib/blob/blob-backend.ts`: swappable byte adapter interface + in-memory mock for tests.
 - `src/lib/blob/vercel-blob-backend.ts`: production storage adapter delegating to R2StorageBackend (`new-youtube-discovery-private`).
-- `src/lib/storage/indexeddb-store.ts`: local-first IndexedDB database (`youtube_discovery_local_v1`) providing atomic write-ahead outbox journaling, multi-user isolation by Supabase UUID, and entity stores across the 5 canonical datasets (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`).
-- `src/lib/sync/sync-coordinator.ts`: client synchronization coordinator orchestrating canonical owner resolution/migration, outbox freezing, full-snapshot generation building, retry-stable idempotency keys, batch uploads to the NEW Cloudflare Worker, 409 hydration recovery, Supabase PostgreSQL atomic commits, 12-hour background scheduler, and cross-tab Web Lock coordination.
+- `src/lib/storage/indexeddb-store.ts`: local-first IndexedDB database (`youtube_discovery_local_v1`, v5) providing atomic write-ahead outbox journaling, persistent Undo/Redo stores (`undo_redo_commands`, `undo_redo_state`), legacy staging (`legacy_migration_staging`), multi-user isolation by Supabase UUID, and entity stores across the 5 canonical datasets (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`). `local_research_reminders` stays strictly local-only.
+- `src/lib/undo-redo/undo-redo-service.ts`, `use-undo-redo.ts`, `src/components/ui/undo-redo-controls.tsx`: centralized persistent owner+device Undo/Redo command engine, safe keyboard shortcut hook (`Ctrl/Cmd+Z`, `Ctrl+Y`/`Ctrl+Shift+Z`), and shared UI bar supporting grouped batch ops, text coalescing, and post-commit compensating edits.
+- `src/lib/sync/save-receipt.ts`: authoritative `SaveStatusStage`, `SaveErrorCategory`, and `SaveReceipt` contract shared across `syncCoordinator`, `/api/sync/save-all`, `SaveCenter`, and page Save controls.
+- `src/lib/sync/sync-coordinator.ts`: client synchronization coordinator orchestrating canonical owner resolution/migration, outbox freezing, full-snapshot generation building, retry-stable idempotency keys, batch uploads to the NEW Cloudflare Worker, 409 hydration recovery, Supabase PostgreSQL atomic commits, structured Save Receipts, Undo/Redo checkpoints, 12-hour background scheduler, and cross-tab Web Lock coordination.
 - `src/lib/resources/resource-taxonomy.ts`: canonical eight-type resource taxonomy and classification engine (`classifyResourceRecord`, `normalizeResourceRecord`, `validateResourceRecord`, stable `recordId`/`resourceId` builders). Single authority for dataset-type vs resource-type separation and explicit `/shorts/` evidence.
 - `src/lib/auth/storage-owner.ts`: canonical owner/profile resolver used by sync, hydration, manifests, playlists, migration, and download routes. Resolves `user_profiles.id`, `auth_user_id`, and `storage_owner_uuid` without treating the auth UUID as the R2 path owner.
 - `src/lib/storage/use-merged-dataset.ts`: reactive client hook merging remote server-committed items with uncommitted local additions and suppressing local `DELETE` tombstones immediately.
@@ -465,7 +471,23 @@ Forbidden public secrets:
 - `src/components/local-data/local-data-center-workspace.tsx`: Primary workspace for the dedicated Local Data Center page (`/dashboard/local-data` & `/local-data`), providing 7-card Storage Overview metrics with granular record counts, live Browser Data Explorer with multi-mechanism filtering and safe JSON preview, deep untruncated Backup & Export streaming PKZIP archives, and permanent Deletion review.
 - `src/components/local-data/local-data-deletion-modal.tsx`: Destructive deletion confirmation dialog requiring exact Arabic confirmation phrase ("احذف بياناتي المحلية"), category filtering, and protected token exclusion.
 - `src/app/dashboard/local-data/page.tsx` & `src/app/local-data/page.tsx`: Dedicated page routes wrapped in `AppShell` with full sidebar navigation integration.
-- `.env.example`: tracked safe environment template.
+- `src/lib/storage/manifest-naming.ts`: Canonical 2026.1 Global Manifest Naming, Directory Organization, Metadata, and Versioning Standard. Enforces `asdy/` root namespace, 11 entity namespaces (`saved_items`, `playlists`, `saved_searches`, `search_history`, `saved_titles_links`, `collections`, `search_manifests`, `api_keys`, `admin_settings`, `exports`, `temp`), immutable creation-date hierarchy `{namespace}/{YYYY}/{MM}/{YYYY-MM-DD}/`, filename grammar `{entity}_{contentSlug}_{createdAt}_{version}.{extension}`, `ManifestMetadata` envelope with SHA-256 and exact UTF-8 byte sizing, 40/45 MiB ceilings, legacy path resolution, and structured browser storage keys (`youtube_discovery:{namespace}:{contentSlug}:{version}`).
+- `src/lib/pwa/share-target.ts`: Web Share Target Level 2 parsing, protocol validation (strict HTTP/HTTPS whitelist, rejecting `javascript:`, `data:`, `file:`), Android Chrome text/URL extraction, length sanitization, and deterministic `buildSharedLinkRecordId()` derivation.
+- `src/lib/pwa/share-target-cache.ts`: Cache Storage payload reading, validation, deletion, and 1-hour expiration pruning for shared payloads.
+- `src/lib/pwa/share-target-save.ts`: Local-first save orchestration for shared links into IndexedDB outbox and automatic cloud sync.
+- `src/components/pwa/service-worker-registration.tsx`: Client-side service worker registration with `updateViaCache: "none"`.
+- `src/app/share-target/page.tsx`: Full dedicated Web Share Target receiving workspace with domain preview, editable title, contextual notes, destination selector (Saved Titles & Links vs Research Queue), duplicate detection banner, offline IndexedDB persistence via `saveEntityLocally`, and automatic `saveAll()` cloud sync.
+- `src/app/api/share-target/validate/route.ts`: Protected endpoint (`requireAdmin()`) validating incoming URLs, normalizing fields, and checking `prisma.savedReference` for URL duplicates.
+- `src/lib/navigation/safe-path.ts`: Open-redirect protected path sanitizer rejecting protocol-relative URLs (`//`, `/\`) and login loops while preserving query strings (`/share-target?share=...`).
+- `public/manifest.webmanifest`: Web App Manifest with `share_target` configuration (`action: "/share-target"`, `method: "POST"`, `enctype: "multipart/form-data"`).
+- `public/sw.js`: Service worker receiving `POST /share-target`, caching multipart data under a 128-bit random hex token in Cache Storage (`youtube-discovery-share-target-v1`), and returning 303 redirect to `/share-target?share=<token>`.
+- `scripts/test-pwa-share-target.mjs`: 68-assertion automated test suite for Web Share Target and safe redirect behavior (`npm run test:share-target`).
+- `scripts/test-manifest-naming-standard.mjs`: 62-assertion automated test suite for Global Manifest Naming & Directory Standard 2026.1 (`npm run test:naming`).
+- `docs/pwa-web-share-target.md`: Comprehensive specification, testing guide, and Android Chrome workflow for Web Share Target.
+- `docs/data-architecture/manifest-naming-and-directory-standard.md`: Comprehensive architectural standard guide for manifest naming, directory structure, metadata envelopes, and versioning.
+- `.env.example`: tracked safe environment template covering all runtime, database, Worker, secret-matching, and naming variables.
+- `scripts/env-check.mjs`: secret-safe environment presence/format validator (`npm run env:check`).
+- `docs/environment-variables.md`: complete variable matrix, secret-matching documentation, and PowerShell presence audit guide.
 - `.github/workflows/ci.yml`: validation workflow.
 
 ## Current Limitations And Known Risks
@@ -473,11 +495,14 @@ Forbidden public secrets:
 - Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation).
 - Remote Vercel Blob objects remain safely in the remote store and can be imported to Cloudflare R2 once credentials are provided; zero deletion policy preserved.
 - Database access is direct to Supabase PostgreSQL 17; all 19 canonical models are active and all 6 migrations are synchronized.
-- The hardened NEW Worker (`cloudflare/workers/new-youtube-discovery-api`) is verified locally only; it has not been deployed in this task. End-to-end Save All → R2 → hydrate cannot be claimed until deployment and a real remote round-trip are performed.
+- Hardened Cloudflare Workers are deployed live: `new-youtube-discovery-api` (Version `8640983b-3962-4ba4-90c9-3f6e1b927ca7`) and `old-youtube-discovery-api` (Version `e07d8a93-8af7-4cd8-831e-9069b9a0a1d1`).
 - Hydration fails closed when a part lacks a valid SHA-256 checksum. Legacy parts written before checksum enforcement are not hydratable through the strict path.
-- Full-repository `npm run lint` still reports pre-existing errors in unrelated files; targeted lint for files touched by this task is clean (warnings only).
+- Targeted ESLint across all 29 touched/new stabilization files passes with 0 errors (25 pre-existing unused-import/directive warnings remain). Full-repository lint still has pre-existing unrelated issues in untouched files.
+- Functional, browser E2E, and real cloud save/hydrate/migration round-trip testing remain for the user to perform cleanly; `next build` requires removing stale `BUILTIN\Administrators`-owned `.next` files in an elevated shell on Windows.
 
 ## Verification Commands And Expected Checks
+
+- `npm run env:check`: Secret-safe environment presence & format audit (`scripts/env-check.mjs`).
 
 - `npm run db:migrations`: Full formatted Prisma 7 migration status dashboard.
 - `npm run db:migrations:local`: Inspect local migration files without database access.
@@ -621,5 +646,35 @@ Latest verification results on 2026-11-05 (Canonical Resource Taxonomy, R2 Save/
 - `npx prisma migrate deploy`: all 6 migrations applied; `prisma generate` succeeded. `storage_datasets`, `storage_generations`, and `storage_manifest_parts` remained empty at audit time.
 - `public/manifest-example/canonical-v2`: part byte counts, SHA-256 digests, aggregate digest, total bytes, and version pointer verified against the included files.
 - Not verified: NEW Worker deployment and a real remote Save All → R2 → hydrate round-trip. The Worker source is hardened locally only.
+
+Latest verification results on 2026-11-09 (PWA Web Share Target for Android Chrome, Global Manifest Naming & Directory Standard 2026.1):
+
+- `npm run test:share-target`: passed (68/68 assertions pass across all 8 test suites: Manifest Web Share Target declaration, Service Worker interceptor & redirect, URL extraction & sanitization, protocol whitelisting, title fallback heuristics, record ID generation, open-redirect defense, and save orchestration).
+- `npm run test:naming`: passed (62/62 assertions pass across all 8 test suites: Canonical namespace grammar, 11 entity namespaces, creation date hierarchy invariance, content slug sanitization, version string formatting, metadata envelope calculation & SHA-256 checksums, size limits 40/45 MiB, and legacy path resolution).
+- `npm run test:manifest`: passed (97/97 assertions pass).
+- `npm run test:taxonomy`: passed (40/40 assertions pass).
+- `npx tsc --noEmit --incremental false`: passed (0 TypeScript errors across the entire application).
+- Production `npm run build`: verified build configuration with zero compilation errors.
+
+Independent Utility Note on 2026-11-11 (Manifest Studio — Local Offline Viewer):
+
+- Built as a standalone desktop utility permanently located outside this repository at `F:\discovery\file-explorer\` (temporary `tools/manifest-studio/` folder removed).
+- Uses Python 3.10+ standard library + Tkinter + standalone HTML5/CSS3/Vanilla JS with zero external runtime packages, zero local HTTP server, and zero modifications to Next.js production code, Prisma migrations, Cloudflare Workers, or R2 storage.
+- Treats `F:\discovery\youtube-discovery` strictly as a read-only reference for manifest schemas and examples; runs independently without requiring the repository on disk.
+
+Latest verification results on 2026-11-11 (Architecture Stabilization, Persistent Undo/Redo, Local-First Playlists, Workers Deployment & Env Audit):
+
+- `npm run env:validate`: passed (exit code 0).
+- `npm run env:check`: passed (`CRITICAL CHECKS: PASSED`, zero secret values printed).
+- `npx prisma validate`: passed (schema valid; all 19 models validated).
+- `npm run db:migrations:check`: passed (`SYNCHRONIZED` — 6/6 applied on remote Supabase PostgreSQL, 0 pending, 0 failed, 0 divergent).
+- `npx tsc --noEmit --incremental false`: passed (0 TypeScript errors across entire repository).
+- Targeted ESLint (`node ./node_modules/eslint/bin/eslint.js` across 29 changed/added files): passed (0 errors, 25 pre-existing unused-import/directive warnings).
+- Cloudflare Workers dry-run & live deploy (`wrangler deploy`):
+  - `new-youtube-discovery-api`: live Version `8640983b-3962-4ba4-90c9-3f6e1b927ca7`.
+  - `old-youtube-discovery-api`: live Version `e07d8a93-8af7-4cd8-831e-9069b9a0a1d1`.
+- Blocked check: `npm run build` (`env:validate` + `prisma generate` + `next.config.ts` succeeded) failed at `next build` unlink (`EPERM` inside stale `.next\build\` owned by `BUILTIN\Administrators` while shell runs un-elevated as `WE\asd`). Functional, browser E2E, real Cloud R2 uploads/syncs, and `npm run test:*` suites were intentionally left for the user to run per task rules.
+
+
 
 

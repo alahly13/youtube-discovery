@@ -15,7 +15,10 @@ Dedicated Cloudflare Worker managing historical archive manifests across the 4 c
 - **Worker Name:** `old-youtube-discovery-api`
 - **R2 Binding:** `env.OLD_BUCKET` -> `old-youtube-discovery-private`
 - **Live URL:** `https://old-youtube-discovery-api.elmahdyabdulla208.workers.dev`
-- **Authentication:** Web Crypto HMAC-SHA256 Capability Grant JWTs
+- **Live Version ID:** `e07d8a93-8af7-4cd8-831e-9069b9a0a1d1` (deployed 2026-11-11)
+- **Authentication:** Web Crypto HMAC-SHA256 Capability Grant JWTs (`upload`, `download`, `head`, `list`, `delete`)
+- **CORS & Origin Policy:** Browser origins restricted to `ALLOWED_ORIGINS` (`Origin` rejected with `403` when disallowed)
+- **Write Guard:** Writes restricted to canonical `asdy/old/{saved-items,saved-playlists,saved-titles-links,saved-search-history,unclassified,temp}/` prefixes; non-temp existing objects cannot be overwritten (`409` on differing content)
 - **Safety Policy:** Committed historical manifests cannot be deleted via the API (Zero-deletion guarantee).
 
 ## Secret Setup (One-Time)

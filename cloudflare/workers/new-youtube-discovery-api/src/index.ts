@@ -73,9 +73,9 @@ const ALLOWED_JSON_CONTENT_TYPES = new Set([
   "application/json; charset=utf-8",
 ]);
 
-// Helper: Base64URL decode to Uint8Array
+// Helper: Base64 / Base64URL decode to Uint8Array
 function base64UrlDecode(str: string): Uint8Array {
-  let base64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  let base64 = str.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
   while (base64.length % 4) {
     base64 += "=";
   }
@@ -472,17 +472,30 @@ export default {
           uploaded: string;
         }> = [];
 
-        // Reject duplicate keys before writing anything. A duplicate would
-        // make the batch non-deterministic and could mask a path-builder bug.
+        // Phase 1 (Validate All Before Writing Any): prevents partial writes if any
+        // object in the batch fails scope, size, SHA-256, or immutability checks.
         const seenKeys = new Set<string>();
         let totalBytes = 0;
+        const preparedWrites: Array<{
+          key: string;
+          bytes: Uint8Array;
+          contentType: string;
+          computedHex: string;
+          skipWriteReceipt?: {
+            key: string;
+            size: number;
+            etag: string;
+            sha256: string;
+            uploaded: string;
+          };
+        }> = [];
 
         for (const item of body.items) {
           const key = sanitizeKey(item.key);
 
           if (seenKeys.has(key)) {
             return jsonResponse(
-              { error: `Duplicate object key '${key}' in batch.` },
+              { code: "WORKER_IMMUTABLE_CONFLICT", error: `Duplicate object key '${key}' in batch.` },
               409,
               cors
             );
@@ -492,7 +505,7 @@ export default {
           // Verify key is in authorized scope
           if (!key.startsWith(authCheck.claims.key)) {
             return jsonResponse(
-              { error: `Item key '${key}' outside authorized prefix '${authCheck.claims.key}'.` },
+              { code: "WORKER_FORBIDDEN", error: `Item key '${key}' outside authorized prefix '${authCheck.claims.key}'.` },
               403,
               cors
             );
@@ -500,7 +513,7 @@ export default {
 
           if (authCheck.claims.allowed_keys && !authCheck.claims.allowed_keys.includes(key)) {
             return jsonResponse(
-              { error: `Item key '${key}' not in token's allowed_keys list.` },
+              { code: "WORKER_FORBIDDEN", error: `Item key '${key}' not in token's allowed_keys list.` },
               403,
               cors
             );
@@ -510,7 +523,7 @@ export default {
           // read-only compatibility paths.
           if (!isOwnerScopedKey(key, owner, { allowLegacy: false })) {
             return jsonResponse(
-              { error: `Item key '${key}' is outside the canonical owner namespace.` },
+              { code: "WORKER_FORBIDDEN", error: `Item key '${key}' is outside the canonical owner namespace.` },
               403,
               cors
             );
@@ -519,7 +532,7 @@ export default {
           const contentType = item.contentType || "application/json";
           if (!isAllowedJsonContentType(contentType)) {
             return jsonResponse(
-              { error: `Unsupported content type '${contentType}'. Only application/json is accepted in persistence batches.` },
+              { code: "WORKER_INVALID_REQUEST", error: `Unsupported content type '${contentType}'. Only application/json is accepted in persistence batches.` },
               415,
               cors
             );
@@ -535,7 +548,7 @@ export default {
 
           if (bytes.byteLength > MAX_SINGLE_OBJECT_BYTES) {
             return jsonResponse(
-              { error: `Object '${key}' is ${bytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte per-object limit.` },
+              { code: "WORKER_PAYLOAD_TOO_LARGE", error: `Object '${key}' is ${bytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte per-object limit.` },
               413,
               cors
             );
@@ -544,7 +557,7 @@ export default {
           totalBytes += bytes.byteLength;
           if (totalBytes > MAX_BATCH_BYTES) {
             return jsonResponse(
-              { error: `Batch exceeds the ${MAX_BATCH_BYTES} byte total limit.` },
+              { code: "WORKER_PAYLOAD_TOO_LARGE", error: `Batch exceeds the ${MAX_BATCH_BYTES} byte total limit.` },
               413,
               cors
             );
@@ -554,9 +567,10 @@ export default {
           const digest = await crypto.subtle.digest("SHA-256", bytes);
           const computedHex = bufToHex(digest);
 
-          if (computedHex.toLowerCase() !== item.sha256.toLowerCase()) {
+          if (!item.sha256 || computedHex.toLowerCase() !== item.sha256.toLowerCase()) {
             return jsonResponse(
               {
+                code: "WORKER_CHECKSUM_MISMATCH",
                 error: `SHA-256 integrity mismatch for key '${key}'. Computed ${computedHex}, expected ${item.sha256}.`,
               },
               400,
@@ -564,24 +578,32 @@ export default {
             );
           }
 
-          // Idempotency: an identical existing object is accepted without a
-          // rewrite. A different object at the same immutable key is a hard
-          // conflict; generation objects must never be silently replaced.
+          // Idempotency / immutability check:
+          // - Generation manifests and parts are write-once; matching SHA is idempotent,
+          //   different content is a hard 409 conflict.
+          // - Mutable dataset pointers (/version.json, root /manifest.json) may advance cleanly.
           const existing = await env.NEW_BUCKET.head(key);
-          if (existing) {
+          if (existing && !isMutableIndexKey(key)) {
             const existingSha = existing.customMetadata?.sha256?.toLowerCase();
             if (existingSha === computedHex) {
-              receipts.push({
+              preparedWrites.push({
                 key,
-                size: existing.size,
-                etag: existing.httpEtag,
-                sha256: computedHex,
-                uploaded: existing.uploaded.toISOString(),
+                bytes,
+                contentType,
+                computedHex,
+                skipWriteReceipt: {
+                  key,
+                  size: existing.size,
+                  etag: existing.httpEtag,
+                  sha256: computedHex,
+                  uploaded: existing.uploaded.toISOString(),
+                },
               });
               continue;
             }
             return jsonResponse(
               {
+                code: "WORKER_IMMUTABLE_CONFLICT",
                 error: `Immutable object '${key}' already exists with different content. Refusing to overwrite a committed generation object.`,
               },
               409,
@@ -589,14 +611,25 @@ export default {
             );
           }
 
-          const uploadedObj = await env.NEW_BUCKET.put(key, bytes, {
-            httpMetadata: { contentType },
+          preparedWrites.push({ key, bytes, contentType, computedHex });
+        }
+
+        // Phase 2: All validations passed; write objects to R2
+        const uploadedAt = new Date().toISOString();
+        for (const w of preparedWrites) {
+          if (w.skipWriteReceipt) {
+            receipts.push(w.skipWriteReceipt);
+            continue;
+          }
+
+          const uploadedObj = await env.NEW_BUCKET.put(w.key, w.bytes, {
+            httpMetadata: { contentType: w.contentType },
             customMetadata: {
               storage_owner_uuid: owner,
               batch_id: body.batchId,
               dataset_type: body.datasetType || "",
-              sha256: computedHex,
-              uploaded_at: new Date().toISOString(),
+              sha256: w.computedHex,
+              uploaded_at: uploadedAt,
             },
           });
 
@@ -604,7 +637,7 @@ export default {
             key: uploadedObj.key,
             size: uploadedObj.size,
             etag: uploadedObj.httpEtag,
-            sha256: computedHex,
+            sha256: w.computedHex,
             uploaded: uploadedObj.uploaded.toISOString(),
           });
         }

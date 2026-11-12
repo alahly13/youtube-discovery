@@ -191,7 +191,11 @@ export function renderDashboard(report, options = {}) {
       const nameDisplay = truncate(m.migrationName, colName - 2);
       const localText = m.localExists ? `${colors.green}Yes${colors.reset}` : `${colors.red}No${colors.reset}`;
       const statusBadge = formatStatusBadge(m.dbStatus);
-      const timeDisplay = m.appliedAt ? truncate(m.appliedAt, colTime) : `${colors.gray}Pending${colors.reset}`;
+      const timeDisplay = m.appliedAt
+        ? truncate(m.appliedAt, colTime)
+        : m.dbStatus === "UNAVAILABLE" || m.dbStatus === "NOT_CHECKED"
+        ? `${colors.brightYellow}Unknown${colors.reset}`
+        : `${colors.gray}Pending${colors.reset}`;
       const durationDisplay = m.duration || `${colors.gray}-${colors.reset}`;
 
       // Clean padding accounting for ANSI codes

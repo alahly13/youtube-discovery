@@ -22,6 +22,7 @@ import { useUserPlaylistsStore } from "@/lib/state/user-playlists-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { formatDate } from "@/lib/utils/format";
 import { ExpandableDescription } from "@/components/youtube/expandable-description";
 
@@ -180,6 +181,8 @@ export function PlaylistManagerWorkspace() {
                 <option value="items_desc">Most Items</option>
               </select>
             </div>
+
+            <UndoRedoControls scope={["PLAYLIST"]} enableKeyboardShortcuts compact />
 
             <Button
               variant="primary"

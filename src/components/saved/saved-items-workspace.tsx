@@ -34,6 +34,7 @@ import { ExpandableDescription } from "@/components/youtube/expandable-descripti
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { formatCompactCount, formatDate, formatDuration } from "@/lib/utils/format";
 
 type TypeFilter = "all" | "video" | "shorts" | "channel" | "playlist";
@@ -400,8 +401,9 @@ export function SavedItemsWorkspace() {
               </button>
             </div>
 
-            {/* Sort Selector */}
-            <div className="flex items-center gap-2">
+            {/* Undo/Redo & Sort Selector */}
+            <div className="flex flex-wrap items-center gap-2">
+              <UndoRedoControls scope={["SAVED_ITEMS"]} enableKeyboardShortcuts compact />
               <select
                 value={sortOption}
                 onChange={(e) => setSortOption(e.target.value as SortOption)}

@@ -20,7 +20,7 @@ Every request must carry a capability token with:
 - `aud` = expected audience
 - `storage_owner_uuid` = the canonical `user_profiles.storage_owner_uuid`
 - `key` = the authorized object key or prefix
-- `operation` = one of `read`, `write`, `list`, `delete`, `verify`, `batch_verify`
+- `operation` = one of `upload`, `download`, `head`, `list`, `delete`, `batch_upload`, `batch_verify`
 - `exp` = short expiration
 
 Additional enforcement:
@@ -77,11 +77,9 @@ npx wrangler login
 npm run worker:new:deploy
 ```
 
-### Current deployment status (2026-11-05)
+### Current deployment status (2026-11-11)
 
-The hardened Worker source in this directory is **local only and has not been deployed** in this change set. The remote Worker must be deployed before end-to-end save/hydrate can be claimed, because `POST /api/sync/save-all` now requires `batch_verify` and owner-namespace enforcement.
-
-After deployment, run the remote Worker suite and a real save/hydrate round-trip. Do not treat local mocked tests as proof of remote behavior.
+The hardened Worker source is **deployed live** to `new-youtube-discovery-api` (Version ID: `8640983b-3962-4ba4-90c9-3f6e1b927ca7`) with two-phase `/v1/batches/upload` validation, mutable dataset pointer allowance (`/version.json`), `/v1/batches/verify`, and strict owner-namespace enforcement.
 
 ## Logs & Monitoring
 

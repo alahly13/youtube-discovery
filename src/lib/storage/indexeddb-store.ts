@@ -17,7 +17,7 @@ import { getOriginDeviceMeta } from "../device/device-identity";
  */
 
 export const IDB_DATABASE_NAME = "youtube_discovery_local_v1";
-export const IDB_DATABASE_VERSION = 4;
+export const IDB_DATABASE_VERSION = 5;
 
 export const CANONICAL_DATASET_TYPES = [
   "SAVED_ITEMS",
@@ -45,6 +45,10 @@ export const IDB_STORES = {
   DATASET_CATALOG: "local_dataset_catalog",
   SYNC_JOURNAL: "sync_journal",
   SYNC_LEASES: "sync_leases",
+  // v5 additions (additive — existing user stores are never dropped):
+  UNDO_REDO_COMMANDS: "undo_redo_commands",
+  UNDO_REDO_STATE: "undo_redo_state",
+  LEGACY_MIGRATION_STAGING: "legacy_migration_staging",
 } as const;
 
 export interface PendingOperation {
@@ -113,6 +117,68 @@ export interface PendingOperationsSummary {
   totalPending: number;
   byDataset: Record<CanonicalDatasetType, number>;
   estimatedBytes: number;
+}
+
+/**
+ * Single reversible entity change inside a persistent Undo/Redo command.
+ * Supports multi-record atomic commands (e.g., playlist group delete with
+ * item reassignment, bulk deletes, drag-and-drop reorder).
+ */
+export interface UndoRedoRecordMutation {
+  datasetType: CanonicalDatasetType;
+  entityId: string;
+  /** Entity state prior to this command; `null` if newly created. */
+  beforeState: Record<string, unknown> | null;
+  /** Entity state produced by this command; `null` if deleted. */
+  afterState: Record<string, unknown> | null;
+}
+
+export type UndoRedoLifecycleState = "STAGED_LOCAL" | "SYNCED_CLOUD";
+
+export interface UndoRedoCommandRecord {
+  commandId: string;
+  ownerId: string;
+  deviceId: string;
+  deviceLabel: string;
+  sequenceNumber: number;
+  scope: "SAVED_ITEMS" | "PLAYLIST" | "REFERENCES" | "SAVED_SEARCHES" | "MULTI_DATASET";
+  datasetType: CanonicalDatasetType;
+  commandType: string;
+  label: string;
+  coalesceKey?: string;
+  createdAt: string;
+  updatedAt: string;
+  lifecycleState: UndoRedoLifecycleState;
+  syncBatchId?: string;
+  committedGenerationId?: string;
+  committedRevision?: number;
+  changes: UndoRedoRecordMutation[];
+}
+
+export interface UndoRedoStateRecord {
+  ownerId: string;
+  deviceId: string;
+  /** Highest applied sequenceNumber in this owner+device command log (0 = before first command). */
+  cursorSequence: number;
+  nextSequence: number;
+  maxHistoryEntries: number;
+  updatedAt: string;
+}
+
+export interface LegacyMigrationStagingRecord {
+  stagingId: string;
+  ownerId: string;
+  datasetType: CanonicalDatasetType;
+  sourceKind: "indexeddb" | "localstorage" | "json-backup";
+  sourceName: string;
+  itemCount: number;
+  duplicateCount: number;
+  errorCount: number;
+  stagedAt: string;
+  status: "STAGED_LOCAL" | "UPLOADED" | "VERIFIED" | "COMMITTED" | "FAILED";
+  items: Record<string, unknown>[];
+  generationPathPrefix?: string;
+  receipt?: Record<string, unknown>;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -250,6 +316,30 @@ export function openLocalDatabase(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(IDB_STORES.SYNC_LEASES)) {
         db.createObjectStore(IDB_STORES.SYNC_LEASES, { keyPath: "leaseName" });
       }
+
+      // 16. undo_redo_commands (Persistent, owner- and device-scoped Undo/Redo log)
+      // Preserves command history across reloads and across Save to Cloud R2 checkpoints.
+      if (!db.objectStoreNames.contains(IDB_STORES.UNDO_REDO_COMMANDS)) {
+        const cmdStore = db.createObjectStore(IDB_STORES.UNDO_REDO_COMMANDS, { keyPath: "commandId" });
+        cmdStore.createIndex("ownerId", "ownerId", { unique: false });
+        cmdStore.createIndex("ownerId_sequenceNumber", ["ownerId", "sequenceNumber"], { unique: false });
+        cmdStore.createIndex("ownerId_deviceId", ["ownerId", "deviceId"], { unique: false });
+        cmdStore.createIndex("ownerId_datasetType", ["ownerId", "datasetType"], { unique: false });
+        cmdStore.createIndex("syncBatchId", "syncBatchId", { unique: false });
+      }
+
+      // 17. undo_redo_state (Active stack pointer per owner + device)
+      if (!db.objectStoreNames.contains(IDB_STORES.UNDO_REDO_STATE)) {
+        const urStateStore = db.createObjectStore(IDB_STORES.UNDO_REDO_STATE, { keyPath: ["ownerId", "deviceId"] });
+        urStateStore.createIndex("ownerId", "ownerId", { unique: false });
+      }
+
+      // 18. legacy_migration_staging (Local staging area for scanned/normalized legacy backups)
+      if (!db.objectStoreNames.contains(IDB_STORES.LEGACY_MIGRATION_STAGING)) {
+        const stagingStore = db.createObjectStore(IDB_STORES.LEGACY_MIGRATION_STAGING, { keyPath: "stagingId" });
+        stagingStore.createIndex("ownerId", "ownerId", { unique: false });
+        stagingStore.createIndex("ownerId_datasetType", ["ownerId", "datasetType"], { unique: false });
+      }
     };
   });
 
@@ -302,6 +392,12 @@ export async function saveEntityLocally(
   payload: Record<string, unknown>,
   operationType: "UPSERT" | "APPEND" = "UPSERT"
 ): Promise<{ ok: boolean; operationId: string }> {
+  const cleanOwnerId = ownerId?.trim();
+  const cleanEntityId = entityId?.trim();
+  if (!cleanOwnerId || !cleanEntityId) {
+    throw new Error("LOCAL_STORAGE_ERROR: ownerId and entityId are required for local persistence.");
+  }
+
   const db = await openLocalDatabase();
   const storeName = getStoreNameForDataset(datasetType);
 
@@ -309,9 +405,9 @@ export async function saveEntityLocally(
   const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const fullOp: PendingOperation = {
     operationId,
-    ownerId,
+    ownerId: cleanOwnerId,
     datasetType,
-    entityId,
+    entityId: cleanEntityId,
     operationType,
     payload,
     createdAt: new Date().toISOString(),
@@ -328,7 +424,7 @@ export async function saveEntityLocally(
     // Prepare entity record for store
     const entityRecord: Record<string, unknown> = {
       ...payload,
-      ownerId,
+      ownerId: cleanOwnerId,
       _localStatus: "LOCAL_PENDING",
       _syncStatus: "LOCAL",
       _originDeviceId: deviceMeta.originDeviceId,
@@ -338,9 +434,9 @@ export async function saveEntityLocally(
 
     // Store-specific primary key requirements
     if (datasetType === "SAVED_ITEMS") {
-      entityRecord.platformItemId = entityId;
+      entityRecord.platformItemId = cleanEntityId;
     } else {
-      entityRecord.id = entityId;
+      entityRecord.id = cleanEntityId;
     }
 
     entityStore.put(entityRecord);
@@ -350,7 +446,7 @@ export async function saveEntityLocally(
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
-            detail: { datasetType, entityId, operationType: "UPSERT" },
+            detail: { datasetType, entityId: cleanEntityId, operationType: "UPSERT" },
           })
         );
       }
@@ -368,6 +464,12 @@ export async function deleteEntityLocally(
   datasetType: CanonicalDatasetType,
   entityId: string
 ): Promise<{ ok: boolean; operationId: string }> {
+  const cleanOwnerId = ownerId?.trim();
+  const cleanEntityId = entityId?.trim();
+  if (!cleanOwnerId || !cleanEntityId) {
+    throw new Error("LOCAL_STORAGE_ERROR: ownerId and entityId are required for local delete.");
+  }
+
   const db = await openLocalDatabase();
   const storeName = getStoreNameForDataset(datasetType);
 
@@ -375,11 +477,11 @@ export async function deleteEntityLocally(
   const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const fullOp: PendingOperation = {
     operationId,
-    ownerId,
+    ownerId: cleanOwnerId,
     datasetType,
-    entityId,
+    entityId: cleanEntityId,
     operationType: "DELETE",
-    payload: { entityId },
+    payload: { entityId: cleanEntityId },
     createdAt: new Date().toISOString(),
     status: "PENDING",
     originDeviceId: deviceMeta.originDeviceId,
@@ -392,9 +494,9 @@ export async function deleteEntityLocally(
     const outboxStore = tx.objectStore(IDB_STORES.PENDING_OPERATIONS);
 
     if (datasetType === "SAVED_ITEMS") {
-      entityStore.delete([ownerId, entityId]);
+      entityStore.delete([cleanOwnerId, cleanEntityId]);
     } else {
-      entityStore.delete(entityId);
+      entityStore.delete(cleanEntityId);
     }
 
     outboxStore.add(fullOp);
@@ -403,7 +505,7 @@ export async function deleteEntityLocally(
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
-            detail: { datasetType, entityId, operationType: "DELETE" },
+            detail: { datasetType, entityId: cleanEntityId, operationType: "DELETE" },
           })
         );
       }
@@ -714,6 +816,55 @@ export async function migrateLocalOwnerId(
         }
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error || new Error("Failed to migrate research reminders"));
+      });
+    }
+  }
+
+  // 6. Persistent Undo/Redo commands & stack state + Legacy Migration staging
+  {
+    const cmds = await readAllFromStore<UndoRedoCommandRecord>(db, IDB_STORES.UNDO_REDO_COMMANDS);
+    const ownedCmds = cmds.filter((c) => c.ownerId === from);
+    if (ownedCmds.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = createReadWriteTransaction(db, [IDB_STORES.UNDO_REDO_COMMANDS]);
+        const store = tx.objectStore(IDB_STORES.UNDO_REDO_COMMANDS);
+        for (const cmd of ownedCmds) {
+          store.put({ ...cmd, ownerId: to });
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Failed to migrate undo/redo commands"));
+      });
+    }
+
+    const states = await readAllFromStore<UndoRedoStateRecord>(db, IDB_STORES.UNDO_REDO_STATE);
+    const ownedStates = states.filter((s) => s.ownerId === from);
+    if (ownedStates.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = createReadWriteTransaction(db, [IDB_STORES.UNDO_REDO_STATE]);
+        const store = tx.objectStore(IDB_STORES.UNDO_REDO_STATE);
+        for (const st of ownedStates) {
+          store.delete([from, st.deviceId]);
+          const existingTarget = states.find((t) => t.ownerId === to && t.deviceId === st.deviceId);
+          if (!existingTarget || existingTarget.nextSequence < st.nextSequence) {
+            store.put({ ...st, ownerId: to });
+          }
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Failed to migrate undo/redo state"));
+      });
+    }
+
+    const staged = await readAllFromStore<LegacyMigrationStagingRecord>(db, IDB_STORES.LEGACY_MIGRATION_STAGING);
+    const ownedStaged = staged.filter((s) => s.ownerId === from);
+    if (ownedStaged.length > 0) {
+      await new Promise<void>((resolve, reject) => {
+        const tx = createReadWriteTransaction(db, [IDB_STORES.LEGACY_MIGRATION_STAGING]);
+        const store = tx.objectStore(IDB_STORES.LEGACY_MIGRATION_STAGING);
+        for (const rec of ownedStaged) {
+          store.put({ ...rec, ownerId: to });
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error("Failed to migrate legacy staging records"));
       });
     }
   }
@@ -1328,5 +1479,207 @@ export async function reconcileInterruptedSyncJournal(ownerId: string): Promise<
 
     tx.oncomplete = () => resolve({ recoveredOps, interruptedBatches });
     tx.onerror = () => reject(tx.error || new Error("Failed to reconcile sync journal"));
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Atomic Undo/Redo & Multi-Mutation Helpers + Legacy Migration Staging (v5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetches a single local entity by its owner + dataset + entityId.
+ * Used to capture authentic `beforeState` snapshots prior to Undo/Redo command execution.
+ */
+export async function getLocalEntityById(
+  ownerId: string,
+  datasetType: CanonicalDatasetType,
+  entityId: string
+): Promise<Record<string, unknown> | null> {
+  const cleanOwner = ownerId?.trim();
+  const cleanId = entityId?.trim();
+  if (!cleanOwner || !cleanId) return null;
+
+  const db = await openLocalDatabase();
+  const storeName = getStoreNameForDataset(datasetType);
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([storeName], "readonly");
+    const store = tx.objectStore(storeName);
+    const key = datasetType === "SAVED_ITEMS" ? [cleanOwner, cleanId] : cleanId;
+    const req = store.get(key);
+    req.onsuccess = () => {
+      const rec = req.result as Record<string, unknown> | undefined;
+      if (rec && rec.ownerId === cleanOwner) {
+        resolve(rec);
+        return;
+      }
+      resolve(null);
+    };
+    req.onerror = () => reject(req.error || new Error("Failed to read entity from IndexedDB"));
+  });
+}
+
+/**
+ * Atomically applies one or more entity mutations (UPSERT/DELETE) alongside
+ * their Pending Outbox entries in ONE strict IndexedDB transaction.
+ * Used by both multi-entity Undo/Redo commands and grouped batch edits.
+ */
+export async function applyAtomicDatasetMutations(
+  ownerId: string,
+  mutations: Array<{
+    datasetType: CanonicalDatasetType;
+    entityId: string;
+    state: Record<string, unknown> | null;
+  }>
+): Promise<{ operationIds: string[] }> {
+  const cleanOwnerId = ownerId?.trim();
+  if (!cleanOwnerId) {
+    throw new Error("LOCAL_STORAGE_ERROR: ownerId is required.");
+  }
+  if (mutations.length === 0) return { operationIds: [] };
+
+  const db = await openLocalDatabase();
+  const deviceMeta = getOriginDeviceMeta();
+  const nowIso = new Date().toISOString();
+
+  const storeNames = new Set<string>([IDB_STORES.PENDING_OPERATIONS]);
+  for (const m of mutations) {
+    storeNames.add(getStoreNameForDataset(m.datasetType));
+  }
+
+  const operationIds: string[] = [];
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, Array.from(storeNames));
+    const outboxStore = tx.objectStore(IDB_STORES.PENDING_OPERATIONS);
+
+    for (const m of mutations) {
+      const cleanEntityId = m.entityId.trim();
+      if (!cleanEntityId) continue;
+      const storeName = getStoreNameForDataset(m.datasetType);
+      const entityStore = tx.objectStore(storeName);
+      const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      operationIds.push(operationId);
+
+      if (m.state === null) {
+        if (m.datasetType === "SAVED_ITEMS") {
+          entityStore.delete([cleanOwnerId, cleanEntityId]);
+        } else {
+          entityStore.delete(cleanEntityId);
+        }
+        const op: PendingOperation = {
+          operationId,
+          ownerId: cleanOwnerId,
+          datasetType: m.datasetType,
+          entityId: cleanEntityId,
+          operationType: "DELETE",
+          payload: { entityId: cleanEntityId },
+          createdAt: nowIso,
+          status: "PENDING",
+          originDeviceId: deviceMeta.originDeviceId,
+          originDeviceLabel: deviceMeta.originDeviceLabel,
+        };
+        outboxStore.add(op);
+      } else {
+        const entityRecord: Record<string, unknown> = {
+          ...m.state,
+          ownerId: cleanOwnerId,
+          _localStatus: "LOCAL_PENDING",
+          _syncStatus: "LOCAL",
+          _originDeviceId: deviceMeta.originDeviceId,
+          _originDeviceLabel: deviceMeta.originDeviceLabel,
+          _updatedAt: nowIso,
+        };
+        if (m.datasetType === "SAVED_ITEMS") {
+          entityRecord.platformItemId = cleanEntityId;
+        } else {
+          entityRecord.id = cleanEntityId;
+        }
+        entityStore.put(entityRecord);
+
+        const op: PendingOperation = {
+          operationId,
+          ownerId: cleanOwnerId,
+          datasetType: m.datasetType,
+          entityId: cleanEntityId,
+          operationType: "UPSERT",
+          payload: entityRecord,
+          createdAt: nowIso,
+          status: "PENDING",
+          originDeviceId: deviceMeta.originDeviceId,
+          originDeviceLabel: deviceMeta.originDeviceLabel,
+        };
+        outboxStore.add(op);
+      }
+    }
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        for (const m of mutations) {
+          window.dispatchEvent(
+            new CustomEvent("yt-discovery-local-mutation", {
+              detail: {
+                datasetType: m.datasetType,
+                entityId: m.entityId,
+                operationType: m.state === null ? "DELETE" : "UPSERT",
+              },
+            })
+          );
+        }
+      }
+      resolve();
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed atomic batch mutation in IndexedDB"));
+  });
+
+  return { operationIds };
+}
+
+export async function saveLegacyStagingBatch(
+  record: LegacyMigrationStagingRecord
+): Promise<void> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.LEGACY_MIGRATION_STAGING]);
+    tx.objectStore(IDB_STORES.LEGACY_MIGRATION_STAGING).put(record);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to save legacy migration staging batch"));
+  });
+}
+
+export async function getLegacyStagingBatches(
+  ownerId: string
+): Promise<LegacyMigrationStagingRecord[]> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([IDB_STORES.LEGACY_MIGRATION_STAGING], "readonly");
+    const index = tx.objectStore(IDB_STORES.LEGACY_MIGRATION_STAGING).index("ownerId");
+    const req = index.getAll(ownerId);
+    req.onsuccess = () => resolve((req.result as LegacyMigrationStagingRecord[]) || []);
+    req.onerror = () => reject(req.error || new Error("Failed to read legacy migration staging"));
+  });
+}
+
+export async function updateLegacyStagingBatchStatus(
+  stagingId: string,
+  status: LegacyMigrationStagingRecord["status"],
+  receipt?: Record<string, unknown>
+): Promise<void> {
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.LEGACY_MIGRATION_STAGING]);
+    const store = tx.objectStore(IDB_STORES.LEGACY_MIGRATION_STAGING);
+    const req = store.get(stagingId);
+    req.onsuccess = () => {
+      if (req.result) {
+        store.put({
+          ...req.result,
+          status,
+          ...(receipt ? { receipt } : {}),
+        });
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Failed to update staging status"));
   });
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
+import { NEW_R2_BUCKET, getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { getLoginUsername } from "@/lib/auth/account-store";
 import { getSessionTtlSeconds } from "@/lib/auth/session";
 import { isKeyEncryptionAvailable } from "@/lib/keys/key-crypto";
@@ -16,14 +16,26 @@ export async function GET(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
-  const isR2Configured = Boolean(
-    process.env.NEW_WORKER_URL?.trim() || process.env.OLD_WORKER_URL?.trim()
+  const hasNewWorkerUrl = Boolean(process.env.R2_NEW_WORKER_URL?.trim());
+  const hasOldWorkerUrl = Boolean(process.env.R2_OLD_WORKER_URL?.trim());
+  const hasNewSecret = Boolean(
+    process.env.R2_NEW_WORKER_AUTH_SECRET?.trim() ||
+      process.env.WORKER_AUTH_SECRET?.trim() ||
+      process.env.R2_WORKER_AUTH_SECRET?.trim()
   );
+  const hasOldSecret = Boolean(
+    process.env.R2_OLD_WORKER_AUTH_SECRET?.trim() ||
+      process.env.WORKER_AUTH_SECRET?.trim() ||
+      process.env.R2_WORKER_AUTH_SECRET?.trim()
+  );
+  const isR2Configured = (hasNewWorkerUrl && hasNewSecret) || (hasOldWorkerUrl && hasOldSecret);
 
   const blob = {
     configured: isR2Configured,
     authMode: isR2Configured ? "cloudflare-r2-worker" : "local-disk-fallback",
-    storeIdSet: Boolean(process.env.NEW_R2_BUCKET?.trim() || "new-youtube-discovery-private"),
+    storeIdSet: Boolean(NEW_R2_BUCKET),
+    newWorkerConfigured: hasNewWorkerUrl && hasNewSecret,
+    oldWorkerConfigured: hasOldWorkerUrl && hasOldSecret,
   };
 
   let username: string | null = null;

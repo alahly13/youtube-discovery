@@ -1,16 +1,27 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
+import { NEW_R2_BUCKET, getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
 import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
+import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function extractSafeHost(workerUrl?: string): string {
+  if (!workerUrl?.trim()) return "local-fallback";
+  try {
+    return new URL(workerUrl.trim()).host;
+  } catch {
+    return "configured";
+  }
+}
+
 /**
  * POST /api/admin/storage-verify — safe, non-destructive R2 Storage diagnostics.
- * Runs config/list/write-probe/read-back checks and reports per-check
- * pass/fail WITHOUT secret values. The write probe is a tiny object under
- * __probe__/ that is deleted afterwards; user records are never touched.
+ * Runs config/write-probe/read-back checks and reports per-check pass/fail
+ * WITHOUT secret values. The write probe uses a canonical owner-scoped temporary
+ * object under `asdy/temp/<ownerId>/_probe/` that is deleted afterwards; user
+ * records and committed generations are never touched.
  */
 export async function POST(request: Request) {
   const csrf = assertSameOrigin(request);
@@ -22,20 +33,50 @@ export async function POST(request: Request) {
 
   try {
     const backend = getNewStorageBackend();
+    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+    if (!storageOwnerUuid) {
+      return NextResponse.json(
+        {
+          checks: [
+            {
+              name: "ownerScope",
+              passed: false,
+              detail: "Unable to resolve a canonical storage owner UUID for this session.",
+            },
+          ],
+          allPassed: false,
+          authMode: null,
+          storeIdConfigured: false,
+          observedHost: null,
+          storeIdentity: "not-checked",
+          generatedAt: new Date().toISOString(),
+        },
+        { status: 500 },
+      );
+    }
 
-    // 1. Config Present
-    const hasWorker = Boolean(process.env.NEW_WORKER_URL?.trim());
+    // 1. Config Present — check canonical R2_NEW_WORKER_URL + Worker HMAC secret
+    const workerUrl = process.env.R2_NEW_WORKER_URL?.trim();
+    const hasSecret = Boolean(
+      process.env.R2_NEW_WORKER_AUTH_SECRET?.trim() ||
+        process.env.WORKER_AUTH_SECRET?.trim() ||
+        process.env.R2_WORKER_AUTH_SECRET?.trim(),
+    );
+    const hasWorker = Boolean(workerUrl && hasSecret);
     checks.push({
       name: "configPresent",
       passed: true,
-      detail: hasWorker ? "Cloudflare Worker URL configured" : "Local disk fallback active",
+      detail: hasWorker
+        ? "Cloudflare NEW Worker URL and auth secret configured"
+        : "Cloudflare Worker not fully configured — local disk fallback active",
     });
 
-    // 2. Storage write and read probe
-    const probeKey = `__probe__/verify-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`;
+    // 2. Canonical owner-scoped temp write and read-back probe
+    const probeKey = `asdy/temp/${storageOwnerUuid}/_probe/verify-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.json`;
     const probeContent = JSON.stringify({
       verifiedAt: new Date().toISOString(),
       probe: "storage-verify-check",
+      owner: storageOwnerUuid,
     });
     const probeBuf = Buffer.from(probeContent, "utf8");
 
@@ -52,7 +93,7 @@ export async function POST(request: Request) {
         checks.push({
           name: "writeProbe",
           passed: true,
-          detail: "Round-trip write, read, and verification passed",
+          detail: "Canonical owner-scoped temp write, read-back, and SHA verification passed",
         });
       } else {
         checks.push({
@@ -62,7 +103,7 @@ export async function POST(request: Request) {
         });
       }
 
-      // Cleanup probe
+      // Cleanup temporary probe object
       await backend.delete(probeKey).catch(() => {});
     } catch (probeErr) {
       checks.push({
@@ -78,9 +119,9 @@ export async function POST(request: Request) {
       checks,
       allPassed,
       authMode: hasWorker ? "cloudflare-r2-worker" : "local-disk-fallback",
-      storeIdConfigured: Boolean(process.env.NEW_R2_BUCKET?.trim() || "new-youtube-discovery-private"),
-      observedHost: process.env.NEW_WORKER_URL || "local-fallback",
-      storeIdentity: "verified",
+      storeIdConfigured: Boolean(NEW_R2_BUCKET),
+      observedHost: extractSafeHost(workerUrl),
+      storeIdentity: allPassed ? "verified" : "degraded",
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {

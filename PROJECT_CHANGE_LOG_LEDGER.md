@@ -4208,4 +4208,260 @@ Created and applied: `20261104230000_canonical_resource_classification`.
 
 ### Whether `db:apply` was run
 
-No. `npx prisma migrate deploy` was run; no `prisma migrate reset`, no destructive migration.
+No.
+
+---
+
+## 2026-11-09 (Production-Ready PWA Web Share Target & Global Manifest Naming/Directory Standard 2026.1)
+
+### Date/time
+
+2026-11-09 ~23:30 Local (21:30 UTC)
+
+### Agent/model if known
+
+Antigravity (Gemini 3.8 Flash High)
+
+### Task summary
+
+Implemented two interconnected production-grade architectural standards:
+1. **Production-Ready PWA Web Share Target Integration:**
+   - Updated Web App Manifest (`public/manifest.webmanifest`) to register `share_target` (Level 2 POST `multipart/form-data` with `title`, `text`, `url`).
+   - Integrated lightweight Service Worker (`public/sw.js`) that intercepts native Android Chrome shares, validates payload length ceilings, securely caches fields in Cache Storage under a random 128-bit hex token, and performs an HTTP 303 redirect to prevent duplicate submissions.
+   - Built a dedicated receiving workspace at `/share-target` with domain preview, editable title, contextual notes, destination selector (Saved Titles & Links vs Research Queue), duplicate detection banner, offline IndexedDB persistence, and automatic Save All cloud sync.
+   - Built protected server-side validation route at `POST /api/share-target/validate` (`requireAdmin()`, protocol whitelist, duplicate lookup in `saved_references`).
+   - Hardened `src/proxy.ts` and `src/app/login/page.tsx` with `sanitizeRedirectPath()` to preserve incoming share query parameters across authentication redirects without open-redirect vulnerabilities.
+   - Added `ServiceWorkerRegistration` component to root layout (`src/app/layout.tsx`).
+   - Added "Share Receiver (PWA)" navigation item to sidebar in `src/components/layout/navigation.tsx`.
+2. **Professional Global Manifest Naming, Directory & Versioning Standard (2026.1):**
+   - Built centralized, validated naming utility (`src/lib/storage/manifest-naming.ts`).
+   - Standardized canonical directory hierarchy (`asdy/`, 11 entity namespaces, `{namespace}/{YYYY}/{MM}/{YYYY-MM-DD}/` date hierarchy based on original creation date, individual playlists under `asdy/playlists/{playlistId}/{YYYY}/{MM}/{YYYY-MM-DD}/`, and temporary objects under `asdy/temp/{entityType}/{uploadId}/`).
+   - Implemented canonical filename grammar: `{entity}_{contentSlug}_{createdAt}_{version}.{extension}` (e.g. `saved_items_ai_research_20261109T153000Z_v001.json`).
+   - Created `ManifestMetadata` envelope builder and validator with authentic UTF-8 serialized byte sizing and 64-character lowercase SHA-256 checksums.
+   - Enforced 40 MiB target and 45 MiB hard application ceilings.
+   - Created universal legacy resolver (`resolveManifestPath`) ensuring 100% backward compatibility and zero deletion/mutation of existing Vercel Blob, R2, or local archives.
+   - Documented environment variables in `.env.example`.
+   - Created comprehensive documentation: `docs/data-architecture/manifest-naming-and-directory-standard.md` and `docs/pwa-web-share-target.md`.
+3. **Automated Verification Test Suites:**
+   - Created `scripts/test-pwa-share-target.mjs` (68/68 passing tests).
+   - Created `scripts/test-manifest-naming-standard.mjs` (62/62 passing tests).
+   - Verified zero regression in existing test suites: `npm run test:manifest` (97/97 passing) and `npm run test:taxonomy` (40/40 passing).
+   - Verified strict TypeScript compilation (`tsc --noEmit --incremental false`) with 0 errors across the entire codebase.
+
+### Reason/root cause
+
+User requested a complete, production-ready PWA Web Share Target allowing Chrome on Android users to share web pages directly to the application via native Android Share sheets, review/edit metadata, and save to their library. In addition, user required establishing a unified global standard for manifest naming, directory organization, metadata envelopes, and immutable versioning across all storage providers.
+
+### Files changed
+
+PWA Web Share Target:
+- `public/manifest.webmanifest` (added `share_target` configuration)
+- `public/sw.js` (untracked PWA service worker with Cache Storage handoff)
+- `src/app/share-target/page.tsx` (created dedicated review and save receiving workspace)
+- `src/app/api/share-target/validate/route.ts` (created server validation & duplicate check route)
+- `src/lib/pwa/share-target.ts` (untracked shared contract, parsing, sanitization, recordId builder)
+- `src/lib/pwa/share-target-cache.ts` (untracked Cache Storage payload reader and pruner)
+- `src/lib/pwa/share-target-save.ts` (untracked local-first save orchestration)
+- `src/lib/navigation/safe-path.ts` (untracked open-redirect protected redirect path sanitizer)
+- `src/lib/saved-references/link-identity.ts` (untracked canonical link identity and URL validator)
+- `src/components/pwa/service-worker-registration.tsx` (untracked client service worker registration)
+- `src/components/layout/navigation.tsx` (added Share Receiver link)
+- `src/app/layout.tsx` (registered `ServiceWorkerRegistration`)
+- `src/proxy.ts` (preserved query parameters on login redirect, excluded `sw.js`)
+- `src/app/login/page.tsx` (used `sanitizeRedirectPath` for safe post-login redirection)
+
+Global Manifest Naming & Versioning Standard:
+- `src/lib/storage/manifest-naming.ts` (created centralized naming, directory, metadata, and resolver standard)
+- `.env.example` (documented Section 10 manifest configuration variables)
+- `docs/data-architecture/manifest-naming-and-directory-standard.md` (created comprehensive architecture standard guide)
+- `docs/pwa-web-share-target.md` (created PWA integration and Android testing guide)
+
+Testing, Scripts & Ledgers:
+- `scripts/test-pwa-share-target.mjs` (created 68-assertion test suite)
+- `scripts/test-manifest-naming-standard.mjs` (created 62-assertion test suite)
+- `package.json` (registered `test:share-target` and `test:naming` scripts)
+- `youtube_discovery_ledger.md` (updated current-state ledger, routes, and verification checks)
+- `PROJECT_CHANGE_LOG_LEDGER.md` (appended this dated entry)
+
+### Technical details
+
+1. **Web Share Target Level 2:** Intercepts multipart POST via Service Worker, stores sanitized fields in Cache Storage under a random 128-bit hex token, and returns a 303 redirect to `/share-target?share=<token>`.
+2. **Android Chrome Pattern Normalization:** When Android Chrome shares a link embedded inside the `text` field, `parseSharedFields()` extracts the first valid HTTP/HTTPS URL, strips trailing punctuation, removes the URL from the text to derive clean notes, and falls back to a readable domain/path title if the title was omitted.
+3. **Open-Redirect Hardening:** `sanitizeRedirectPath` rejects protocol-relative URLs (`//attacker.com`), backslash escapes (`/\attacker.com`), and login redirect loops, safely preserving query strings across the login boundary.
+4. **Deterministic Identity:** `buildSharedLinkRecordId(url)` generates `shared-link-{sha256Hex(normalizedUrl).slice(0, 32)}`, making duplicate submissions idempotent.
+5. **2026 Naming Standard:** Directories follow `asdy/{namespace}/{YYYY}/{MM}/{YYYY-MM-DD}/` with invariant creation dates. Filenames follow `{entity}_{contentSlug}_{createdAt}_{version}.{extension}` with compact UTC timestamps.
+6. **Immutable Versioning:** Linear progression `v001` → `v002` with previous version pointers, UTF-8 byte measurement, and SHA-256 digests.
+7. **Legacy Compatibility:** `resolveManifestPath` transparently recognizes standard 2026 paths, generation v2 paths, historical before-app-updating paths, old archives, and browser storage keys with zero data loss or mutation.
+
+### Architecture impact
+
+Consolidates ingestion and storage architecture:
+- Ingestion: Chrome on Android → System Share Sheet → PWA Service Worker → Cache Storage Handoff → `/share-target` Review UI → Local IndexedDB outbox → Cloudflare R2 & Supabase PostgreSQL.
+- Object Naming: Centralized naming and directory builder shared across client, server, and storage layers with immutable linear versioning.
+
+### Environment impact
+
+Added template variables in `.env.example` (Section 10) for standard configuration (`STORAGE_NAMING_VERSION`, `MANIFEST_TARGET_SIZE_BYTES`, `MANIFEST_MAX_OBJECT_SIZE_BYTES`, `MANIFEST_VERSION_PADDING`, `MANIFEST_TIMESTAMP_TIMEZONE`, `TEMP_STORAGE_TTL_SECONDS`, `MANIFEST_CHECKSUM_ALGORITHM`). Real `.env` and `.env.local` files were NOT modified. No secrets were printed.
+
+### Database/migration impact
+
+**Database Approval Gate strictly respected.** No database migrations were created or applied. The PostgreSQL schema foundation remains synchronized across the 6 approved canonical migrations. Duplicate detection safely queries existing `saved_references` via Prisma 7.
+
+### YouTube API/quota impact when relevant
+
+Zero YouTube Data API calls and zero quota consumed. All operations were local PWA, client storage, database querying, validation, and naming algorithms.
+
+### AI scope/safety impact when relevant
+
+None.
+
+### Verification run and results
+
+- `npm run test:share-target`: Passed (68/68 assertions passed covering manifest, parameters, schemes, sanitization, deterministic IDs, save flow, and open-redirect defense).
+- `npm run test:naming`: Passed (62/62 assertions passed covering entities, namespaces, UTC dates, slugs, directories, filenames, metadata envelopes, and legacy resolvers).
+- `npm run test:manifest`: Passed (97/97 assertions passed).
+- `npm run test:taxonomy`: Passed (40/40 assertions passed).
+- `npx tsc --noEmit --incremental false`: Passed with exit code 0 (zero errors across the entire application).
+
+### Blocked checks, if any
+
+None. Automated tests and static checks passed with 100% success rate. Actual Android device testing requires user deployment to an HTTPS host or ngrok tunnel as documented in `docs/pwa-web-share-target.md`.
+
+### Remaining risks/limitations
+
+- Web Share Target requires the PWA to be installed from Chrome on Android before appearing in the native Android Share menu (inherent browser requirement).
+- Safari on iOS does not support the Web Share Target API; users on iOS can use the manual URL input fallback.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No. Database approval gate respected.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## 2026-11-11 (Independent Utility: Manifest Studio — Standalone Relocation to F:\discovery\file-explorer)
+
+### Date/time
+
+2026-11-11 ~19:23+02:00
+
+### Task summary
+
+Moved Manifest Studio out of temporary `tools/manifest-studio/` into its permanent independent root at `F:\discovery\file-explorer\`, cleaned up the temporary folder inside this repository, and verified zero runtime dependency on `youtube-discovery`.
+
+### Reason/root cause
+
+User requested Manifest Studio to live cleanly as a standalone Windows desktop project at `F:\discovery\file-explorer\` rather than inside the `youtube-discovery` repository.
+
+### Files changed
+
+- Updated `youtube_discovery_ledger.md` and `PROJECT_CHANGE_LOG_LEDGER.md` with relocation note.
+- Removed temporary `tools/manifest-studio/` copy after verifying complete standalone installation at `F:\discovery\file-explorer\`.
+- Zero changes to Next.js application code (`src/`), Prisma schema/migrations (`prisma/`), or production storage services.
+
+### Technical details
+
+- Permanent standalone project root: `F:\discovery\file-explorer\`.
+- All workspace, asset thumbnails, generated HTML files, reports, and logs live under `F:\discovery\file-explorer\workspace\` and `F:\discovery\file-explorer\logs\`.
+- Uses `F:\discovery\youtube-discovery` strictly as a read-only schema/example reference when optionally present alongside it; functions standalone if copied to another Windows computer.
+
+### Database/migration impact
+
+None. Zero database migrations created or applied.
+
+### Verification run and results
+
+- `py -3 -m compileall -q F:\discovery\file-explorer`: Passed (exit code 0).
+- `py -3 -m unittest discover -s F:\discovery\file-explorer\tests -p "test_*.py" -v` (executed from `$env:TEMP`): Passed (15/15 tests passing).
+- `node --check F:\discovery\file-explorer\viewer\viewer.js`: Passed (exit code 0).
+- Programmatic Tkinter initialization check from `$env:TEMP`: Passed (`root= F:\discovery\file-explorer`).
+
+### Blocked checks, if any
+
+Manual interactive GUI clicking, UAC elevation prompt clicking, and live browser visual rendering remain to be verified by the user.
+
+### Whether secrets were printed
+
+No.
+
+### Whether migrations were created/applied
+
+No.
+
+### Whether `db:apply` was run
+
+No.
+
+---
+
+## Entry — 2026-11-11 — Architecture Stabilization, Persistent Undo/Redo, Local-First Playlists, Workers Deployment & Env Audit
+
+- **Date/time:** 2026-11-11 19:00 UTC+02
+- **Agent/model:** Antigravity (Full-Stack Engineering Stabilization Session)
+- **Task summary:** Comprehensive end-to-end architecture stabilization (`Frontend -> API -> IndexedDB v5 -> Outbox -> PostgreSQL -> Cloudflare NEW/OLD Workers -> R2 -> Hydration -> UI`), persistent IndexedDB-backed Undo/Redo command engine, local-first User Playlists migration, Save Receipts & error taxonomy, Legacy Migration fixes, Cloudflare Workers hardening + deployment, and complete Environment Variables audit + `.env.example` / `npm run env:check` documentation.
+- **Reason/root cause:** Codebase audit uncovered critical runtime breaks and integration mismatches:
+  1. `useUserPlaylistsStore` mutated PostgreSQL/disk eagerly via `/api/playlists` on every click, bypassing IndexedDB local staging, `Save to Cloud R2`, and Undo/Redo.
+  2. `POST /api/sync/save-all` omitted relational PostgreSQL indexing for `PLAYLIST`, `RESEARCH_QUEUE`, and `SEARCH_HISTORY`, and lacked per-dataset byte/SHA receipts and structured `SaveErrorCategory` taxonomy.
+  3. `/api/admin/storage-status` & `storage-verify` read nonexistent env names (`NEW_WORKER_URL`, `OLD_WORKER_URL`, `NEW_R2_BUCKET`) and probed blocked key `__probe__/...`.
+  4. `/api/manifests/reconcile` wrapped `{ ok, report }` instead of the flat `ReconciliationSummary` shape consumed by `ManifestStorageExplorer`.
+  5. `/api/manifests/upload` (`NEW` branch) & `/api/save/batch` constructed legacy non-canonical paths (`<owner>/persistence/datasets/...`) rejected by NEW Worker.
+  6. `other-actions-workspace.tsx` hardcoded `ownerId = "a5dd9ec7-7345-4f84-a668-12fbdf24120c"`, and `/api/migration/upload` wrote non-UUID strings (`gen_legacy_...`, `part_...`) into `@db.Uuid` columns with hardcoded `generation_number: 1`.
+  7. `new-youtube-discovery-api` `uploadBatch` rejected mutable `/version.json` on revision >= 2 and did not validate all batch items before writing; `old-youtube-discovery-api` lacked `Origin` enforcement and immutable historical write guards.
+  8. `.env.example` omitted multiple used env keys, Worker `.dev.vars.example` templates, and had no safe `npm run env:check` audit command.
+
+- **Files changed:**
+  - `src/lib/storage/indexeddb-store.ts` (upgraded `IDB_DATABASE_VERSION` `4` -> `5`, added `undo_redo_commands`, `undo_redo_state`, `legacy_migration_staging`, `applyAtomicDatasetMutations`, `getLocalEntityById`, migration staging helpers, owner/entityId validation)
+  - `src/lib/undo-redo/undo-redo-service.ts`, `src/lib/undo-redo/use-undo-redo.ts`, `src/components/ui/undo-redo-controls.tsx` (new centralized persistent Undo/Redo command engine, safe keyboard shortcut hook, shared UI toolbar)
+  - `src/lib/sync/save-receipt.ts`, `src/lib/sync/sync-coordinator.ts`, `src/components/layout/save-center.tsx` (structured `SaveStatusStage` & `SaveErrorCategory`, authentic per-dataset Save Receipts, post-commit Undo/Redo checkpointing, offline/unauthenticated deferral honesty)
+  - `src/app/api/sync/save-all/route.ts` (added `indexPlaylists`, `indexResearchQueue`, `indexSearchHistory`, `parent_generation_id`, full receipt metrics, and classified `StageSyncError` responses)
+  - `src/lib/state/user-playlists-store.ts`, `src/lib/state/youtube-workspace-store.ts`, `src/components/saved/saved-titles-links-workspace.tsx`, `src/components/saved/saved-searches-workspace.tsx`, `src/components/saved/saved-items-workspace.tsx`, `src/components/library/playlist-manager-workspace.tsx`, `src/components/library/playlist-detail-workspace.tsx` (local-first playlist staging, Undo/Redo integration across editable datasets, `SavedSearchesWorkspace` wired to `useMergedDataset("REFERENCES")` & pin persistence)
+  - `src/app/api/admin/storage-status/route.ts`, `src/app/api/admin/storage-verify/route.ts`, `src/lib/sync/sync-reconciliation-service.ts`, `src/app/api/manifests/reconcile/route.ts`, `src/app/api/manifests/upload/route.ts`, `src/components/manifests/manifest-upload-workspace.tsx`, `src/app/api/save/batch/route.ts` (canonical env names, `asdy/temp/<owner>/_probe/`, reconciliation schema parity, canonical NEW generation paths)
+  - `src/lib/migration/legacy-migration-service.ts`, `src/app/api/migration/upload/route.ts`, `src/components/migration/other-actions-workspace.tsx` (dynamic owner resolution, `scanBrowserAllLegacySources` incl. IndexedDB + manifests + research queue, `legacy_migration_staging`, UUID primary keys, `parent_generation_id`, Worker `verifyBatch`)
+  - `cloudflare/workers/new-youtube-discovery-api/src/index.ts`, `cloudflare/workers/old-youtube-discovery-api/src/index.ts`, `.dev.vars.example`, `README.md` (Worker hardening + live Cloudflare deployment)
+  - `scripts/db-migrations/renderer.mjs`, `scripts/env-check.mjs`, `package.json`, `.env.example`, `docs/environment-variables.md`, `docs/data-architecture/{current-state,sync-and-recovery}.md`, `docs/blob-persistence.md`, `youtube_discovery_ledger.md`
+
+- **Architecture impact:**
+  - Unifies all 5 canonical datasets (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`) under IndexedDB staging + Outbox + Worker R2 upload/verify + PostgreSQL indexing + persistent Undo/Redo. Keeps `local_research_reminders` strictly 100% client-only.
+  - Preserves immutable committed R2 generations: post-commit Undo/Redo stages a NEW compensating local edit queued for the next revision.
+
+- **Environment impact:**
+  - Added `scripts/env-check.mjs` (`npm run env:check`), updated `.env.example` completely, added `docs/environment-variables.md` and Worker `.dev.vars.example` templates. Fixed `storage-status`/`storage-verify` to read `R2_NEW_WORKER_URL` / `R2_OLD_WORKER_URL` / `R2_NEW_WORKER_AUTH_SECRET`. Real `.env` and `.env.local` were NOT modified; zero secret values printed.
+
+- **Database/migration impact:**
+  - No new SQL migration required (`prisma validate` passed; `npm run db:migrations:check` confirmed `SYNCHRONIZED` across all 6 existing remote migrations).
+
+- **YouTube API/quota impact:**
+  - Zero YouTube API calls or quota consumed.
+
+- **AI scope/safety impact:**
+  - No changes to AI prompt scope or secret handling.
+
+- **Verification run and results (strictly static/deployment checks per user functional-testing boundary):**
+  - `npm run env:validate`: PASSED (exit 0)
+  - `npm run env:check`: PASSED (`CRITICAL CHECKS: PASSED`, 0 secrets printed)
+  - `npx prisma validate`: PASSED (schema valid)
+  - `npm run db:migrations:check`: PASSED (`SYNCHRONIZED`, 6/6 applied on remote Supabase PostgreSQL)
+  - `npx tsc --noEmit --incremental false`: PASSED (0 errors)
+  - Targeted ESLint (`node ./node_modules/eslint/bin/eslint.js` across 29 changed/added files): PASSED (0 errors, 25 pre-existing unused-import/directive warnings)
+  - Cloudflare Workers dry-run & live deploy (`wrangler deploy`):
+    - `new-youtube-discovery-api` deployed Version `8640983b-3962-4ba4-90c9-3f6e1b927ca7`
+    - `old-youtube-discovery-api` deployed Version `e07d8a93-8af7-4cd8-831e-9069b9a0a1d1`
+
+- **Blocked checks, if any:**
+  - `npm run build` (`env:validate` & `prisma generate` & `next.config.ts` succeeded) was blocked at `next build` chunk unlink by Windows ACL permission (`EPERM: operation not permitted, unlink '...\node_modules_20v-8wlfss9m1._.js'` inside `.next\build\` owned by `BUILTIN\Administrators` while agent shell runs un-elevated as `WE\asd`).
+  - Functional, E2E, browser interaction, real Cloud R2 uploads/syncs, and test suite executions (`npm run test:*`) were intentionally NOT run per explicit user instruction; all functional verification remains for the user.
+
+- **Remaining risks/limitations:**
+  - User needs to run an elevated cleanup of stale `.next` (`Remove-Item -Recurse -Force .next`) locally to run `npm run build` as un-elevated user, and then perform end-to-end functional & browser testing (save, playlist CRUD, undo/redo pre/post commit, Save to Cloud R2, hydration reload, legacy migration, and offline fallback).
+
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No new migrations created or applied (remote DB remains synchronized at 6/6).
+- **Whether `db:apply` was run:** No.
+

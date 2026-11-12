@@ -1,0 +1,5 @@
+# Local Wrangler development secrets for old-youtube-discovery-api
+# Copy to `.dev.vars` (gitignored) when testing Worker locally with `wrangler dev`.
+# For production, configure via `npx wrangler secret put WORKER_AUTH_SECRET --config wrangler.jsonc`.
+WORKER_AUTH_SECRET="[MUST-MATCH-R2_OLD_WORKER_AUTH_SECRET-IN-ROOT-ENV]"
+ALLOWED_ORIGINS="http://localhost:3000,http://127.0.0.1:3000,https://youtube-discovery.vercel.app"

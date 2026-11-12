@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
 import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
 import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
+import {
+  buildDatasetRootManifestKey,
+  slugToDatasetType,
+  type CanonicalDatasetType,
+} from "@/lib/storage/canonical-paths";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -123,14 +128,17 @@ export async function POST(request: Request) {
     };
     batchCache.set(cacheKey, committedBatch);
 
-    // Best-effort convenience update of derived root manifest.json
+    // Best-effort convenience update of derived canonical root manifest.json
     try {
+      const canonicalType: CanonicalDatasetType =
+        slugToDatasetType(String(payload.datasetType || datasetId)) ?? "SAVED_ITEMS";
       const backend = getNewStorageBackend();
-      const rootPath = `${storageOwnerUuid}/persistence/datasets/${datasetId}/manifest.json`;
+      const rootPath = buildDatasetRootManifestKey(storageOwnerUuid, canonicalType);
       const rootManifest = {
-        $schema: "https://youtube-discovery.app/schemas/manifest-root-v1.json",
-        schemaVersion: 1,
+        $schema: "https://youtube-discovery.app/schemas/manifest-root-v2.json",
+        schemaVersion: 2,
         datasetId,
+        datasetType: canonicalType,
         ownerId: storageOwnerUuid,
         currentRevision: newRevision,
         currentGenerationId: generationId || `gen_${batchId}`,

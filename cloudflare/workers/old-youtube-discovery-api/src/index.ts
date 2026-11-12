@@ -139,7 +139,7 @@ async function verifyCapabilityToken(
     }
 
     return { valid: true, claims };
-  } catch (err) {
+  } catch {
     return { valid: false, status: 401, error: "Failed to parse or verify token." };
   }
 }
@@ -164,6 +164,43 @@ function getCorsHeaders(request: Request, env: Env): Headers {
   return headers;
 }
 
+// Helper: ArrayBuffer to lowercase hex string
+function bufToHex(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+/**
+ * Browser requests must originate from an explicitly allowed origin.
+ * Server-to-server requests (no Origin header) remain allowed because they
+ * authenticate with a capability token, not ambient cookies.
+ */
+function isRequestOriginAllowed(request: Request, env: Env): boolean {
+  const origin = request.headers.get("Origin");
+  if (!origin) return true;
+  const allowed = env.ALLOWED_ORIGINS
+    ? env.ALLOWED_ORIGINS.split(",").map((s) => s.trim())
+    : DEFAULT_ALLOWED_ORIGINS;
+  return allowed.includes(origin);
+}
+
+const VALID_OLD_WRITE_PREFIXES = [
+  "asdy/old/saved-items/",
+  "asdy/old/saved-playlists/",
+  "asdy/old/saved-titles-links/",
+  "asdy/old/saved-search-history/",
+  "asdy/old/unclassified/",
+  "asdy/old/temp/",
+];
+
+function isValidOldWriteKey(key: string): boolean {
+  return VALID_OLD_WRITE_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
 function jsonResponse(data: unknown, status = 200, corsHeaders: Headers): Response {
   const headers = new Headers(corsHeaders);
   headers.set("Content-Type", "application/json");
@@ -171,7 +208,7 @@ function jsonResponse(data: unknown, status = 200, corsHeaders: Headers): Respon
 }
 
 function sanitizeKey(raw: string): string {
-  let key = decodeURIComponent(raw).replace(/^\/+/, "");
+  const key = decodeURIComponent(raw).replace(/^\/+/, "");
   if (key.includes("..") || key.includes("\\")) {
     throw new Error("Invalid object key: path traversal not permitted.");
   }
@@ -181,6 +218,14 @@ function sanitizeKey(raw: string): string {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const cors = getCorsHeaders(request, env);
+
+    // Reject disallowed browser origins outright.
+    if (!isRequestOriginAllowed(request, env)) {
+      return new Response(
+        JSON.stringify({ code: "WORKER_ORIGIN_FORBIDDEN", error: "Origin is not allowed to access this Worker." }),
+        { status: 403, headers: { "Content-Type": "application/json" } }
+      );
+    }
 
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
@@ -293,6 +338,17 @@ export default {
           return jsonResponse({ error: authCheck.error }, authCheck.status, cors);
         }
 
+        if (!isValidOldWriteKey(key)) {
+          return jsonResponse(
+            {
+              code: "WORKER_FORBIDDEN",
+              error: `Key '${key}' is outside allowed OLD archive prefixes (asdy/old/{saved-items,saved-playlists,saved-titles-links,saved-search-history,unclassified}/).`,
+            },
+            403,
+            cors
+          );
+        }
+
         const contentLength = Number(request.headers.get("Content-Length") || 0);
         if (authCheck.claims.max_bytes && contentLength > authCheck.claims.max_bytes) {
           return jsonResponse(
@@ -303,13 +359,48 @@ export default {
         }
 
         const contentType = request.headers.get("Content-Type") || authCheck.claims.content_type || "application/json";
+        const requestBytes = new Uint8Array(await request.arrayBuffer());
+        const digest = await crypto.subtle.digest("SHA-256", requestBytes);
+        const computedHex = bufToHex(digest);
+
+        // Permanent historical manifests are write-once (idempotent if SHA matches).
+        if (!key.includes("/temp/")) {
+          const existing = await env.OLD_BUCKET.head(key);
+          if (existing) {
+            const existingSha = existing.customMetadata?.sha256?.toLowerCase();
+            if (existingSha && existingSha === computedHex) {
+              return jsonResponse(
+                {
+                  ok: true,
+                  key,
+                  size: existing.size,
+                  etag: existing.httpEtag,
+                  uploaded: existing.uploaded.toISOString(),
+                  sha256: computedHex,
+                  idempotent: true,
+                },
+                200,
+                cors
+              );
+            }
+            return jsonResponse(
+              {
+                code: "WORKER_IMMUTABLE_CONFLICT",
+                error: `Historical archive object '${key}' already exists and cannot be overwritten.`,
+              },
+              409,
+              cors
+            );
+          }
+        }
 
         const customMetadata: Record<string, string> = {
           storage_owner_uuid: authCheck.claims.storage_owner_uuid,
+          sha256: computedHex,
           uploaded_at: new Date().toISOString(),
         };
 
-        const uploadedObj = await env.OLD_BUCKET.put(key, request.body, {
+        const uploadedObj = await env.OLD_BUCKET.put(key, requestBytes, {
           httpMetadata: { contentType },
           customMetadata,
         });

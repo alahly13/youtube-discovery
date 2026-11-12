@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/cookies";
+import { sanitizeRedirectPath } from "@/lib/navigation/safe-path";
 
 /**
  * Page gate (UX layer — data routes enforce auth independently via
@@ -25,6 +26,7 @@ export default function proxy(request: NextRequest) {
     pathname === "/app-icon.svg" ||
     pathname === "/manifest.webmanifest" ||
     pathname === "/manifest.json" ||
+    pathname === "/sw.js" ||
     pathname.includes(".")
   ) {
     return NextResponse.next();
@@ -44,7 +46,8 @@ export default function proxy(request: NextRequest) {
   if (!hasSession && !PUBLIC_PATHS.has(pathname)) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("next", pathname);
+    const targetPath = `${pathname}${request.nextUrl.search}`;
+    loginUrl.searchParams.set("next", sanitizeRedirectPath(targetPath));
     return NextResponse.redirect(loginUrl);
   }
   if (hasSession && PUBLIC_PATHS.has(pathname)) {
@@ -57,5 +60,5 @@ export default function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|app-icon\\.svg|icons/|manifest\\.webmanifest).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|app-icon\\.svg|icons/|manifest\\.webmanifest|sw\\.js).*)"],
 };

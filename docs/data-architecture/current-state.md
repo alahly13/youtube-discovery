@@ -3,19 +3,21 @@
 **Document:** `docs/data-architecture/current-state.md`  
 **Audit Date:** 2 November 2026  
 **Implementation Reconciliation:** 5 November 2026  
-**Status:** Completed & Verified — Baseline for Phase 1 Database Design, reconciled against the live repository on 2026-11-05  
+**Status:** Completed & Reconciled (2026-11-11)
 
 ---
 
-## 0. Implementation Reconciliation (2026-11-05)
+## 0. Implementation Reconciliation (2026-11-11)
 
 The original Phase 0 audit correctly described the repository at the time, but several storage and persistence statements are now historical. The current codebase is authoritative:
 
 - **Object storage is Cloudflare R2, not Supabase Storage.** Active datasets use `new-youtube-discovery-private` through the NEW Worker (`new-youtube-discovery-api`); historical archives use `old-youtube-discovery-private` through the OLD Worker. Supabase Storage is retired; `src/lib/storage/supabase-storage-backend.ts` is only a compatibility re-export.
+- **Full Local-First Staging + Persistent Undo/Redo (IndexedDB v5):** `Saved Items`, `User Playlists` (`/playlist-manager` & `/saved/[playlistId]`), `Saved Titles & Links`, and `Saved Searches` stage all local edits inside IndexedDB (`youtube_discovery_local_v1` v5) with atomic Outbox journaling (`pending_operations`) and persistent owner+device Undo/Redo history (`undo_redo_commands`, `undo_redo_state`). `local_research_reminders` remains strictly 100% local-only.
+- **Structured Save Receipts & Multi-Dataset DB Indexing:** `POST /api/sync/save-all` validates, uploads, SHA- verifies via Worker `batch_verify`, commits `SAVED_ITEMS`, `PLAYLIST`, `REFERENCES`, `RESEARCH_QUEUE`, and `SEARCH_HISTORY` into PostgreSQL + R2, and emits explicit `SaveStatusStage` & `SaveErrorCategory` receipts.
 - **The canonical storage owner is `user_profiles.storage_owner_uuid`, never `auth.users.id`.** All NEW R2 paths are rooted at `asdy/persistence/<storage_owner_uuid>/<dataset-slug>/...`; temporary objects use `asdy/temp/<storage_owner_uuid>/...`.
-- **Six Prisma migrations are applied on remote Supabase PostgreSQL**, including `20261104230000_canonical_resource_classification` (applied 2026-11-04/05). The schema contains 19 models (18 canonical + `archived_manifests`).
+- **Six Prisma migrations are applied on remote Supabase PostgreSQL**, including `20261104230000_canonical_resource_classification` (applied 2026-11-04). The schema contains 19 models (18 canonical + `archived_manifests`).
 - **Canonical resource taxonomy is explicit.** `VIDEO`, `VIDEO_SHORT`, `CHANNEL`, `YOUTUBE_PLAYLIST`, `USER_PLAYLIST`, `SAVED_TITLE`, `SAVED_LINK`, and `SAVED_SEARCH` are persisted as discriminators. `VIDEO_SHORT` requires explicit `/shorts/` evidence; duration and aspect ratio never decide it.
-- **Saved Titles & Links has a first-class page** at `/saved-titles-links`, backed by the local-first `REFERENCES` dataset and mirrored to `saved_references`.
+- **Saved Titles & Links & Saved Searches** live on `/saved-titles-links` and `/saved-searches`, backed by the local-first `REFERENCES` dataset (`saved_references` + `saved_search_presets`).
 - **Hydration is snapshot-based and checksum-verified.** Incoming generations replace dataset snapshots, stale local records are removed, pending outbox changes are preserved, and SHA-256 is mandatory.
 
 ---

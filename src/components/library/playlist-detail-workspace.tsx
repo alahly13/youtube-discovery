@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { ConfirmDialog } from "@/components/saved/saved-library-workspace";
 import {
   createLocalSearcher,
@@ -528,7 +529,8 @@ function DetailBody({
                 </div>
               )}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex flex-wrap shrink-0 items-center gap-2">
+              <UndoRedoControls scope={["PLAYLIST"]} enableKeyboardShortcuts compact />
               <Button variant="secondary" className="h-9 gap-1.5 px-3 text-xs" onClick={() => void exportPlaylist(id)}>
                 <Download className="h-3.5 w-3.5" /> Export
               </Button>

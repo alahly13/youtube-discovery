@@ -26,8 +26,14 @@ export async function GET(request: Request) {
 
   try {
     const report = await syncReconciliationService.reconcileOwnerStorage(storageOwnerUuid);
+    // Return top-level summary fields expected by ManifestStorageExplorer
+    // while keeping the nested `report` object for existing API consumers.
     return NextResponse.json({
       ok: true,
+      overallHealthy: report.overallHealthy,
+      totalScanned: report.totalScanned,
+      counts: report.counts,
+      items: report.items,
       report,
     });
   } catch (error) {

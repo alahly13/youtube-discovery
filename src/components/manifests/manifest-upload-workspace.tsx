@@ -28,7 +28,7 @@ import { formatBytes } from "@/lib/utils/format";
 
 type UploadDestination = "OLD" | "NEW";
 type OldCategory = "saved-items" | "saved-playlists" | "saved-titles-links" | "saved-search-history";
-type DatasetType = "SAVED_VIDEOS" | "SAVED_PLAYLISTS" | "SAVED_SEARCHES" | "SEARCH_HISTORY";
+type DatasetType = "SAVED_ITEMS" | "PLAYLIST" | "REFERENCES" | "SEARCH_HISTORY" | "RESEARCH_QUEUE";
 
 const OLD_CATEGORIES: Array<{
   id: OldCategory;
@@ -67,17 +67,18 @@ const OLD_CATEGORIES: Array<{
   },
 ];
 
-const DATASET_TYPES: Array<{ id: DatasetType; label: string; description: string }> = [
-  { id: "SAVED_VIDEOS", label: "Saved Videos (Active)", description: "Saved videos and personal library entities." },
-  { id: "SAVED_PLAYLISTS", label: "User Playlists (Active)", description: "Personal playlists, groups, and video ordering." },
-  { id: "SAVED_SEARCHES", label: "Saved Searches (Active)", description: "Pinned queries, presets, and research phrases." },
-  { id: "SEARCH_HISTORY", label: "Search History (Active)", description: "Chronological search query audit logs." },
+const DATASET_TYPES: Array<{ id: DatasetType; slug: string; label: string; description: string }> = [
+  { id: "SAVED_ITEMS", slug: "saved-items", label: "Saved Items (Canonical)", description: "Saved videos, Shorts, channels, and YouTube playlists." },
+  { id: "PLAYLIST", slug: "saved-playlists", label: "User Playlists (Canonical)", description: "Personal playlists, groups, notes, and item ordering." },
+  { id: "REFERENCES", slug: "references", label: "Titles, Links & Saved Searches", description: "Saved titles/links, references, and pinned search presets." },
+  { id: "SEARCH_HISTORY", slug: "saved-search-history", label: "Search History (Canonical)", description: "Chronological search query execution logs." },
+  { id: "RESEARCH_QUEUE", slug: "research-queue", label: "Research Queue (Canonical)", description: "Curated active research items queued for review." },
 ];
 
 export function ManifestUploadWorkspace() {
   const [destination, setDestination] = useState<UploadDestination>("OLD");
   const [oldCategory, setOldCategory] = useState<OldCategory>("saved-items");
-  const [datasetType, setDatasetType] = useState<DatasetType>("SAVED_VIDEOS");
+  const [datasetType, setDatasetType] = useState<DatasetType>("SAVED_ITEMS");
   const [datasetName, setDatasetName] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -100,7 +101,8 @@ export function ManifestUploadWorkspace() {
     ? `asdy/old/${oldCategory}/<unique-manifest-id>/${selectedFile.name.endsWith(".json") ? "manifest.json" : selectedFile.name}`
     : `asdy/old/${oldCategory}/<unique-manifest-id>/manifest.json`;
 
-  const derivedNewPath = `<storage_owner_uuid>/persistence/datasets/<dataset-id>/generations/<gen-id>/parts/part-000001.json`;
+  const selectedSlug = DATASET_TYPES.find((d) => d.id === datasetType)?.slug ?? "saved-items";
+  const derivedNewPath = `asdy/persistence/<storage_owner_uuid>/${selectedSlug}/generations/<gen-id>/parts/part-000001.json`;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setError(null);

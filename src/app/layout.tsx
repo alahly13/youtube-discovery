@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -38,6 +39,7 @@ export default function RootLayout({
               "try{const t=localStorage.getItem('youtube-discovery-theme');const d=t?t==='dark':true;document.documentElement.classList.toggle('dark',d)}catch{document.documentElement.classList.add('dark')}",
           }}
         />
+        <ServiceWorkerRegistration />
         {children}
       </body>
     </html>

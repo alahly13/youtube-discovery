@@ -21,8 +21,6 @@ import {
   CANONICAL_DATASET_TYPES,
   type CanonicalDatasetType,
   DATASET_SLUG_MAP,
-  buildHistoricalDatasetPrefix,
-  buildHistoricalGenerationPrefix,
   buildHistoricalManifestKey,
   buildHistoricalPartKey,
   buildHistoricalVersionPointerKey,
@@ -152,6 +150,59 @@ export function scanBrowserLocalStorage(): Record<string, unknown> {
 }
 
 /**
+ * Scans BOTH legacy `localStorage` keys AND read-only IndexedDB entity stores
+ * (`entities_*`, explicitly EXCLUDING strictly local `local_research_reminders`).
+ * Non-destructive: never deletes or mutates original local records.
+ */
+export async function scanBrowserAllLegacySources(
+  ownerId?: string
+): Promise<Record<string, unknown>> {
+  const combined = scanBrowserLocalStorage();
+  if (typeof window === "undefined" || !window.indexedDB) {
+    return combined;
+  }
+
+  try {
+    const { openLocalDatabase, IDB_STORES } = await import(
+      "@/lib/storage/indexeddb-store"
+    );
+    const db = await openLocalDatabase();
+    const idbMappings: Array<{ storeName: string; sourceKey: string }> = [
+      { storeName: IDB_STORES.SAVED_ITEMS, sourceKey: "indexeddb::savedItems" },
+      { storeName: IDB_STORES.USER_PLAYLISTS, sourceKey: "indexeddb::user_playlists" },
+      { storeName: IDB_STORES.SAVED_REFERENCES, sourceKey: "indexeddb::savedSearches" },
+      { storeName: IDB_STORES.SEARCH_HISTORY, sourceKey: "indexeddb::search_history" },
+      { storeName: IDB_STORES.RESEARCH_QUEUE, sourceKey: "indexeddb::research_queue" },
+    ];
+
+    for (const { storeName, sourceKey } of idbMappings) {
+      if (!db.objectStoreNames.contains(storeName)) continue;
+      const rows = await new Promise<Record<string, unknown>[]>((resolve) => {
+        try {
+          const tx = db.transaction([storeName], "readonly");
+          const req = tx.objectStore(storeName).getAll();
+          req.onsuccess = () => resolve((req.result as Record<string, unknown>[]) || []);
+          req.onerror = () => resolve([]);
+        } catch {
+          resolve([]);
+        }
+      });
+
+      const relevant = ownerId
+        ? rows.filter((r) => !r.ownerId || r.ownerId === ownerId || r.ownerId === "asdy-admin")
+        : rows;
+      if (relevant.length > 0) {
+        combined[sourceKey] = relevant;
+      }
+    }
+  } catch {
+    // Keep localStorage scan results even if IDB read fails
+  }
+
+  return combined;
+}
+
+/**
  * Parses dropped or selected legacy backup JSON strings (matching manifest-example layout).
  */
 export function parseLegacyBackupJson(rawJson: string, sourceName = "Uploaded File"): Record<string, unknown> {
@@ -196,6 +247,19 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
     unrecognizedItems: [],
   };
 
+  const asRec = (val: unknown): Record<string, unknown> | null =>
+    val && typeof val === "object" && !Array.isArray(val) ? (val as Record<string, unknown>) : null;
+
+  const extractList = (rawValue: unknown, stateField: string): unknown[] | null => {
+    if (Array.isArray(rawValue)) return rawValue;
+    const obj = asRec(rawValue);
+    if (!obj) return null;
+    if (Array.isArray(obj.data)) return obj.data;
+    const state = asRec(obj.state) ?? asRec(asRec(obj.data)?.state);
+    if (state && Array.isArray(state[stateField])) return state[stateField] as unknown[];
+    return null;
+  };
+
   const seenSavedItemIds = new Set<string>();
   const seenPlaylistIds = new Set<string>();
   const seenHistoryIds = new Set<string>();
@@ -211,13 +275,7 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
       sourceKey.includes("Saved-Items") ||
       sourceKey.includes("saved_items")
     ) {
-      const itemsList = Array.isArray(rawValue)
-        ? rawValue
-        : typeof rawValue === "object" && (rawValue as any).data && Array.isArray((rawValue as any).data)
-        ? (rawValue as any).data
-        : typeof rawValue === "object" && (rawValue as any).state?.savedItems && Array.isArray((rawValue as any).state.savedItems)
-        ? (rawValue as any).state.savedItems
-        : null;
+      const itemsList = extractList(rawValue, "savedItems");
 
       if (itemsList) {
         summary.totalRawFound += itemsList.length;
@@ -246,42 +304,58 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
       }
     }
 
-    // 2. Check for PLAYLISTS (user playlists index & manifests)
+    // 2. Check for PLAYLISTS (user playlists index & full manifests)
     else if (
       sourceKey.includes("user-playlists") ||
       sourceKey.includes("Playlists") ||
       sourceKey.includes("user_playlists")
     ) {
-      let playlistsList: any[] = [];
+      let playlistsList: unknown[] = [];
+      let manifestsMap: Record<string, Record<string, unknown>> | null = null;
       if (Array.isArray(rawValue)) {
         playlistsList = rawValue;
-      } else if (typeof rawValue === "object") {
-        const obj = rawValue as any;
-        if (obj.data?.state?.index && Array.isArray(obj.data.state.index)) {
-          playlistsList = obj.data.state.index;
-        } else if (obj.state?.index && Array.isArray(obj.state.index)) {
-          playlistsList = obj.state.index;
-        } else if (obj.data?.index && Array.isArray(obj.data.index)) {
-          playlistsList = obj.data.index;
+      } else {
+        const obj = asRec(rawValue);
+        const dataRec = asRec(obj?.data);
+        const stateRec = asRec(obj?.state);
+        const dataStateRec = asRec(dataRec?.state);
+        const rawManifests =
+          asRec(dataStateRec?.manifests) ||
+          asRec(stateRec?.manifests) ||
+          asRec(obj?.manifests);
+        if (rawManifests && Object.keys(rawManifests).length > 0) {
+          manifestsMap = rawManifests as Record<string, Record<string, unknown>>;
+          playlistsList = Object.values(rawManifests);
+        } else if (Array.isArray(dataStateRec?.index)) {
+          playlistsList = dataStateRec.index;
+        } else if (Array.isArray(stateRec?.index)) {
+          playlistsList = stateRec.index;
+        } else if (Array.isArray(dataRec?.index)) {
+          playlistsList = dataRec.index;
         }
       }
 
       summary.totalRawFound += playlistsList.length;
-      for (const pl of playlistsList) {
-        const id = String(pl.id || pl.name || "").trim();
+      for (const rawPl of playlistsList) {
+        const pl = asRec(rawPl);
+        if (!pl) continue;
+        const plObj = asRec(pl.playlist) ?? pl;
+        const id = String(plObj.id || pl.id || plObj.name || pl.name || "").trim();
         if (!id) {
           summary.totalUnrecognized++;
           summary.unrecognizedItems.push({ source: sourceKey, raw: pl, reason: "Missing playlist ID" });
           continue;
         }
 
+        const fullManifest = manifestsMap && manifestsMap[id] ? manifestsMap[id] : pl;
         if (seenPlaylistIds.has(id)) {
           summary.totalDuplicatesSkipped++;
           summary.datasets.PLAYLIST.duplicatesCount++;
         } else {
           seenPlaylistIds.add(id);
           summary.datasets.PLAYLIST.items.push({
-            ...pl,
+            ...fullManifest,
+            id,
             isBeforeAppUpdating: true,
           });
           summary.datasets.PLAYLIST.count++;
@@ -296,21 +370,16 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
       sourceKey.includes("Search-History") ||
       sourceKey.includes("search_history")
     ) {
-      const historyList = Array.isArray(rawValue)
-        ? rawValue
-        : typeof rawValue === "object" && (rawValue as any).data && Array.isArray((rawValue as any).data)
-        ? (rawValue as any).data
-        : typeof rawValue === "object" && (rawValue as any).state?.searchHistory && Array.isArray((rawValue as any).state.searchHistory)
-        ? (rawValue as any).state.searchHistory
-        : null;
+      const historyList = extractList(rawValue, "searchHistory");
 
       if (historyList) {
         summary.totalRawFound += historyList.length;
-        for (const h of historyList) {
-          const id = String(h.id || h.query || "").trim();
-          if (!id) {
+        for (const rawH of historyList) {
+          const h = asRec(rawH);
+          const id = h ? String(h.id || h.query || "").trim() : "";
+          if (!h || !id) {
             summary.totalUnrecognized++;
-            summary.unrecognizedItems.push({ source: sourceKey, raw: h, reason: "Missing search ID/query" });
+            summary.unrecognizedItems.push({ source: sourceKey, raw: rawH, reason: "Missing search ID/query" });
             continue;
           }
 
@@ -336,21 +405,16 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
       sourceKey.includes("References") ||
       sourceKey.includes("saved_searches")
     ) {
-      const refList = Array.isArray(rawValue)
-        ? rawValue
-        : typeof rawValue === "object" && (rawValue as any).data && Array.isArray((rawValue as any).data)
-        ? (rawValue as any).data
-        : typeof rawValue === "object" && (rawValue as any).state?.savedSearches && Array.isArray((rawValue as any).state.savedSearches)
-        ? (rawValue as any).state.savedSearches
-        : null;
+      const refList = extractList(rawValue, "savedSearches");
 
       if (refList) {
         summary.totalRawFound += refList.length;
-        for (const ref of refList) {
-          const id = String(ref.id || ref.title || ref.query || "").trim();
-          if (!id) {
+        for (const rawRef of refList) {
+          const ref = asRec(rawRef);
+          const id = ref ? String(ref.id || ref.title || ref.query || "").trim() : "";
+          if (!ref || !id) {
             summary.totalUnrecognized++;
-            summary.unrecognizedItems.push({ source: sourceKey, raw: ref, reason: "Missing reference ID/title" });
+            summary.unrecognizedItems.push({ source: sourceKey, raw: rawRef, reason: "Missing reference ID/title" });
             continue;
           }
 
@@ -370,10 +434,44 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
       }
     }
 
+    // 4B. Check for RESEARCH_QUEUE (never includes local_research_reminders)
+    else if (
+      sourceKey.includes("research_queue") ||
+      sourceKey.includes("researchQueue") ||
+      sourceKey.includes("Research-Queue")
+    ) {
+      const rqList = extractList(rawValue, "researchQueue");
+      if (rqList) {
+        summary.totalRawFound += rqList.length;
+        for (const rawItem of rqList) {
+          const item = asRec(rawItem);
+          const id = item ? String(item.id || item.query || item.queryText || "").trim() : "";
+          if (!item || !id) {
+            summary.totalUnrecognized++;
+            summary.unrecognizedItems.push({ source: sourceKey, raw: rawItem, reason: "Missing queue ID/query" });
+            continue;
+          }
+          if (seenQueueIds.has(id)) {
+            summary.totalDuplicatesSkipped++;
+            summary.datasets.RESEARCH_QUEUE.duplicatesCount++;
+          } else {
+            seenQueueIds.add(id);
+            summary.datasets.RESEARCH_QUEUE.items.push({
+              ...item,
+              isBeforeAppUpdating: true,
+            });
+            summary.datasets.RESEARCH_QUEUE.count++;
+            summary.totalNormalized++;
+          }
+        }
+      }
+    }
+
     // 5. Complete workspace envelope containing multiple stores
     else if (sourceKey.includes("youtube-discovery-workspace")) {
-      const state = (rawValue as any)?.state || (rawValue as any)?.data?.state;
-      if (state && typeof state === "object") {
+      const rootRec = asRec(rawValue);
+      const state = asRec(rootRec?.state) || asRec(asRec(rootRec?.data)?.state);
+      if (state) {
         if (Array.isArray(state.savedItems)) {
           for (const item of state.savedItems) {
             const norm = normalizeSingleSavedItem(item);
@@ -386,9 +484,10 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
           }
         }
         if (Array.isArray(state.savedSearches)) {
-          for (const ref of state.savedSearches) {
-            const id = String(ref.id || ref.title || "").trim();
-            if (id && !seenReferenceIds.has(id)) {
+          for (const rawRef of state.savedSearches) {
+            const ref = asRec(rawRef);
+            const id = ref ? String(ref.id || ref.title || "").trim() : "";
+            if (ref && id && !seenReferenceIds.has(id)) {
               seenReferenceIds.add(id);
               summary.datasets.REFERENCES.items.push({ ...ref, isBeforeAppUpdating: true });
               summary.datasets.REFERENCES.count++;
@@ -397,9 +496,10 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
           }
         }
         if (Array.isArray(state.searchHistory)) {
-          for (const h of state.searchHistory) {
-            const id = String(h.id || h.query || "").trim();
-            if (id && !seenHistoryIds.has(id)) {
+          for (const rawH of state.searchHistory) {
+            const h = asRec(rawH);
+            const id = h ? String(h.id || h.query || "").trim() : "";
+            if (h && id && !seenHistoryIds.has(id)) {
               seenHistoryIds.add(id);
               summary.datasets.SEARCH_HISTORY.items.push({ ...h, isBeforeAppUpdating: true });
               summary.datasets.SEARCH_HISTORY.count++;
@@ -417,8 +517,9 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
 /**
  * Normalizes a single raw saved item, strictly preserving 0 numeric values and description.
  */
-function normalizeSingleSavedItem(raw: any): NormalizedLegacyItem | null {
-  if (!raw || typeof raw !== "object") return null;
+function normalizeSingleSavedItem(rawInput: unknown): NormalizedLegacyItem | null {
+  if (!rawInput || typeof rawInput !== "object" || Array.isArray(rawInput)) return null;
+  const raw = rawInput as Record<string, unknown>;
 
   const rawId = String(raw.platformItemId || raw.id || raw.videoId || "").trim();
   const platformItemId = rawId.replace(/^youtube:/, "");

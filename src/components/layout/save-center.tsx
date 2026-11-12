@@ -21,26 +21,17 @@ import {
   type SyncStatus,
   type SyncStateEvent,
 } from "@/lib/sync/sync-coordinator";
+import {
+  SAVE_ERROR_LABELS,
+  SAVE_STAGE_LABELS,
+} from "@/lib/sync/save-receipt";
 import { useCloudHydration } from "@/lib/sync/use-cloud-hydration";
 import { getDeviceLabel } from "@/lib/device/device-identity";
-
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * YouTube Discovery — Global Cloud Sync Center Control (2026 Production)
- * ──────────────────────────────────────────────────────────────────────────
- * Features:
- *   - Prominent "Save All New Actions & Data" ("حفظ جميع التغييرات والبيانات الجديدة") button
- *   - Real-time pending operations counter and dataset breakdown
- *   - Automated 12-hour background sync status indicator
- *   - Direct Cloudflare R2 Worker batch upload trigger
- *   - Active Cloud Hydration progress and manual restore trigger
- *   - Zero data loss: Local IndexedDB outbox remains until remote confirmation
- * ═══════════════════════════════════════════════════════════════════════════
- */
 
 export function SaveCenter() {
   const [syncEvent, setSyncEvent] = useState<SyncStateEvent>({
     status: "IDLE",
+    stage: "CLOUD_COMMITTED",
     summary: {
       totalPending: 0,
       byDataset: {
@@ -54,6 +45,7 @@ export function SaveCenter() {
     },
     lastSuccessfulSyncAt: null,
     nextAutoSyncAt: null,
+    lastSaveReceipt: null,
   });
   const [saving, setSaving] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -275,6 +267,58 @@ export function SaveCenter() {
               </span>
             </div>
           </div>
+
+          {/* Structured Last Save Receipt & Error Classification */}
+          {syncEvent.lastSaveReceipt && (
+            <div className="mt-2.5 rounded-lg border border-border/70 bg-surface-muted/40 p-2.5 text-[11px] space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-foreground">
+                  {SAVE_STAGE_LABELS[syncEvent.lastSaveReceipt.stage]}
+                </span>
+                <Badge
+                  tone={
+                    syncEvent.lastSaveReceipt.ok
+                      ? syncEvent.lastSaveReceipt.stage === "CLOUD_COMMITTED"
+                        ? "success"
+                        : "warning"
+                      : "danger"
+                  }
+                  className="text-[9px]"
+                >
+                  {syncEvent.lastSaveReceipt.stage}
+                </Badge>
+              </div>
+              {syncEvent.lastSaveReceipt.datasets.length > 0 && (
+                <div className="space-y-0.5 text-[10px] text-muted font-mono">
+                  {syncEvent.lastSaveReceipt.datasets.map((ds) => (
+                    <div key={`${ds.datasetType}-${ds.generationId}`} className="flex items-center justify-between gap-2">
+                      <span className="truncate">
+                        {ds.datasetType} rev {ds.revision} · {ds.recordsCount} rec · {ds.partsCount} part(s)
+                      </span>
+                      <span className="shrink-0">
+                        {ds.aggregateSha256 ? ds.aggregateSha256.slice(0, 8) : "idemp"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {syncEvent.lastSaveReceipt.errorCategory && (
+                <p className="text-[10px] font-semibold text-danger">
+                  {SAVE_ERROR_LABELS[syncEvent.lastSaveReceipt.errorCategory]}
+                </p>
+              )}
+              {syncEvent.lastSaveReceipt.errorMessage && (
+                <p className="text-[10px] text-muted break-words">
+                  {syncEvent.lastSaveReceipt.errorMessage}
+                </p>
+              )}
+              {syncEvent.lastSaveReceipt.recoveryHint && (
+                <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                  {syncEvent.lastSaveReceipt.recoveryHint}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="mt-3 flex flex-col gap-2">
             <Button

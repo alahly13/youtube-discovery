@@ -23,9 +23,10 @@ import {
   classifyResourceRecord,
   type ResourceType,
 } from "@/lib/resources/resource-taxonomy";
-import { deleteEntityLocally, saveEntityLocally } from "@/lib/storage/indexeddb-store";
 import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import { undoRedoService } from "@/lib/undo-redo/undo-redo-service";
+import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { formatDate } from "@/lib/utils/format";
 
 /**
@@ -320,12 +321,33 @@ export function SavedTitlesLinksWorkspace() {
         originDeviceLabel: existing?.originDeviceLabel,
       };
 
-      await saveEntityLocally(ownerId, "REFERENCES", recordId, record);
+      const isEditing = Boolean(existing);
+      const beforeState = isEditing
+        ? (await undoRedoService.captureBeforeState(ownerId, "REFERENCES", recordId)) ??
+          (existing as unknown as Record<string, unknown>)
+        : null;
+
+      await undoRedoService.executeMutation({
+        ownerId,
+        scope: "REFERENCES",
+        datasetType: "REFERENCES",
+        commandType: isEditing ? "EDIT_TITLE_LINK" : "CREATE_TITLE_LINK",
+        label: `${isEditing ? "Edit" : "Create"} ${editor.kind === "SAVED_LINK" ? "link" : "title"} "${title.slice(0, 40)}"`,
+        coalesceKey: isEditing ? `edit-ref:${recordId}` : undefined,
+        changes: [
+          {
+            datasetType: "REFERENCES",
+            entityId: recordId,
+            beforeState,
+            afterState: record,
+          },
+        ],
+      });
       await syncCoordinator.refreshSummary();
       refresh();
       setEditor(null);
       setStatusMessage(
-        `${editor.kind === "SAVED_LINK" ? "Link" : "Title"} saved locally. It will sync with the next Save All.`
+        `${editor.kind === "SAVED_LINK" ? "Link" : "Title"} staged locally in IndexedDB. Press Save to Cloud R2 when ready.`
       );
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to save the reference locally.");
@@ -343,10 +365,27 @@ export function SavedTitlesLinksWorkspace() {
 
     setDeletingId(entityId);
     try {
-      await deleteEntityLocally(ownerId, "REFERENCES", entityId);
+      const beforeState =
+        (await undoRedoService.captureBeforeState(ownerId, "REFERENCES", entityId)) ??
+        (record as unknown as Record<string, unknown>);
+      await undoRedoService.executeMutation({
+        ownerId,
+        scope: "REFERENCES",
+        datasetType: "REFERENCES",
+        commandType: "DELETE_TITLE_LINK",
+        label: `Delete "${String(record.title || entityId).slice(0, 40)}"`,
+        changes: [
+          {
+            datasetType: "REFERENCES",
+            entityId,
+            beforeState,
+            afterState: null,
+          },
+        ],
+      });
       await syncCoordinator.refreshSummary();
       refresh();
-      setStatusMessage("Reference deleted locally. The deletion will sync with the next Save All.");
+      setStatusMessage("Deleted locally (reversible with Undo). Press Save to Cloud R2 to commit.");
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : "Failed to delete the reference.");
     } finally {
@@ -359,11 +398,20 @@ export function SavedTitlesLinksWorkspace() {
     setStatusMessage(null);
     try {
       const result = await syncCoordinator.saveAll();
-      setStatusMessage(
-        result.ok
-          ? `Cloud sync completed for ${result.syncedCount} pending operation(s).`
-          : result.error || "Cloud sync did not complete."
-      );
+      if (result.ok) {
+        const revInfo = result.receipt?.datasets
+          .map((d) => `${d.datasetType} rev ${d.revision} (${d.recordsCount} records, ${d.partsCount} part(s))`)
+          .join("; ");
+        setStatusMessage(
+          `Committed to Cloud R2 & PostgreSQL (${result.syncedCount} operation(s))${revInfo ? ` — ${revInfo}` : ""}.`
+        );
+      } else {
+        setStatusMessage(
+          result.errorCategory
+            ? `[${result.errorCategory}] ${result.error || "Cloud sync failed — local edits preserved."}`
+            : result.error || "Cloud sync did not complete."
+        );
+      }
     } finally {
       setSyncing(false);
     }
@@ -397,6 +445,7 @@ export function SavedTitlesLinksWorkspace() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <UndoRedoControls scope={["REFERENCES"]} enableKeyboardShortcuts compact />
               <Button
                 type="button"
                 variant="primary"
@@ -428,7 +477,7 @@ export function SavedTitlesLinksWorkspace() {
                 ) : (
                   <CloudUpload className="h-3.5 w-3.5" />
                 )}
-                <span>{syncing ? "Syncing…" : "Save All"}</span>
+                <span>{syncing ? "Syncing…" : "Save to Cloud R2"}</span>
                 {pendingCount > 0 && (
                   <span className="rounded-full bg-primary-foreground px-1.5 text-[10px] font-bold text-primary">
                     {pendingCount}

@@ -1,9 +1,10 @@
 import "server-only";
 
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/auth/require-auth";
 import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
-import { getNewStorageBackend } from "@/lib/storage/r2-blob-backend";
+import { getNewStorageBackend, NEW_R2_BUCKET } from "@/lib/storage/r2-blob-backend";
 import { getR2WorkerStorageClient } from "@/lib/storage/r2-worker-storage-client";
 import { prisma } from "@/lib/db/prisma";
 import type { PreparedMigrationPlan } from "@/lib/migration/legacy-migration-service";
@@ -53,19 +54,40 @@ export async function POST(request: Request) {
     const uploadReceipts: Array<{
       datasetType: string;
       generationId: string;
+      dbGenerationId: string;
       manifestPath: string;
       partsCount: number;
       totalBytes: number;
       aggregateSha256: string;
+      verified: boolean;
+      dbRegistered: boolean;
     }> = [];
 
     let totalUploadedRecords = 0;
     let totalUploadedBytes = 0;
+    const ownerPrefix = `asdy/persistence/${storageOwnerUuid}/`;
 
     for (const gen of body.generations) {
+      const verifyItems: Array<{ key: string; sha256: string; byteCount: number }> = [];
+
+      // Validate canonical historical prefix boundary for all items
+      if (!gen.manifestPath.startsWith(ownerPrefix)) {
+        return NextResponse.json(
+          { ok: false, error: `Invalid manifestPath outside canonical owner scope: ${gen.manifestPath}` },
+          { status: 403 }
+        );
+      }
+
       // 1. Upload each part
       for (const part of gen.parts) {
+        if (!part.storagePath.startsWith(ownerPrefix)) {
+          return NextResponse.json(
+            { ok: false, error: `Invalid part path outside canonical owner scope: ${part.storagePath}` },
+            { status: 403 }
+          );
+        }
         const partBuffer = Buffer.from(part.jsonContent, "utf-8");
+        const partSha = crypto.createHash("sha256").update(partBuffer).digest("hex").toLowerCase();
 
         try {
           await r2Client.putObject("NEW", part.storagePath, partBuffer, {
@@ -74,16 +96,17 @@ export async function POST(request: Request) {
             allowOverwrite: true,
           });
         } catch {
-          // Fallback to storage backend
           await storageBackend.putBytes(part.storagePath, partBuffer, {
             contentType: "application/json",
             allowOverwrite: true,
           });
         }
+        verifyItems.push({ key: part.storagePath, sha256: partSha, byteCount: partBuffer.byteLength });
       }
 
       // 2. Upload generation manifest.json
       const manifestBuffer = Buffer.from(gen.manifestJson, "utf-8");
+      const manifestSha = crypto.createHash("sha256").update(manifestBuffer).digest("hex").toLowerCase();
       try {
         await r2Client.putObject("NEW", gen.manifestPath, manifestBuffer, {
           contentType: "application/json",
@@ -96,6 +119,7 @@ export async function POST(request: Request) {
           allowOverwrite: true,
         });
       }
+      verifyItems.push({ key: gen.manifestPath, sha256: manifestSha, byteCount: manifestBuffer.byteLength });
 
       // 3. Upload version.json pointer for the historical branch
       const versionPayload = JSON.stringify(
@@ -109,21 +133,49 @@ export async function POST(request: Request) {
         2
       );
       const versionBuffer = Buffer.from(versionPayload, "utf-8");
+      const versionSha = crypto.createHash("sha256").update(versionBuffer).digest("hex").toLowerCase();
 
-      try {
-        await r2Client.putObject("NEW", gen.versionPointerPath, versionBuffer, {
-          contentType: "application/json",
-          storageOwnerUuid,
-          allowOverwrite: true,
-        });
-      } catch {
-        await storageBackend.putBytes(gen.versionPointerPath, versionBuffer, {
-          contentType: "application/json",
-          allowOverwrite: true,
-        });
+      if (gen.versionPointerPath.startsWith(ownerPrefix)) {
+        try {
+          await r2Client.putObject("NEW", gen.versionPointerPath, versionBuffer, {
+            contentType: "application/json",
+            storageOwnerUuid,
+            allowOverwrite: true,
+          });
+        } catch {
+          await storageBackend.putBytes(gen.versionPointerPath, versionBuffer, {
+            contentType: "application/json",
+            allowOverwrite: true,
+          });
+        }
+        verifyItems.push({ key: gen.versionPointerPath, sha256: versionSha, byteCount: versionBuffer.byteLength });
       }
 
-      // 4. Try registering in PostgreSQL (best-effort / gracefully handles offline DB)
+      // 3B. Verify uploaded objects via Worker SHA-256 read-back when configured
+      let verifiedInR2 = false;
+      try {
+        const verification = await r2Client.verifyBatch(`mig_${crypto.randomUUID()}`, verifyItems, {
+          targetPrefix: ownerPrefix,
+          storageOwnerUuid,
+        });
+        if (!verification.ok) {
+          return NextResponse.json(
+            {
+              ok: false,
+              errorCategory: "R2_VERIFICATION_ERROR",
+              error: `R2 verification failed on legacy migration objects: ${verification.failures.map((f) => `${f.key}:${f.reason}`).join(", ")}`,
+            },
+            { status: 502 }
+          );
+        }
+        verifiedInR2 = true;
+      } catch {
+        // Local disk fallback mode skips Worker verifyBatch
+      }
+
+      // 4. Register historical generation in PostgreSQL using valid UUID primary keys
+      const dbGenerationId = crypto.randomUUID();
+      let dbRegistered = false;
       try {
         const profile = await prisma.userProfile.findFirst({
           where: {
@@ -148,58 +200,79 @@ export async function POST(request: Request) {
               data: {
                 owner_id: profile.id,
                 dataset_type: gen.datasetType,
-                display_name: `${gen.datasetType.replace(/_/g, " ")} (Historical Archive)`,
-                current_revision: 1,
-              },
-            });
-          } else {
-            await prisma.storageDataset.update({
-              where: {
-                owner_id_id: {
-                  owner_id: profile.id,
-                  id: dataset.id,
-                },
-              },
-              data: {
-                updated_at: new Date(),
+                display_name: `${gen.datasetType.replace(/_/g, " ")}`,
+                current_revision: BigInt(0),
               },
             });
           }
 
-          await prisma.storageGeneration.create({
-            data: {
-              id: gen.generationId,
-              owner_id: profile.id,
-              dataset_id: dataset.id,
-              generation_number: 1,
-              state: "COMMITTED",
-              total_bytes: BigInt(gen.totalBytes),
-              aggregate_sha256: gen.aggregateSha256,
-              origin_device_label: "Legacy Data Migration (Before App Updating)",
-              parts: {
-                create: gen.parts.map((p) => ({
-                  id: `part_${gen.generationId}_${p.partNumber}`,
-                  part_number: p.partNumber,
-                  storage_path: p.storagePath,
-                  byte_count: BigInt(p.byteCount),
-                  record_count: p.recordCount,
-                  sha256: p.sha256,
-                })),
-              },
-            },
+          const latestGen = await prisma.storageGeneration.findFirst({
+            where: { owner_id: profile.id, dataset_id: dataset.id },
+            orderBy: { generation_number: "desc" },
+            select: { id: true, generation_number: true },
           });
+
+          const nextGenNumber = (latestGen?.generation_number ?? 0) + 1;
+
+          await prisma.$transaction(async (tx) => {
+            await tx.storageGeneration.create({
+              data: {
+                id: dbGenerationId,
+                owner_id: profile.id,
+                dataset_id: dataset.id,
+                generation_number: nextGenNumber,
+                parent_generation_id: latestGen?.id || null,
+                state: "COMMITTED",
+                total_parts: gen.parts.length,
+                total_records: gen.totalRecords,
+                total_bytes: BigInt(gen.totalBytes),
+                aggregate_sha256: gen.aggregateSha256,
+                origin_device_label: `Legacy Data Migration (${gen.generationId})`,
+                committed_at: new Date(),
+                parts: {
+                  create: gen.parts.map((p) => ({
+                    id: crypto.randomUUID(),
+                    owner_id: profile.id,
+                    dataset_id: dataset.id,
+                    part_number: p.partNumber,
+                    storage_path: p.storagePath,
+                    bucket_id: NEW_R2_BUCKET,
+                    byte_count: BigInt(p.byteCount),
+                    record_count: p.recordCount,
+                    sha256: p.sha256,
+                  })),
+                },
+              },
+            });
+
+            // Only advance dataset pointer if dataset previously had no live generation;
+            // otherwise preserve live head while keeping historical archive browseable.
+            if (!dataset.current_generation_id) {
+              await tx.storageDataset.update({
+                where: { id: dataset.id },
+                data: {
+                  current_revision: BigInt(nextGenNumber),
+                  current_generation_id: dbGenerationId,
+                },
+              });
+            }
+          });
+          dbRegistered = true;
         }
-      } catch {
-        // DB update is best effort; R2 storage persistence is canonical
+      } catch (dbErr) {
+        console.warn("[api/migration/upload] Historical DB registration skipped:", dbErr);
       }
 
       uploadReceipts.push({
         datasetType: gen.datasetType,
         generationId: gen.generationId,
+        dbGenerationId,
         manifestPath: gen.manifestPath,
         partsCount: gen.parts.length,
         totalBytes: gen.totalBytes,
         aggregateSha256: gen.aggregateSha256,
+        verified: verifiedInR2,
+        dbRegistered,
       });
 
       totalUploadedRecords += gen.totalRecords;

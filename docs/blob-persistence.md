@@ -1,5 +1,8 @@
 # Vercel Blob Persistence, Auth & Quota Pools — youtube-discovery
 
+> [!WARNING]
+> **HISTORICAL / SUPERSEDED DOCUMENT:** Vercel Blob storage and custom scrypt session cookies described below have been **superseded (2026-11 Architecture)** by **Cloudflare R2 via dedicated Workers** (`new-youtube-discovery-api` & `old-youtube-discovery-api`), **Supabase Auth (`@supabase/ssr`)**, and **Supabase PostgreSQL (Prisma 7)** (`docs/data-architecture/current-state.md`, `docs/environment-variables.md`). Keep this document solely as historical context for legacy key migrations.
+
 ## 1. What lives in Blob (authoritative)
 
 Private Blob store, root `youtube-discovery/v1/`:

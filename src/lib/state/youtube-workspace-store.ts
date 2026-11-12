@@ -5,8 +5,15 @@ import { persist } from "zustand/middleware";
 import type { YouTubeManifest } from "@/types/manifest";
 import type { PersistedLastSearch } from "@/types/manifest";
 import type { NormalizedYouTubeDiscoveryItem, SavedSearch, SearchHistoryItem, YouTubeResultFilters } from "@/types/youtube";
-import { saveEntityLocally, deleteEntityLocally } from "@/lib/storage/indexeddb-store";
+import {
+  saveEntityLocally,
+  deleteEntityLocally,
+  getLocalEntities,
+  getPendingOperations,
+} from "@/lib/storage/indexeddb-store";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import { undoRedoService, UNDO_REDO_EVENT } from "@/lib/undo-redo/undo-redo-service";
+import { classifyResourceRecord } from "@/lib/resources/resource-taxonomy";
 
 export type SuggestionSourcePriority = "manifest" | "same_channel" | "mixed";
 
@@ -160,11 +167,31 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
             (i) => i.platformItemId === item.platformItemId && i.itemType === item.itemType
           );
           if (isSaved) {
-            // Local deletion from IndexedDB and queue DELETE in Outbox
             if (typeof window !== "undefined" && owner) {
-              deleteEntityLocally(owner, "SAVED_ITEMS", item.platformItemId)
-                .then(() => syncCoordinator.refreshSummary())
-                .catch(console.error);
+              void (async () => {
+                const beforeState =
+                  (await undoRedoService.captureBeforeState(
+                    owner,
+                    "SAVED_ITEMS",
+                    item.platformItemId
+                  )) ?? (item as unknown as Record<string, unknown>);
+                await undoRedoService.executeMutation({
+                  ownerId: owner,
+                  scope: "SAVED_ITEMS",
+                  datasetType: "SAVED_ITEMS",
+                  commandType: "REMOVE_SAVED_ITEM",
+                  label: `Remove saved item "${item.title.slice(0, 42)}"`,
+                  changes: [
+                    {
+                      datasetType: "SAVED_ITEMS",
+                      entityId: item.platformItemId,
+                      beforeState,
+                      afterState: null,
+                    },
+                  ],
+                });
+                await syncCoordinator.refreshSummary();
+              })().catch(console.error);
             }
             return {
               savedItems: state.savedItems.filter(
@@ -172,7 +199,7 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
               ),
             };
           }
-          // Attach exact timestamp of when user saved this item
+
           const nowIso = new Date().toISOString();
           const itemToSave = {
             ...item,
@@ -180,11 +207,30 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
             rawJson: undefined,
           };
 
-          // Local persistence into IndexedDB and queue UPSERT in Outbox
           if (typeof window !== "undefined" && owner) {
-            saveEntityLocally(owner, "SAVED_ITEMS", item.platformItemId, itemToSave as Record<string, unknown>)
-              .then(() => syncCoordinator.refreshSummary())
-              .catch(console.error);
+            void (async () => {
+              const beforeState = await undoRedoService.captureBeforeState(
+                owner,
+                "SAVED_ITEMS",
+                item.platformItemId
+              );
+              await undoRedoService.executeMutation({
+                ownerId: owner,
+                scope: "SAVED_ITEMS",
+                datasetType: "SAVED_ITEMS",
+                commandType: "SAVE_ITEM",
+                label: `Save "${item.title.slice(0, 42)}"`,
+                changes: [
+                  {
+                    datasetType: "SAVED_ITEMS",
+                    entityId: item.platformItemId,
+                    beforeState,
+                    afterState: itemToSave as unknown as Record<string, unknown>,
+                  },
+                ],
+              });
+              await syncCoordinator.refreshSummary();
+            })().catch(console.error);
           }
 
           return { savedItems: [itemToSave, ...state.savedItems] };
@@ -196,12 +242,33 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           id,
           createdAt: new Date().toISOString(),
         };
+        const recordPayload: Record<string, unknown> = {
+          ...(newSearch as unknown as Record<string, unknown>),
+          recordId: id,
+          resourceType: "SAVED_SEARCH",
+          resourceId: id,
+        };
         set((state) => {
           const owner = resolveLocalOwnerId(state.currentOwnerId);
           if (typeof window !== "undefined" && owner) {
-            saveEntityLocally(owner, "REFERENCES", id, newSearch as unknown as Record<string, unknown>)
-              .then(() => syncCoordinator.refreshSummary())
-              .catch(console.error);
+            void (async () => {
+              await undoRedoService.executeMutation({
+                ownerId: owner,
+                scope: "SAVED_SEARCHES",
+                datasetType: "REFERENCES",
+                commandType: "CREATE_SAVED_SEARCH",
+                label: `Save search "${newSearch.title.slice(0, 40)}"`,
+                changes: [
+                  {
+                    datasetType: "REFERENCES",
+                    entityId: id,
+                    beforeState: null,
+                    afterState: recordPayload,
+                  },
+                ],
+              });
+              await syncCoordinator.refreshSummary();
+            })().catch(console.error);
           }
           return {
             savedSearches: [newSearch, ...state.savedSearches],
@@ -212,35 +279,113 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       updateSavedSearch: (id, patch) =>
         set((state) => {
           const owner = resolveLocalOwnerId(state.currentOwnerId);
+          const prev = state.savedSearches.find((s) => s.id === id) || null;
           const updated = state.savedSearches.map((s) =>
             s.id === id ? { ...s, ...patch, updatedAt: new Date().toISOString() } : s
           );
           const found = updated.find((s) => s.id === id);
           if (found && typeof window !== "undefined" && owner) {
-            saveEntityLocally(owner, "REFERENCES", id, found as unknown as Record<string, unknown>)
-              .then(() => syncCoordinator.refreshSummary())
-              .catch(console.error);
+            void (async () => {
+              const beforeState =
+                (await undoRedoService.captureBeforeState(owner, "REFERENCES", id)) ??
+                (prev ? { ...(prev as unknown as Record<string, unknown>), recordId: id, resourceType: "SAVED_SEARCH" } : null);
+              const afterState: Record<string, unknown> = {
+                ...(found as unknown as Record<string, unknown>),
+                recordId: id,
+                resourceType: "SAVED_SEARCH",
+                resourceId: id,
+              };
+              await undoRedoService.executeMutation({
+                ownerId: owner,
+                scope: "SAVED_SEARCHES",
+                datasetType: "REFERENCES",
+                commandType: "EDIT_SAVED_SEARCH",
+                label: `Edit saved search "${found.title.slice(0, 40)}"`,
+                coalesceKey: `edit-search:${id}`,
+                changes: [
+                  {
+                    datasetType: "REFERENCES",
+                    entityId: id,
+                    beforeState,
+                    afterState,
+                  },
+                ],
+              });
+              await syncCoordinator.refreshSummary();
+            })().catch(console.error);
           }
           return { savedSearches: updated };
         }),
       deleteSavedSearch: (id) =>
         set((state) => {
           const owner = resolveLocalOwnerId(state.currentOwnerId);
+          const prev = state.savedSearches.find((s) => s.id === id) || null;
           if (typeof window !== "undefined" && owner) {
-            deleteEntityLocally(owner, "REFERENCES", id)
-              .then(() => syncCoordinator.refreshSummary())
-              .catch(console.error);
+            void (async () => {
+              const beforeState =
+                (await undoRedoService.captureBeforeState(owner, "REFERENCES", id)) ??
+                (prev ? { ...(prev as unknown as Record<string, unknown>), recordId: id, resourceType: "SAVED_SEARCH" } : null);
+              await undoRedoService.executeMutation({
+                ownerId: owner,
+                scope: "SAVED_SEARCHES",
+                datasetType: "REFERENCES",
+                commandType: "DELETE_SAVED_SEARCH",
+                label: `Delete saved search "${(prev?.title || id).slice(0, 40)}"`,
+                changes: [
+                  {
+                    datasetType: "REFERENCES",
+                    entityId: id,
+                    beforeState,
+                    afterState: null,
+                  },
+                ],
+              });
+              await syncCoordinator.refreshSummary();
+            })().catch(console.error);
           }
           return {
             savedSearches: state.savedSearches.filter((s) => s.id !== id),
           };
         }),
       togglePinSavedSearch: (id) =>
-        set((state) => ({
-          savedSearches: state.savedSearches.map((s) =>
-            s.id === id ? { ...s, isPinned: !s.isPinned } : s
-          ),
-        })),
+        set((state) => {
+          const owner = resolveLocalOwnerId(state.currentOwnerId);
+          const prev = state.savedSearches.find((s) => s.id === id) || null;
+          const updated = state.savedSearches.map((s) =>
+            s.id === id ? { ...s, isPinned: !s.isPinned, updatedAt: new Date().toISOString() } : s
+          );
+          const next = updated.find((s) => s.id === id);
+          if (next && typeof window !== "undefined" && owner) {
+            void (async () => {
+              const beforeState =
+                (await undoRedoService.captureBeforeState(owner, "REFERENCES", id)) ??
+                (prev ? { ...(prev as unknown as Record<string, unknown>), recordId: id, resourceType: "SAVED_SEARCH" } : null);
+              const afterState: Record<string, unknown> = {
+                ...(next as unknown as Record<string, unknown>),
+                recordId: id,
+                resourceType: "SAVED_SEARCH",
+                resourceId: id,
+              };
+              await undoRedoService.executeMutation({
+                ownerId: owner,
+                scope: "SAVED_SEARCHES",
+                datasetType: "REFERENCES",
+                commandType: "TOGGLE_PIN_SAVED_SEARCH",
+                label: `${next.isPinned ? "Pin" : "Unpin"} search "${next.title.slice(0, 40)}"`,
+                changes: [
+                  {
+                    datasetType: "REFERENCES",
+                    entityId: id,
+                    beforeState,
+                    afterState,
+                  },
+                ],
+              });
+              await syncCoordinator.refreshSummary();
+            })().catch(console.error);
+          }
+          return { savedSearches: updated };
+        }),
       recordSearchHistory: (itemData) => {
         const id = itemData.id || `hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newItem: SearchHistoryItem = {
@@ -331,13 +476,62 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
 // The canonical storage owner is authoritative; the auth user id is only a
 // compatibility fallback for legacy profiles without a storage owner value.
 if (typeof window !== "undefined") {
+  const reconcileWorkspaceStoreFromIndexedDb = async () => {
+    const owner = resolveLocalOwnerId(useYouTubeWorkspaceStore.getState().currentOwnerId);
+    if (!owner) return;
+    try {
+      const [localSaved, localRefs, pendingOps] = await Promise.all([
+        getLocalEntities<NormalizedYouTubeDiscoveryItem>(owner, "SAVED_ITEMS").catch(() => []),
+        getLocalEntities<Record<string, unknown>>(owner, "REFERENCES").catch(() => []),
+        getPendingOperations(owner).catch(() => []),
+      ]);
+
+      const deletedSaved = new Set(
+        pendingOps
+          .filter((op) => op.datasetType === "SAVED_ITEMS" && op.operationType === "DELETE")
+          .map((op) => op.entityId)
+      );
+      const deletedRefs = new Set(
+        pendingOps
+          .filter((op) => op.datasetType === "REFERENCES" && op.operationType === "DELETE")
+          .map((op) => op.entityId)
+      );
+
+      const nextSavedItems = localSaved.filter((i) => !deletedSaved.has(i.platformItemId));
+      const nextSavedSearches: SavedSearch[] = [];
+      for (const r of localRefs) {
+        const cls = classifyResourceRecord(r, { datasetType: "REFERENCES" });
+        if (cls.resourceType === "SAVED_SEARCH" && !deletedRefs.has(String(r.id || r.recordId || ""))) {
+          nextSavedSearches.push(r as unknown as SavedSearch);
+        }
+      }
+
+      if (nextSavedItems.length > 0 || localRefs.length > 0) {
+        useYouTubeWorkspaceStore.setState((prev) => ({
+          savedItems: localSaved.length > 0 || deletedSaved.size > 0 ? nextSavedItems : prev.savedItems,
+          savedSearches:
+            nextSavedSearches.length > 0 || deletedRefs.size > 0
+              ? nextSavedSearches
+              : prev.savedSearches,
+        }));
+      }
+    } catch {
+      // Keep store resilient on hydration race
+    }
+  };
+
   fetch("/api/auth/status")
     .then((r) => (r.ok ? r.json() : null))
     .then((data) => {
       const id = String(data?.storageOwnerUuid || data?.userId || "").trim();
       if (id && id !== "asdy-admin") {
         useYouTubeWorkspaceStore.getState().setCurrentOwnerId(id);
+        void reconcileWorkspaceStoreFromIndexedDb();
       }
     })
     .catch(() => {});
+
+  window.addEventListener(UNDO_REDO_EVENT, () => void reconcileWorkspaceStoreFromIndexedDb());
+  window.addEventListener("yt-discovery-hydration-changed", () => void reconcileWorkspaceStoreFromIndexedDb());
+  window.addEventListener("yt-discovery-owner-changed", () => void reconcileWorkspaceStoreFromIndexedDb());
 }

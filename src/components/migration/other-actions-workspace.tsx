@@ -35,8 +35,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { formatBytes, formatCompactCount, formatDate, formatDuration } from "@/lib/utils/format";
 import { ExpandableDescription } from "@/components/youtube/expandable-description";
+import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import { saveLegacyStagingBatch } from "@/lib/storage/indexeddb-store";
 import {
-  scanBrowserLocalStorage,
+  scanBrowserAllLegacySources,
   parseLegacyBackupJson,
   normalizeLegacyData,
   prepareLegacyMigrationPlan,
@@ -71,14 +73,54 @@ export function OtherActionsWorkspace() {
 
   const fileInputId = useId();
 
-  // Scan local storage
-  function handleScanLocalStorage() {
+  // Scan local storage + IndexedDB read-only (never deletes originals)
+  async function resolveCanonicalOwner(): Promise<string> {
+    const existing = syncCoordinator.getOwnerId()?.trim();
+    if (existing && existing !== "asdy-admin") return existing;
+    const res = await fetch("/api/auth/status", { headers: { "Cache-Control": "no-cache" } });
+    if (res.ok) {
+      const data = await res.json();
+      const canonical = String(data?.storageOwnerUuid || data?.userId || "").trim();
+      if (canonical) {
+        syncCoordinator.setOwnerId(canonical);
+        return canonical;
+      }
+    }
+    throw new Error("Sign in to resolve your canonical owner ID before migrating data.");
+  }
+
+  async function stageNormalizedSummaryLocally(ownerId: string, summary: LegacyScanSummary) {
+    const datasetTypes = ["SAVED_ITEMS", "PLAYLIST", "SEARCH_HISTORY", "REFERENCES", "RESEARCH_QUEUE"] as const;
+    for (const dt of datasetTypes) {
+      const ds = summary.datasets[dt];
+      if (!ds || ds.items.length === 0) continue;
+      await saveLegacyStagingBatch({
+        stagingId: `stage_${ownerId}_${dt}`,
+        ownerId,
+        datasetType: dt,
+        sourceKind: "localstorage",
+        sourceName: summary.scannedSources.join(", ") || "browser",
+        itemCount: ds.count,
+        duplicateCount: ds.duplicatesCount,
+        errorCount: summary.totalUnrecognized,
+        stagedAt: new Date().toISOString(),
+        status: "STAGED_LOCAL",
+        items: ds.items as Record<string, unknown>[],
+      }).catch(() => {});
+    }
+  }
+
+  async function handleScanLocalStorage() {
     setScanning(true);
     setErrorMsg(null);
     setMigrationReceipt(null);
     try {
-      const sourceMap = scanBrowserLocalStorage();
+      const ownerId = syncCoordinator.getOwnerId()?.trim() || undefined;
+      const sourceMap = await scanBrowserAllLegacySources(ownerId);
       const summary = normalizeLegacyData(sourceMap);
+      if (ownerId && summary.totalNormalized > 0) {
+        await stageNormalizedSummaryLocally(ownerId, summary);
+      }
       startTransition(() => {
         setScanSummary(summary);
       });
@@ -147,7 +189,7 @@ export function OtherActionsWorkspace() {
     }
   }
 
-  // Upload prepared migration to Cloudflare R2
+  // Upload prepared migration to Cloudflare R2 (after resolving real owner & local staging)
   async function handleUploadToR2() {
     if (!scanSummary || scanSummary.totalNormalized === 0) return;
 
@@ -155,8 +197,10 @@ export function OtherActionsWorkspace() {
     setErrorMsg(null);
 
     try {
-      // 1. Prepare migration plan
-      const ownerId = "a5dd9ec7-7345-4f84-a668-12fbdf24120c"; // Canonical owner
+      const ownerId = await resolveCanonicalOwner();
+      await stageNormalizedSummaryLocally(ownerId, scanSummary);
+
+      // 1. Prepare canonical historical migration plan (`before-app-updating`)
       const plan: PreparedMigrationPlan = prepareLegacyMigrationPlan({
         summary: scanSummary,
         ownerId,
@@ -175,6 +219,11 @@ export function OtherActionsWorkspace() {
       }
 
       const receipt = await res.json();
+      const { updateLegacyStagingBatchStatus } = await import("@/lib/storage/indexeddb-store");
+      for (const ds of ["SAVED_ITEMS", "PLAYLIST", "SEARCH_HISTORY", "REFERENCES", "RESEARCH_QUEUE"]) {
+        await updateLegacyStagingBatchStatus(`stage_${ownerId}_${ds}`, "COMMITTED", receipt).catch(() => {});
+      }
+
       startTransition(() => {
         setMigrationReceipt(receipt);
       });
@@ -187,7 +236,8 @@ export function OtherActionsWorkspace() {
 
   // Filter items in active dataset preview
   const currentDatasetItems = scanSummary?.datasets[activeTab]?.items || [];
-  const filteredPreviewItems = currentDatasetItems.filter((item: any) => {
+  const filteredPreviewItems = currentDatasetItems.filter((rawItem: unknown) => {
+    const item = rawItem as Record<string, unknown>;
     if (!previewQuery.trim()) return true;
     const q = previewQuery.toLowerCase();
     const title = String(item.title || item.name || item.query || "").toLowerCase();
@@ -565,19 +615,26 @@ export function OtherActionsWorkspace() {
                   </div>
                 ))
               ) : (
-                filteredPreviewItems.map((item: any, idx: number) => (
+                filteredPreviewItems.map((rawItem: unknown, idx: number) => {
+                  const item = rawItem as Record<string, unknown>;
+                  const itemTitle = String(item.title || item.name || item.query || "Record #" + (idx + 1));
+                  const itemId = String(item.id || idx);
+                  const itemQuery = typeof item.query === "string" ? item.query : null;
+                  const itemCreatedAt = typeof item.createdAt === "string" ? item.createdAt : null;
+                  return (
                   <div
-                    key={item.id || idx}
+                    key={itemId}
                     className="rounded-lg border border-border/60 bg-surface-muted/20 p-3 text-xs space-y-1"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-foreground">{item.title || item.name || item.query || "Record #" + (idx + 1)}</span>
-                      <span className="font-mono text-[10px] text-muted">{item.id}</span>
+                      <span className="font-semibold text-foreground">{itemTitle}</span>
+                      <span className="font-mono text-[10px] text-muted">{itemId}</span>
                     </div>
-                    {item.query && <div className="text-muted">Query: {item.query}</div>}
-                    {item.createdAt && <div className="text-muted text-[10px]">Created: {formatDate(item.createdAt)}</div>}
+                    {itemQuery && <div className="text-muted">Query: {itemQuery}</div>}
+                    {itemCreatedAt && <div className="text-muted text-[10px]">Created: {formatDate(itemCreatedAt)}</div>}
                   </div>
-                ))
+                  );
+                })
               )}
             </div>
           </Card>

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { sanitizeRedirectPath } from "@/lib/navigation/safe-path";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -72,10 +73,7 @@ function LoginForm() {
         throw new Error(errorMsg);
       }
       const next = searchParams.get("next");
-      const destination =
-        next && next.startsWith("/") && !next.startsWith("//") && next !== "/login"
-          ? next
-          : "/search";
+      const destination = sanitizeRedirectPath(next, "/search");
       router.push(destination);
       router.refresh();
     } catch (err) {

@@ -124,6 +124,45 @@ export function buildTemporaryExportPath(
 }
 
 /**
+ * Computes exact UTF-8 byte length across both Node.js and browser bundles
+ * without relying solely on polyfilled `Buffer.byteLength`.
+ * Scope: Shared manifest serialization (sync, legacy migration, and export).
+ */
+function utf8ByteLength(text: string): number {
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(text).byteLength;
+  }
+  return Buffer.byteLength(text, "utf8");
+}
+
+/**
+ * Encodes a 32-bit unsigned integer in big-endian byte order using standard
+ * DataView so client bundles do not depend on Buffer write method availability.
+ */
+function encodeUInt32BE(value: number): Buffer {
+  const view = new DataView(new ArrayBuffer(4));
+  view.setUint32(0, value >>> 0, false);
+  return Buffer.from(view.buffer);
+}
+
+/**
+ * Encodes a 64-bit unsigned integer in big-endian byte order using two 32-bit
+ * DataView writes instead of Node's `Buffer.prototype.writeBigUInt64BE`.
+ * Prevents runtime `writeBigUInt64BE is not a function` crashes in browser
+ * bundles (e.g., Legacy Migration planning) while keeping byte-for-byte parity
+ * with Node.js `writeBigUInt64BE`.
+ */
+function encodeUInt64BE(value: number | bigint): Buffer {
+  const big = BigInt(value);
+  const view = new DataView(new ArrayBuffer(8));
+  const hi = Number((big >> BigInt(32)) & BigInt(0xffffffff));
+  const lo = Number(big & BigInt(0xffffffff));
+  view.setUint32(0, hi, false);
+  view.setUint32(4, lo, false);
+  return Buffer.from(view.buffer);
+}
+
+/**
  * Computes individual part SHA-256 digest over raw UTF-8 bytes.
  */
 export function computePartSha256(content: string | Buffer): string {
@@ -152,15 +191,9 @@ export function computeAggregateGenerationSha256(
   hash.update(Buffer.from("YOUTUBE-DISCOVERY-GENERATION-V1\0", "utf8"));
 
   for (const p of sorted) {
-    const partNumBuf = Buffer.alloc(4);
-    partNumBuf.writeUInt32BE(p.partNumber, 0);
-
-    const byteCountBuf = Buffer.alloc(8);
-    byteCountBuf.writeBigUInt64BE(BigInt(p.byteCount), 0);
-
-    const recordCountBuf = Buffer.alloc(8);
-    recordCountBuf.writeBigUInt64BE(BigInt(p.recordCount), 0);
-
+    const partNumBuf = encodeUInt32BE(p.partNumber);
+    const byteCountBuf = encodeUInt64BE(p.byteCount);
+    const recordCountBuf = encodeUInt64BE(p.recordCount);
     const rawSha256Buf = Buffer.from(p.sha256, "hex");
 
     hash.update(partNumBuf);
@@ -225,7 +258,7 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
   // Group items into batches using exact UTF-8 byte lengths.
   let runningItems: T[] = [];
   for (const record of normalizedRecords) {
-    const recordBytes = Buffer.byteLength(JSON.stringify(record), "utf8");
+    const recordBytes = utf8ByteLength(JSON.stringify(record));
     if (recordBytes > STORAGE_LIMITS.MAX_SINGLE_RECORD_BYTES) {
       throw new Error(
         `Record exceeds 45 MiB limit (${recordBytes} bytes). Individual records cannot be partitioned.`
@@ -235,12 +268,12 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
     // Speculatively test size with this record added
     const testItems = [...runningItems, record];
     const testJson = buildPartEnvelope(testItems, currentPartNumber, 1);
-    const testBytes = Buffer.byteLength(testJson, "utf8");
+    const testBytes = utf8ByteLength(testJson);
 
     if (testBytes > targetBytes && runningItems.length > 0) {
       // Finalize current part
       const finalJson = buildPartEnvelope(runningItems, currentPartNumber, 0); // updated later
-      const byteCount = Buffer.byteLength(finalJson, "utf8");
+      const byteCount = utf8ByteLength(finalJson);
       const sha256 = computePartSha256(finalJson);
       const storagePath = buildManifestPartStoragePath(
         params.storageOwnerUuid,
@@ -269,7 +302,7 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
   // a delete-all generation is a real, hydratable snapshot.
   if (runningItems.length > 0 || parts.length === 0) {
     const finalJson = buildPartEnvelope(runningItems, currentPartNumber, 0);
-    const byteCount = Buffer.byteLength(finalJson, "utf8");
+    const byteCount = utf8ByteLength(finalJson);
     const sha256 = computePartSha256(finalJson);
     const storagePath = buildManifestPartStoragePath(
       params.storageOwnerUuid,
@@ -295,7 +328,7 @@ export function partitionRecordsIntoManifestParts<T extends Record<string, unkno
     parsed.totalPartsInGeneration = totalParts;
     const recomputedJson = JSON.stringify(parsed);
     parts[i].rawJson = recomputedJson;
-    parts[i].byteCount = Buffer.byteLength(recomputedJson, "utf8");
+    parts[i].byteCount = utf8ByteLength(recomputedJson);
     parts[i].sha256 = computePartSha256(recomputedJson);
   }
 

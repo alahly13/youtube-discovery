@@ -73,19 +73,30 @@ export function OtherActionsWorkspace() {
 
   const fileInputId = useId();
 
-  // Scan local storage + IndexedDB read-only (never deletes originals)
+  // Scan local storage + IndexedDB read-only (never deletes originals).
+  // Always resolves authoritative `storageOwnerUuid` from `/api/auth/status` first
+  // so legacy migration paths match server-enforced R2 owner prefixes.
   async function resolveCanonicalOwner(): Promise<string> {
-    const existing = syncCoordinator.getOwnerId()?.trim();
-    if (existing && existing !== "asdy-admin") return existing;
-    const res = await fetch("/api/auth/status", { headers: { "Cache-Control": "no-cache" } });
-    if (res.ok) {
-      const data = await res.json();
-      const canonical = String(data?.storageOwnerUuid || data?.userId || "").trim();
-      if (canonical) {
-        syncCoordinator.setOwnerId(canonical);
-        return canonical;
+    try {
+      const res = await fetch("/api/auth/status", { headers: { "Cache-Control": "no-cache" } });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.authenticated === false) {
+          throw new Error("Sign in to resolve your canonical owner ID before migrating data.");
+        }
+        const canonical = String(data?.storageOwnerUuid || data?.userId || "").trim();
+        if (canonical) {
+          syncCoordinator.setOwnerId(canonical);
+          return canonical;
+        }
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Sign in")) {
+        throw err;
       }
     }
+    const existing = syncCoordinator.getOwnerId()?.trim();
+    if (existing && existing !== "asdy-admin") return existing;
     throw new Error("Sign in to resolve your canonical owner ID before migrating data.");
   }
 
@@ -206,19 +217,60 @@ export function OtherActionsWorkspace() {
         ownerId,
       });
 
-      // 2. Post to migration upload route
-      const res = await fetch("/api/migration/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(plan),
-      });
+      // 2. Post to migration upload route (chunk by generation if payload exceeds 2.5 MiB
+      //    to stay safely below Vercel serverless body limits on large archives)
+      const fullPayload = JSON.stringify(plan);
+      const generationBatches: PreparedMigrationPlan[] =
+        fullPayload.length > 2_500_000 && plan.generations.length > 1
+          ? plan.generations.map((gen) => ({
+              ...plan,
+              generations: [gen],
+              totalRecords: gen.totalRecords,
+              totalBytes: gen.totalBytes,
+            }))
+          : [plan];
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || `Upload failed with HTTP ${res.status}`);
+      let totalUploadedGenerations = 0;
+      let totalUploadedRecords = 0;
+      let totalUploadedBytes = 0;
+      const uploadedGenerations: Array<{
+        datasetType: string;
+        generationId: string;
+        manifestPath: string;
+        partsCount: number;
+        totalBytes: number;
+        aggregateSha256: string;
+      }> = [];
+
+      for (const batchPlan of generationBatches) {
+        const res = await fetch("/api/migration/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(batchPlan),
+        });
+
+        if (!res.ok) {
+          const errorData = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(errorData.error || `Upload failed with HTTP ${res.status}`);
+        }
+
+        const batchReceipt = await res.json();
+        totalUploadedGenerations += Number(batchReceipt.totalUploadedGenerations || 0);
+        totalUploadedRecords += Number(batchReceipt.totalUploadedRecords || 0);
+        totalUploadedBytes += Number(batchReceipt.totalUploadedBytes || 0);
+        if (Array.isArray(batchReceipt.uploadedGenerations)) {
+          uploadedGenerations.push(...batchReceipt.uploadedGenerations);
+        }
       }
 
-      const receipt = await res.json();
+      const receipt = {
+        ok: true,
+        planId: plan.planId,
+        totalUploadedGenerations,
+        totalUploadedRecords,
+        totalUploadedBytes,
+        uploadedGenerations,
+      };
       const { updateLegacyStagingBatchStatus } = await import("@/lib/storage/indexeddb-store");
       for (const ds of ["SAVED_ITEMS", "PLAYLIST", "SEARCH_HISTORY", "REFERENCES", "RESEARCH_QUEUE"]) {
         await updateLegacyStagingBatchStatus(`stage_${ownerId}_${ds}`, "COMMITTED", receipt).catch(() => {});

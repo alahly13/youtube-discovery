@@ -4465,3 +4465,30 @@ No.
 - **Whether migrations were created/applied:** No new migrations created or applied (remote DB remains synchronized at 6/6).
 - **Whether `db:apply` was run:** No.
 
+---
+
+## Entry — 2026-11-12 — Fix Browser `writeBigUInt64BE` Crash on Legacy Migration "Upload to Cloudflare R2"
+
+- **Date/time:** 2026-11-12 18:36 UTC+02
+- **Agent/model:** Antigravity
+- **Task summary:** Fixed runtime `a.writeBigUInt64BE is not a function` crash when clicking `Upload to Cloudflare R2` on `/other-actions`, fixed `Raw Records Found` showing `0` for unified `youtube-discovery-workspace` scans, and hardened owner resolution and payload batching in `OtherActionsWorkspace`.
+- **Reason/root cause:** `OtherActionsWorkspace.handleUploadToR2` calls `prepareLegacyMigrationPlan()` in the browser, which invoked `computeAggregateGenerationSha256()` from `src/lib/storage/manifest-serializer.ts`. That helper called Node-only `Buffer.prototype.writeBigUInt64BE`, which is absent in Next.js/Turbopack's browser `Buffer` polyfill. Additionally, the `youtube-discovery-workspace` branch in `normalizeLegacyData()` skipped incrementing `totalRawFound`, `totalDuplicatesSkipped`, and `totalUnrecognized`.
+- **Files changed:**
+  - `src/lib/storage/manifest-serializer.ts`: Added browser-safe `utf8ByteLength`, `encodeUInt32BE`, and `encodeUInt64BE` (`TextEncoder` + `DataView` 32-bit BE writes) replacing `writeBigUInt64BE`, `writeUInt32BE`, and `Buffer.byteLength`.
+  - `src/lib/migration/legacy-migration-service.ts`: Switched part byte counting in `prepareLegacyMigrationPlan` to `TextEncoder`-first, and added `totalRawFound`/`totalDuplicatesSkipped`/`totalUnrecognized` accounting to the `youtube-discovery-workspace` branch of `normalizeLegacyData`.
+  - `src/components/migration/other-actions-workspace.tsx`: Updated `resolveCanonicalOwner` to prefer live `/api/auth/status` `storageOwnerUuid` when online, added safe non-JSON error handling, and chunked multi-generation migration uploads above `2.5 MiB` per request.
+- **Architecture impact:** Keeps aggregate generation SHA-256 byte-for-byte identical across Node.js server routes and browser planning.
+- **Environment impact:** None.
+- **Database/migration impact:** None.
+- **YouTube API/quota impact:** Zero calls.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `npx tsc --noEmit --incremental false`: PASSED (0 errors).
+  - Targeted ESLint across all 3 edited TS/TSX files: PASSED (0 errors; 13 pre-existing unused-import warnings in `other-actions-workspace.tsx`).
+  - `rg -n "writeBigUInt64BE|writeUInt32BE" src/`: 0 matches remaining.
+- **Blocked checks, if any:** Functional UI / browser upload testing intentionally left for the user.
+- **Remaining risks/limitations:** None identified for this fix; user needs to rebuild/redeploy and re-test `Upload to Cloudflare R2` on `/other-actions`.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.
+

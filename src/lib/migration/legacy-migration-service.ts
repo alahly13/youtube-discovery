@@ -473,9 +473,18 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
       const state = asRec(rootRec?.state) || asRec(asRec(rootRec?.data)?.state);
       if (state) {
         if (Array.isArray(state.savedItems)) {
+          summary.totalRawFound += state.savedItems.length;
           for (const item of state.savedItems) {
             const norm = normalizeSingleSavedItem(item);
-            if (norm && !seenSavedItemIds.has(norm.platformItemId)) {
+            if (!norm) {
+              summary.totalUnrecognized++;
+              summary.unrecognizedItems.push({ source: sourceKey, raw: item, reason: "Missing title or platform ID" });
+              continue;
+            }
+            if (seenSavedItemIds.has(norm.platformItemId)) {
+              summary.totalDuplicatesSkipped++;
+              summary.datasets.SAVED_ITEMS.duplicatesCount++;
+            } else {
               seenSavedItemIds.add(norm.platformItemId);
               summary.datasets.SAVED_ITEMS.items.push(norm);
               summary.datasets.SAVED_ITEMS.count++;
@@ -484,10 +493,19 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
           }
         }
         if (Array.isArray(state.savedSearches)) {
+          summary.totalRawFound += state.savedSearches.length;
           for (const rawRef of state.savedSearches) {
             const ref = asRec(rawRef);
-            const id = ref ? String(ref.id || ref.title || "").trim() : "";
-            if (ref && id && !seenReferenceIds.has(id)) {
+            const id = ref ? String(ref.id || ref.title || ref.query || "").trim() : "";
+            if (!ref || !id) {
+              summary.totalUnrecognized++;
+              summary.unrecognizedItems.push({ source: sourceKey, raw: rawRef, reason: "Missing reference ID/title" });
+              continue;
+            }
+            if (seenReferenceIds.has(id)) {
+              summary.totalDuplicatesSkipped++;
+              summary.datasets.REFERENCES.duplicatesCount++;
+            } else {
               seenReferenceIds.add(id);
               summary.datasets.REFERENCES.items.push({ ...ref, isBeforeAppUpdating: true });
               summary.datasets.REFERENCES.count++;
@@ -496,10 +514,19 @@ export function normalizeLegacyData(sourceMap: Record<string, unknown>): LegacyS
           }
         }
         if (Array.isArray(state.searchHistory)) {
+          summary.totalRawFound += state.searchHistory.length;
           for (const rawH of state.searchHistory) {
             const h = asRec(rawH);
             const id = h ? String(h.id || h.query || "").trim() : "";
-            if (h && id && !seenHistoryIds.has(id)) {
+            if (!h || !id) {
+              summary.totalUnrecognized++;
+              summary.unrecognizedItems.push({ source: sourceKey, raw: rawH, reason: "Missing search ID/query" });
+              continue;
+            }
+            if (seenHistoryIds.has(id)) {
+              summary.totalDuplicatesSkipped++;
+              summary.datasets.SEARCH_HISTORY.duplicatesCount++;
+            } else {
               seenHistoryIds.add(id);
               summary.datasets.SEARCH_HISTORY.items.push({ ...h, isBeforeAppUpdating: true });
               summary.datasets.SEARCH_HISTORY.count++;
@@ -632,7 +659,11 @@ export function prepareLegacyMigrationPlan(params: {
     };
 
     const partJson = JSON.stringify(partEnvelope);
-    const byteCount = Buffer.byteLength(partJson, "utf8");
+    // Use TextEncoder so browser execution never depends on Node-only Buffer internals.
+    const byteCount =
+      typeof TextEncoder !== "undefined"
+        ? new TextEncoder().encode(partJson).byteLength
+        : Buffer.byteLength(partJson, "utf8");
     const sha256 = computePartSha256(partJson);
 
     const partDescriptor: PreparedMigrationPart = {

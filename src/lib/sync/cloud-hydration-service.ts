@@ -196,7 +196,7 @@ class CloudHydrationService {
         try {
           // If remote has no committed generation, align catalog with clean revision 0
           if (!generationId || !parts || parts.length === 0) {
-            await bulkHydrateDatasetEntities(ownerId, datasetType, "", 0, []);
+            await bulkHydrateDatasetEntities(ownerId, datasetType, [], "", 0);
             completedCount++;
             this.emit({ completedDatasets: completedCount });
             continue;

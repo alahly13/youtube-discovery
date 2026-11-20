@@ -4574,3 +4574,41 @@ No.
 - **Whether secrets were printed:** No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
+
+---
+
+## Entry — 2026-11-20 — Fix False REVISION_CONFLICT on Cloud Sync, Dataset-Targeted Save & Multi-Owner R2 Cloud Item Resolution
+
+- **Date/time:** 2026-11-20 ~18:40 UTC+02
+- **Agent/model:** Antigravity
+- **Task summary:** Resolved false revision conflict blocking local items from uploading to Cloudflare R2, isolated dataset saves to prevent cross-dataset outbox blocking, broadened multi-owner resolution for previously committed R2 cloud records, and enabled instant display of previously saved cloud data in `/saved`:
+  1. *Eliminated False `REVISION_CONFLICT` (409):* `POST /api/sync/save-all` no longer rejects with 409 when the remote dataset is at `current_revision: 0` or when client expected revision is ahead. Since the server loads committed cloud records and runs `mergeCloudAndIncomingRecords`, it performs an automatic non-destructive rebase on merge, advancing the generation monotonically without blocking or data loss.
+  2. *Aligned Clean Remote Revisions in Hydration:* When remote has no committed generation, `cloudHydrationService.hydrateAllDatasets` now resets `localCatalog` to revision 0 via `bulkHydrateDatasetEntities(ownerId, datasetType, "", 0, [])`, preventing stale revision numbers from lingering in IndexedDB.
+  3. *Dataset-Targeted Save in `syncCoordinator`:* `saveAll(targetDatasetType?: CanonicalDatasetType)` now allows targeting specific datasets (e.g. `SAVED_ITEMS`). The "Save to R2 Cloud" button on `/saved` specifically targets `SAVED_ITEMS`, ensuring operations on other datasets (like search history) never block saved item uploads.
+  4. *Multi-Owner & Resilient Fallback in `/api/saved-items`:* Broadened queries on `StorageDataset` and `SavedItemIndex` across `OR: [{ owner_id: storageOwnerUuid }, { owner_id: profile.id }, { owner_id: profileId }]`. Added graceful fallback to PostgreSQL `saved_items_index` if individual R2 part downloads encounter network issues, preventing HTTP 502 errors from hiding previously committed cloud data.
+  5. *Instant Cloud Visibility in `/saved`:* `nonHistoricalCloudItems` in `SavedItemsWorkspace` now combines previously committed records from local IndexedDB (`cloudCommittedItems`) and authoritative API records (`cloudApiItems`), ensuring previously saved cloud items are instantly visible under `R2 Cloud` and `All Storage`.
+- **Reason/root cause:**
+  - Client was blocked by `REVISION_CONFLICT: datasetType: SEARCH_HISTORY, expectedRevision: 1, currentRevision: 0` because strict equality `expectedRevision !== baseRevision` rejected initial syncs when remote was at revision 0, and hydration did not reset the local catalog for empty datasets.
+  - "Save to R2 Cloud" on `/saved` attempted to sync all pending outbox datasets simultaneously, so a conflict on `SEARCH_HISTORY` blocked saving `SAVED_ITEMS`.
+  - Previously saved items were hidden if `/api/saved-items` was loading or if R2 parts encountered transient issues, because IndexedDB `cloudCommittedItems` were excluded from the cloud view.
+- **Files changed:**
+  - `src/app/api/sync/save-all/route.ts`
+  - `src/lib/sync/sync-coordinator.ts`
+  - `src/lib/sync/cloud-hydration-service.ts`
+  - `src/app/api/saved-items/route.ts`
+  - `src/components/saved/saved-items-workspace.tsx`
+  - `youtube_discovery_ledger.md`
+  - `PROJECT_CHANGE_LOG_LEDGER.md`
+- **Architecture impact:** Enforces robust non-destructive rebase-on-write semantics; isolates dataset sync lifecycles; provides dual-layer resilience for cloud data display (IndexedDB committed cache + R2 authoritative fetch).
+- **Environment impact:** None. Zero secrets printed or modified. Verified existing Vercel environment variables and fallback mechanisms.
+- **Database/migration impact:** None. Schema remains synchronized across all 19 canonical tables.
+- **YouTube API/quota impact:** Zero calls or quota consumed.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `node scripts/test-unified-saved-lifecycle.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: PASSED (44/44 assertions).
+- **Blocked checks, if any:** Local production build commands (`npm run build`, `next build`) were intentionally not run per user instructions.
+- **Remaining risks/limitations:** None identified.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.

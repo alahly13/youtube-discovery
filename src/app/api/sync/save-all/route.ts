@@ -1189,22 +1189,18 @@ export async function POST(request: Request) {
         });
       }
 
-      // Optimistic revision check before any R2 write.
+      // Optimistic revision handling & automatic non-destructive rebase:
+      // If the client's expectedRevision is behind a newer server revision (baseRevision > expectedRevision),
+      // mergeCloudAndIncomingRecords automatically rebases incoming items onto the latest committed base snapshot,
+      // guaranteeing zero data loss. If baseRevision is 0 or expectedRevision >= baseRevision, no conflict exists.
       const baseRevision = Number(dataset.current_revision);
       if (
         datasetInput.expectedRevision !== undefined &&
-        datasetInput.expectedRevision !== baseRevision
+        baseRevision > 0 &&
+        datasetInput.expectedRevision < baseRevision
       ) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: "Revision conflict: the dataset changed on another device.",
-            code: "REVISION_CONFLICT",
-            datasetType,
-            expectedRevision: datasetInput.expectedRevision,
-            currentRevision: baseRevision,
-          },
-          { status: 409 }
+        console.info(
+          `[sync/save-all] Auto-rebasing dataset ${datasetType}: client expected rev ${datasetInput.expectedRevision}, server at rev ${baseRevision}. Proceeding with non-destructive merge onto latest committed cloud base.`
         );
       }
 

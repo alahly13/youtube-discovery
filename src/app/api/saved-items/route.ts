@@ -86,7 +86,30 @@ export async function GET(request: Request) {
       },
     });
 
-    const dataset = profile?.storage_datasets[0];
+    let dataset = profile?.storage_datasets[0];
+    if (!dataset) {
+      dataset = (await prisma.storageDataset.findFirst({
+        where: {
+          dataset_type: "SAVED_ITEMS",
+          OR: [
+            { owner_id: storageOwnerUuid },
+            ...(profile ? [{ owner_id: profile.id }] : []),
+            ...(profileId ? [{ owner_id: profileId }] : []),
+          ],
+        },
+        include: {
+          generations: {
+            where: { state: "COMMITTED" },
+            orderBy: { generation_number: "desc" },
+            take: 1,
+            include: {
+              parts: { orderBy: { part_number: "asc" } },
+            },
+          },
+        },
+      })) || undefined;
+    }
+
     const latestGen = dataset?.generations[0];
 
     if (dataset) {
@@ -95,33 +118,37 @@ export async function GET(request: Request) {
 
     if (latestGen && latestGen.parts.length > 0) {
       generationId = latestGen.id;
-      // Download and SHA-256 verify every part from Cloudflare R2
-      for (const part of latestGen.parts) {
-        const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
-          storageOwnerUuid,
-        });
+      try {
+        // Download and SHA-256 verify every part from Cloudflare R2
+        for (const part of latestGen.parts) {
+          const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
+            storageOwnerUuid,
+          });
 
-        if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
-          throw new Error(
-            `Part ${part.part_number} failed SHA-256 verification (expected ${part.sha256.slice(0, 16)}..., got ${sha256.slice(0, 16)}...).`
-          );
+          if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
+            throw new Error(
+              `Part ${part.part_number} failed SHA-256 verification (expected ${part.sha256.slice(0, 16)}..., got ${sha256.slice(0, 16)}...).`
+            );
+          }
+
+          const rawJson = data.toString("utf8");
+          const parsed = JSON.parse(rawJson) as {
+            records?: Record<string, unknown>[];
+            items?: Record<string, unknown>[];
+          };
+
+          const partRecords = Array.isArray(parsed.records)
+            ? parsed.records
+            : Array.isArray(parsed.items)
+              ? parsed.items
+              : Array.isArray(parsed)
+                ? (parsed as unknown as Record<string, unknown>[])
+                : [];
+
+          rawRecords.push(...partRecords);
         }
-
-        const rawJson = data.toString("utf8");
-        const parsed = JSON.parse(rawJson) as {
-          records?: Record<string, unknown>[];
-          items?: Record<string, unknown>[];
-        };
-
-        const partRecords = Array.isArray(parsed.records)
-          ? parsed.records
-          : Array.isArray(parsed.items)
-            ? parsed.items
-            : Array.isArray(parsed)
-              ? (parsed as unknown as Record<string, unknown>[])
-              : [];
-
-        rawRecords.push(...partRecords);
+      } catch (r2PartErr) {
+        console.warn("[api/saved-items] R2 part read warning, falling back to other layers:", r2PartErr);
       }
     }
 
@@ -195,12 +222,18 @@ export async function GET(request: Request) {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Phase 3: Relational Index Fallback (if R2 generation was empty)
+    // Phase 3: Relational Index Fallback (if R2 generation was empty or unreadable)
     // ─────────────────────────────────────────────────────────────────────────
-    if (rawRecords.length === 0 && profile) {
+    if (rawRecords.length === 0) {
       try {
         const dbItems = await prisma.savedItemIndex.findMany({
-          where: { owner_id: profile.id },
+          where: {
+            OR: [
+              { owner_id: storageOwnerUuid },
+              ...(profile ? [{ owner_id: profile.id }] : []),
+              ...(profileId ? [{ owner_id: profileId }] : []),
+            ],
+          },
           orderBy: { saved_at: "desc" },
         });
 

@@ -493,7 +493,7 @@ class SyncCoordinator {
    *  - Never prunes Outbox until remote server confirms commit.
    *  - Records batch lifecycle in sync_journal.
    */
-  public async saveAll(): Promise<{
+  public async saveAll(targetDatasetType?: CanonicalDatasetType): Promise<{
     ok: boolean;
     syncedCount: number;
     error?: string;
@@ -606,17 +606,17 @@ class SyncCoordinator {
           console.debug("[sync] Another tab holds Web Lock. Deferring execution.");
           return { ok: false, syncedCount: 0, error: "Another tab is currently syncing" };
         }
-        return this.executeWithLeaseMutex();
+        return this.executeWithLeaseMutex(targetDatasetType);
       });
     }
 
-    return this.executeWithLeaseMutex();
+    return this.executeWithLeaseMutex(targetDatasetType);
   }
 
   /**
    * Acquires the IndexedDB fallback lease mutex before executing the internal sync saga.
    */
-  private async executeWithLeaseMutex(): Promise<{
+  private async executeWithLeaseMutex(targetDatasetType?: CanonicalDatasetType): Promise<{
     ok: boolean;
     syncedCount: number;
     error?: string;
@@ -631,13 +631,13 @@ class SyncCoordinator {
     }
 
     try {
-      return await this.executeSyncInternal();
+      return await this.executeSyncInternal(targetDatasetType);
     } finally {
       await releaseSyncLease(SYNC_MUTEX_NAME);
     }
   }
 
-  private async executeSyncInternal(): Promise<{
+  private async executeSyncInternal(targetDatasetType?: CanonicalDatasetType): Promise<{
     ok: boolean;
     syncedCount: number;
     error?: string;
@@ -654,7 +654,10 @@ class SyncCoordinator {
     const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
     try {
-      const pendingOps = await getPendingOperations(this.ownerId);
+      let pendingOps = await getPendingOperations(this.ownerId);
+      if (targetDatasetType) {
+        pendingOps = pendingOps.filter((op) => op.datasetType === targetDatasetType);
+      }
 
       if (pendingOps.length === 0) {
         this.status = "SYNCED";

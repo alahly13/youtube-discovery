@@ -222,6 +222,7 @@ export function SavedItemsWorkspace() {
   const {
     items: allLocalAndHydratedItems,
     localPendingItems,
+    cloudCommittedItems,
     refresh: refreshLocal,
   } = useMergedDataset<NormalizedYouTubeDiscoveryItem>(
     "SAVED_ITEMS",
@@ -350,10 +351,26 @@ export function SavedItemsWorkspace() {
     return localPendingItems.filter((item) => !isHistorical(item));
   }, [localPendingItems]);
 
-  // Non-historical cloud items fetched from Cloudflare R2
+  // Non-historical cloud items fetched from Cloudflare R2 and previously committed local records
   const nonHistoricalCloudItems = useMemo(() => {
-    return cloudApiItems.filter((item) => !isHistorical(item));
-  }, [cloudApiItems]);
+    const map = new Map<string, NormalizedYouTubeDiscoveryItem>();
+
+    // 1. Local hydrated cloud items from IndexedDB
+    for (const item of cloudCommittedItems) {
+      if (!isHistorical(item) && item.platformItemId) {
+        map.set(item.platformItemId, item);
+      }
+    }
+
+    // 2. Authoritative items fetched from /api/saved-items (takes precedence)
+    for (const item of cloudApiItems) {
+      if (!isHistorical(item) && item.platformItemId) {
+        map.set(item.platformItemId, item);
+      }
+    }
+
+    return Array.from(map.values());
+  }, [cloudApiItems, cloudCommittedItems]);
 
   // Combined, deduplicated collection for "All" view with explicit source badges
   const dedupedAllItems = useMemo(() => {
@@ -466,7 +483,7 @@ export function SavedItemsWorkspace() {
     });
 
     try {
-      const result = await syncCoordinator.saveAll();
+      const result = await syncCoordinator.saveAll("SAVED_ITEMS");
 
       if (result.ok) {
         const r = result.receipt;

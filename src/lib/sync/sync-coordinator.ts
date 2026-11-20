@@ -30,12 +30,14 @@ import {
   recordSyncJournalBatch,
   updateSyncJournalBatch,
   getLocalEntities,
+  saveEntityLocally,
   getDatasetCatalogEntry,
   migrateLocalOwnerId,
   type PendingOperation,
   type PendingOperationsSummary,
   type CanonicalDatasetType,
 } from "../storage/indexeddb-store";
+import { CANONICAL_DATASET_TYPES } from "../storage/canonical-paths";
 import { getOriginDeviceMeta } from "../device/device-identity";
 import { cloudHydrationService } from "./cloud-hydration-service";
 import { undoRedoService } from "../undo-redo/undo-redo-service";
@@ -657,6 +659,43 @@ class SyncCoordinator {
       let pendingOps = await getPendingOperations(this.ownerId);
       if (targetDatasetType) {
         pendingOps = pendingOps.filter((op) => op.datasetType === targetDatasetType);
+      }
+
+      if (pendingOps.length === 0) {
+        // Self-healing check: verify if there are any uncommitted local entities in IndexedDB
+        // that lack pending outbox entries (e.g. from interrupted transactions, memory hydration, or offline edits).
+        const typesToCheck: CanonicalDatasetType[] = targetDatasetType
+          ? [targetDatasetType]
+          : (CANONICAL_DATASET_TYPES as unknown as CanonicalDatasetType[]);
+
+        for (const dType of typesToCheck) {
+          try {
+            const localEntities = await getLocalEntities<Record<string, unknown>>(this.ownerId, dType);
+            for (const entity of localEntities) {
+              const status = entity._localStatus;
+              const syncStatus = entity._syncStatus;
+              if (
+                status === "LOCAL_PENDING" ||
+                status === "PENDING_SYNC" ||
+                syncStatus === "LOCAL" ||
+                (status !== "COMMITTED" && syncStatus !== "CLOUD")
+              ) {
+                const entityId = String(entity.platformItemId || entity.id || entity.recordId || "").trim();
+                if (entityId) {
+                  await saveEntityLocally(this.ownerId, dType, entityId, entity, "UPSERT");
+                }
+              }
+            }
+          } catch {
+            // Best effort self-healing
+          }
+        }
+
+        // Re-read pending operations after self-healing
+        pendingOps = await getPendingOperations(this.ownerId);
+        if (targetDatasetType) {
+          pendingOps = pendingOps.filter((op) => op.datasetType === targetDatasetType);
+        }
       }
 
       if (pendingOps.length === 0) {

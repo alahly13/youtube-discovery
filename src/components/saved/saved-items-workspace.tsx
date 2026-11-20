@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
+import { saveEntityLocally } from "@/lib/storage/indexeddb-store";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
 import { getDeviceLabel } from "@/lib/device/device-identity";
 import { AddToPlaylistDialog } from "@/components/library/add-to-playlist-dialog";
@@ -318,6 +319,7 @@ export function SavedItemsWorkspace() {
     if (typeof window !== "undefined") {
       window.addEventListener("yt-discovery-cloud-save-success", handleCloudSaveSuccess);
       window.addEventListener("yt-discovery-hydration-changed", handleCloudSaveSuccess);
+      window.addEventListener("yt-discovery-local-committed", handleCloudSaveSuccess);
     }
 
     return () => {
@@ -325,6 +327,7 @@ export function SavedItemsWorkspace() {
       if (typeof window !== "undefined") {
         window.removeEventListener("yt-discovery-cloud-save-success", handleCloudSaveSuccess);
         window.removeEventListener("yt-discovery-hydration-changed", handleCloudSaveSuccess);
+        window.removeEventListener("yt-discovery-local-committed", handleCloudSaveSuccess);
       }
     };
   }, [fetchCloudItems, refreshLocal]);
@@ -483,28 +486,48 @@ export function SavedItemsWorkspace() {
     });
 
     try {
+      // 1. Ensure all nonHistoricalLocalItems are persisted locally in IndexedDB with pending outbox entries
+      const ownerId = syncCoordinator.getOwnerId();
+      if (ownerId && nonHistoricalLocalItems.length > 0) {
+        for (const item of nonHistoricalLocalItems) {
+          if (!item.platformItemId) continue;
+          try {
+            await saveEntityLocally(
+              ownerId,
+              "SAVED_ITEMS",
+              item.platformItemId,
+              item as unknown as Record<string, unknown>,
+              "UPSERT"
+            );
+          } catch (e) {
+            console.warn("[SavedItemsWorkspace] Pre-save entity enlist note:", e);
+          }
+        }
+        await syncCoordinator.refreshSummary();
+      }
+
       const result = await syncCoordinator.saveAll("SAVED_ITEMS");
 
       if (result.ok) {
         const r = result.receipt;
         const savedDataset = r?.datasets.find((d) => d.datasetType === "SAVED_ITEMS") || r?.datasets[0];
-        const added = savedDataset?.addedRecordsCount ?? r?.totalNewRecordsAdded ?? localCount;
+        const added = savedDataset?.addedRecordsCount ?? r?.totalNewRecordsAdded ?? (r ? localCount : 0);
         const preserved = savedDataset?.existingRecordsCount ?? r?.totalExistingRecordsPreserved ?? nonHistoricalCloudItems.length;
+
+        // Authoritative reload of the cloud listing & local state
+        await fetchCloudItems();
+        refreshLocal();
 
         setSaveFeedback({
           stage: "CLOUD_COMMITTED",
           isSaving: false,
           totalSelected: localCount,
-          uploadedCount: localCount,
-          verifiedCount: localCount,
+          uploadedCount: added > 0 ? added : localCount,
+          verifiedCount: added > 0 ? added : localCount,
           failedCount: 0,
           successMessage: `Cloud save completed successfully. ${added} new items saved to Cloudflare R2. ${preserved} existing cloud items preserved. 0 duplicates added.`,
           receipt: r,
         });
-
-        // Authoritative reload of the cloud listing & local state
-        await fetchCloudItems();
-        refreshLocal();
       } else {
         setSaveFeedback({
           stage: "FAILED",

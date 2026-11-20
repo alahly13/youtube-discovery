@@ -122,11 +122,25 @@ export function SaveCenter() {
 
     switch (status) {
       case "SYNCED":
-      case "IDLE":
         return (
           <Badge tone="success" className="gap-1.5 py-1 px-2.5">
             <Cloud className="h-3.5 w-3.5 text-emerald-500" />
             <span>Cloud Synced</span>
+          </Badge>
+        );
+      case "IDLE":
+        if (syncEvent.lastSuccessfulSyncAt) {
+          return (
+            <Badge tone="success" className="gap-1.5 py-1 px-2.5">
+              <Cloud className="h-3.5 w-3.5 text-emerald-500" />
+              <span>Cloud Synced</span>
+            </Badge>
+          );
+        }
+        return (
+          <Badge tone="neutral" className="gap-1.5 py-1 px-2.5">
+            <Cloud className="h-3.5 w-3.5 text-muted-foreground" />
+            <span>Cloud Ready</span>
           </Badge>
         );
       case "FAILED":

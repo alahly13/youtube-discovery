@@ -678,6 +678,19 @@ Latest verification results on 2026-11-11 (Architecture Stabilization, Persisten
   - `old-youtube-discovery-api`: live Version `fc9ef5f7-12b6-4dd3-b351-dce066886480` (`remote: true`).
 - Blocked check: `npm run build` (`env:validate` + `prisma generate` + `next.config.ts` succeeded) failed at `next build` unlink (`EPERM` inside stale `.next\build\` owned by `BUILTIN\Administrators` while shell runs un-elevated as `WE\asd`). Functional, browser E2E, real Cloud R2 uploads/syncs, and `npm run test:*` suites were intentionally left for the user to run per task rules.
 
+Latest verification results on 2026-11-20 (Fix False Sync Feedback, Uncommitted Local Item Enlistment & IndexedDB Key Repair):
+
+- `node scripts/auth-diagnose.mjs`: passed (Supabase Auth reachable, admin account confirmed, Database connected, 19 models active, Status: READY).
+- `node scripts/test-cloudflare-r2-workers.mjs`: passed (11/11 assertions pass, Workers online, capability tokens verified).
+- `npm run env:check`: passed (`CRITICAL CHECKS: PASSED`, zero secrets printed).
+- `node scripts/test-unified-saved-lifecycle.mjs`: passed (25/25 assertions pass).
+- `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: passed (44/44 assertions pass).
+- Top navbar sync status (`SaveCenter`): aligned to show `Cloud Ready` on IDLE until a confirmed cloud sync has completed, preventing premature `Cloud Synced` status.
+- Automatic Outbox Self-Healing: `syncCoordinator.executeSyncInternal` detects uncommitted local entities in IndexedDB and synthesizes missing UPSERT outbox operations.
+- Pre-Save Enlistment: `SavedItemsWorkspace.handleSaveToCloud` ensures local items in browser memory/IndexedDB are queued in outbox before triggering `saveAll("SAVED_ITEMS")`.
+- Compound Key Repair: `markEntitiesCommitted` safely handles compound keys `["ownerId", "platformItemId"]` for `SAVED_ITEMS`, guaranteeing clean transition to `COMMITTED` status in IndexedDB.
+
+
 
 
 

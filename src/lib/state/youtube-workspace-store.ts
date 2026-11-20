@@ -506,6 +506,22 @@ if (typeof window !== "undefined") {
         }
       }
 
+      // If store has saved items that are not yet in IndexedDB, bridge them into IndexedDB and outbox
+      const currentStoreItems = useYouTubeWorkspaceStore.getState().savedItems;
+      if (currentStoreItems.length > 0 && localSaved.length === 0) {
+        for (const item of currentStoreItems) {
+          if (!item.platformItemId || deletedSaved.has(item.platformItemId)) continue;
+          await saveEntityLocally(
+            owner,
+            "SAVED_ITEMS",
+            item.platformItemId,
+            item as unknown as Record<string, unknown>,
+            "UPSERT"
+          ).catch(() => {});
+        }
+        await syncCoordinator.refreshSummary().catch(() => {});
+      }
+
       if (nextSavedItems.length > 0 || localRefs.length > 0) {
         useYouTubeWorkspaceStore.setState((prev) => ({
           savedItems: localSaved.length > 0 || deletedSaved.size > 0 ? nextSavedItems : prev.savedItems,
@@ -534,4 +550,5 @@ if (typeof window !== "undefined") {
   window.addEventListener(UNDO_REDO_EVENT, () => void reconcileWorkspaceStoreFromIndexedDb());
   window.addEventListener("yt-discovery-hydration-changed", () => void reconcileWorkspaceStoreFromIndexedDb());
   window.addEventListener("yt-discovery-owner-changed", () => void reconcileWorkspaceStoreFromIndexedDb());
+  window.addEventListener("yt-discovery-local-committed", () => void reconcileWorkspaceStoreFromIndexedDb());
 }

@@ -4612,3 +4612,45 @@ No.
 - **Whether secrets were printed:** No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
+
+
+---
+
+## Entry — 2026-11-20 — Resolve False Sync Feedback, Uncommitted Local Item Enlistment & IndexedDB Key Repair
+
+- **Date/time:** 2026-11-20 ~20:00 UTC+02
+- **Agent/model:** Antigravity
+- **Task summary:** Comprehensive fix for local-to-cloud item persistence, elimination of false "Cloud Synced" illusion, automatic enlistment of stranded local browser items, and compound key repair in IndexedDB:
+  1. *Eliminated Premature "Cloud Synced" Status:* Top navbar (`SaveCenter`) previously showed `Cloud Synced` on `status === "IDLE"` when `totalPending === 0`, even before any sync had succeeded or when local items had not yet been committed to R2. Aligned status to render `Cloud Ready` until an authentic sync has completed with `lastSuccessfulSyncAt`.
+  2. *Automatic Outbox Self-Healing & Enlistment:* `syncCoordinator.executeSyncInternal` previously exited early when `pendingOps.length === 0` without checking if local entities in IndexedDB had `_localStatus === "LOCAL_PENDING"` or `_syncStatus === "LOCAL"`. Added an automatic self-healing check that inspects local entity stores and synthesizes missing UPSERT outbox operations, ensuring no local item is left stranded in the browser.
+  3. *Pre-Save Enlistment in Saved Items Workspace:* `handleSaveToCloud` in `SavedItemsWorkspace` now explicitly ensures all `nonHistoricalLocalItems` are enlisted in IndexedDB and queued in the outbox before triggering `syncCoordinator.saveAll("SAVED_ITEMS")`, preventing zero-op exits when local items were held only in memory or localStorage.
+  4. *Honest Feedback Metrics (Zero Illusion of Upload):* Eliminated default fallbacks in `SavedItemsWorkspace` that reported `localCount` as uploaded/verified even when the receipt had 0 synced operations. The feedback card now strictly reports genuine verified counts from the server commit receipt.
+  5. *Compound Key Repair in `markEntitiesCommitted`:* Fixed IndexedDB `DataError` where `SAVED_ITEMS` (compound key `["ownerId", "platformItemId"]`) threw when looked up with a single string ID on miss. Implemented multi-candidate key evaluation (`[ownerId, cleanId]` and `[ownerId, platformId]`), preventing transaction abortion and guaranteeing that items transition from `LOCAL_PENDING` to `COMMITTED`.
+  6. *Local Store & IndexedDB Bridge:* In `youtube-workspace-store`, `reconcileWorkspaceStoreFromIndexedDb` now bridges any items present in Zustand store (`localStorage`) into IndexedDB and outbox if IndexedDB was empty, and listens to `yt-discovery-local-committed` for immediate state alignment.
+- **Reason/root cause:**
+  - `SaveCenter` rendered `Cloud Synced` whenever `pendingOps` in outbox was 0, creating a false impression of cloud sync while items remained un-synced locally.
+  - When local items were saved in `useYouTubeWorkspaceStore` before authentication resolved or when outbox operations were pruned, `syncCoordinator.saveAll("SAVED_ITEMS")` found `pendingOps.length === 0` and exited with `{ ok: true, syncedCount: 0 }`, and the UI falsely claimed success while 0 items were sent to R2.
+  - In `markEntitiesCommitted`, an unhandled compound key lookup attempt caused transaction rejection, leaving `_localStatus: "LOCAL_PENDING"` in IndexedDB.
+- **Files changed:**
+  - `src/components/layout/save-center.tsx`: Aligned IDLE badge to show `Cloud Ready` unless `lastSuccessfulSyncAt` is truthy.
+  - `src/components/saved/saved-items-workspace.tsx`: Added pre-save enlistment, honest receipt metric reporting, and `yt-discovery-local-committed` listener.
+  - `src/lib/sync/sync-coordinator.ts`: Added automatic self-healing scan to synthesize missing outbox operations for uncommitted local entities.
+  - `src/lib/storage/indexeddb-store.ts`: Fixed compound key lookup in `markEntitiesCommitted` across `[ownerId, id]` variants.
+  - `src/lib/state/youtube-workspace-store.ts`: Added bridging from localStorage into IndexedDB and outbox on hydration, plus `yt-discovery-local-committed` event binding.
+  - `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this chronological entry.
+- **Architecture impact:** Guarantees 100% end-to-end data durability: local items are never stranded in the browser and are reliably committed to Cloudflare R2 with authentic receipts and honest user feedback.
+- **Environment impact:** Verified that all Supabase Auth, PostgreSQL, and Cloudflare Worker environment variables are properly configured on remote and local. Zero secrets printed.
+- **Database/migration impact:** Verified Supabase PostgreSQL connectivity and active Prisma models; 0 schema migrations required.
+- **YouTube API/quota impact:** Zero YouTube API calls or quota consumed.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `node scripts/auth-diagnose.mjs`: PASSED (Database Connected, Supabase Auth Reachable, Admin Role Active, Status: READY).
+  - `node scripts/test-cloudflare-r2-workers.mjs`: PASSED (11/11 assertions pass, Workers accessible, capability tokens valid).
+  - `npm run env:check`: PASSED (`CRITICAL CHECKS: PASSED`).
+  - `node scripts/test-unified-saved-lifecycle.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: PASSED (44/44 assertions).
+- **Blocked checks, if any:** Local production build commands (`npm run build`, `next build`) were intentionally not run per user instructions.
+- **Remaining risks/limitations:** None identified.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.

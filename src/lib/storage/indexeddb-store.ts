@@ -1339,42 +1339,55 @@ export async function markEntitiesCommitted(
     const metaStore = tx.objectStore(IDB_STORES.LOCAL_SYNC_METADATA);
 
     let updatedCount = 0;
-    for (const id of entityIds) {
-      const key = datasetType === "SAVED_ITEMS" ? [ownerId, id] : id;
-      const req = entityStore.get(key);
-      req.onsuccess = () => {
-        const item = req.result as Record<string, unknown> | undefined;
-        if (!item && datasetType === "SAVED_ITEMS") {
-          const directReq = entityStore.get(id);
-          directReq.onsuccess = () => {
-            if (directReq.result) {
-              const rec = directReq.result as Record<string, unknown>;
-              rec._localStatus = "COMMITTED";
-              rec._syncStatus = "CLOUD";
-              rec._generationId = syncMeta.generationId;
-              rec._revision = syncMeta.revision;
-              rec._syncedAt = syncMeta.syncedAt;
-              if (syncMeta.originDeviceId) rec._originDeviceId = syncMeta.originDeviceId;
-              if (syncMeta.originDeviceLabel) rec._originDeviceLabel = syncMeta.originDeviceLabel;
-              entityStore.put(rec);
+    for (const rawId of entityIds) {
+      const cleanId = String(rawId || "").trim();
+      if (!cleanId) continue;
+
+      if (datasetType === "SAVED_ITEMS") {
+        const platformId = cleanId.replace(/^youtube:/, "");
+        const candidateKeys: Array<[string, string]> = [
+          [ownerId.trim(), cleanId],
+          [ownerId.trim(), platformId],
+        ];
+
+        const tryGet = (keyIndex: number) => {
+          if (keyIndex >= candidateKeys.length) return;
+          const req = entityStore.get(candidateKeys[keyIndex]);
+          req.onsuccess = () => {
+            const item = req.result as Record<string, unknown> | undefined;
+            if (item) {
+              item._localStatus = "COMMITTED";
+              item._syncStatus = "CLOUD";
+              item._generationId = syncMeta.generationId;
+              item._revision = syncMeta.revision;
+              item._syncedAt = syncMeta.syncedAt;
+              if (syncMeta.originDeviceId) item._originDeviceId = syncMeta.originDeviceId;
+              if (syncMeta.originDeviceLabel) item._originDeviceLabel = syncMeta.originDeviceLabel;
+              entityStore.put(item);
               updatedCount++;
+            } else {
+              tryGet(keyIndex + 1);
             }
           };
-          return;
-        }
-
-        if (item) {
-          item._localStatus = "COMMITTED";
-          item._syncStatus = "CLOUD";
-          item._generationId = syncMeta.generationId;
-          item._revision = syncMeta.revision;
-          item._syncedAt = syncMeta.syncedAt;
-          if (syncMeta.originDeviceId) item._originDeviceId = syncMeta.originDeviceId;
-          if (syncMeta.originDeviceLabel) item._originDeviceLabel = syncMeta.originDeviceLabel;
-          entityStore.put(item);
-          updatedCount++;
-        }
-      };
+        };
+        tryGet(0);
+      } else {
+        const req = entityStore.get(cleanId);
+        req.onsuccess = () => {
+          const item = req.result as Record<string, unknown> | undefined;
+          if (item) {
+            item._localStatus = "COMMITTED";
+            item._syncStatus = "CLOUD";
+            item._generationId = syncMeta.generationId;
+            item._revision = syncMeta.revision;
+            item._syncedAt = syncMeta.syncedAt;
+            if (syncMeta.originDeviceId) item._originDeviceId = syncMeta.originDeviceId;
+            if (syncMeta.originDeviceLabel) item._originDeviceLabel = syncMeta.originDeviceLabel;
+            entityStore.put(item);
+            updatedCount++;
+          }
+        };
+      }
     }
 
     // Update catalog entry

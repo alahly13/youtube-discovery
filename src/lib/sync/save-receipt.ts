@@ -54,6 +54,8 @@ export interface SaveDatasetReceipt {
   revision: number;
   partsCount: number;
   recordsCount: number;
+  existingRecordsCount?: number;
+  addedRecordsCount?: number;
   bytesUploaded: number;
   aggregateSha256: string;
   verifiedCount: number;
@@ -75,6 +77,8 @@ export interface SaveReceipt {
   completedAt: string;
   totalOperationsSynced: number;
   totalRecordsCommitted: number;
+  totalExistingRecordsPreserved?: number;
+  totalNewRecordsAdded?: number;
   totalBytesUploaded: number;
   datasets: SaveDatasetReceipt[];
   errorCategory?: SaveErrorCategory;

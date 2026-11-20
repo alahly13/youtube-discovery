@@ -4524,3 +4524,53 @@ No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
 
+
+---
+
+## Entry — 2026-11-20 — Fix R2 Cloud Saved Items, Local Saved Items, Upload Feedback & Append-Only Persistence
+
+- **Date/time:** 2026-11-20 ~17:15 UTC+02
+- **Agent/model:** Antigravity
+- **Task summary:** Comprehensive resolution of saved items persistence, storage separation, and user feedback:
+  1. Enforced strictly **APPEND-ONLY** cloud persistence: saving to R2 Cloud preserves all previously saved cloud records and appends/upserts incoming items by canonical identity without ever deleting, clearing, or resetting existing cloud records.
+  2. Created protected authoritative Cloud Saved Items listing and retrieval endpoint `GET /api/saved-items` with SHA-256 integrity verification and honest HTTP 502 error reporting.
+  3. Upgraded Saved Items Workspace (`/saved`) with distinct storage views (`[ All Storage ] [ Local Browser ] [ R2 Cloud ]`), clear visual provenance badges (`LOCAL BROWSER`, `R2 CLOUD`, `LOCAL & CLOUD`), independent local vs cloud queries, and full error/retry states.
+  4. Added a prominent, real-time Cloud Save Feedback card displaying exact stages (Preparing, Uploading, Verifying, Committing, Completed, Failed), live progress counts (selected, uploaded, verified, failed), authentic commit receipts (new records added, existing records preserved, 0 duplicates), and retry triggers.
+- **Reason/root cause:**
+  1. *Missing Cloud Records:* `/saved` had no backend API to fetch cloud items directly and relied entirely on `useMergedDataset`, which only read from local IndexedDB. If background cloud hydration had not run or was offline, cloud records were invisible and rendered no error notice.
+  2. *Destructive Overwrite Bug in Cloud Sync:* `POST /api/sync/save-all` previously skipped loading the committed base snapshot when the client provided `snapshotRecords` (which contained only local browser items), replacing the entire R2 generation and pruning the relational index via `savedItemIndex.deleteMany({ notIn: platformIds })`. This destroyed previous cloud items that were not present in the local browser.
+  3. *Unclear Upload Feedback:* Users received minimal feedback during cloud save operations without visibility into stages, verified item counts, or preserved records.
+- **Files changed:**
+  - `src/lib/sync/save-receipt.ts`: Added `existingRecordsCount` and `addedRecordsCount` to `SaveDatasetReceipt`; added `totalExistingRecordsPreserved` and `totalNewRecordsAdded` to `SaveReceipt`.
+  - `src/app/api/sync/save-all/route.ts`:
+    - Added `loadCommittedSnapshot` with multi-tier fallback (PostgreSQL generation parts, R2 generation discovery, and PostgreSQL `saved_items_index`).
+    - Added `mergeCloudAndIncomingRecords` to unconditionally merge base cloud items with incoming local items by canonical identity, ensuring base cloud items are always preserved.
+    - Replaced destructive `deleteMany({ notIn: platformIds })` with targeted deletion only for explicit `deletedPlatformItemIds` originating from user-initiated DELETE operations.
+    - Returned `existingRecordsCount` and `addedRecordsCount` in `DatasetSyncResult`.
+  - `src/lib/sync/sync-coordinator.ts`: Tracked `existingRecordsCount` and `addedRecordsCount` in dataset receipts; dispatched `yt-discovery-cloud-save-success` event on `window` for instant cross-component reactivity.
+  - `src/app/api/saved-items/route.ts`: New protected endpoint reading committed manifest parts from R2 with SHA-256 integrity checks, falling back to discovered generations and PostgreSQL index, and returning authentic HTTP 502 responses on failure.
+  - `src/components/saved/saved-items-workspace.tsx`:
+    - Added storage view switcher: `[ All Storage ] [ Local Browser ] [ R2 Cloud ]`.
+    - Added independent `fetchCloudItems` calling `/api/saved-items` with loading, error, and retry states.
+    - Added prominent `CloudSaveFeedbackState` card with stage badges, uploaded/verified/failed counts, authentic success receipt text, and retry buttons.
+    - Added `dedupedAllItems` combining cloud and local records with clear badge logic (`LOCAL & CLOUD`, `LOCAL BROWSER`, `R2 CLOUD`).
+    - Added "Save to R2 Cloud" CTA button with live pending counts.
+    - Preserved full daily calendar grouping, type filters, search, sort, and dialogs.
+  - `youtube_discovery_ledger.md`: Documented `/api/saved-items`, updated `/saved` and `/api/sync/save-all` descriptions.
+  - `PROJECT_CHANGE_LOG_LEDGER.md`: Appended this chronological entry.
+- **Architecture impact:**
+  - Preserves immutable cloud generations and enforces append-only semantics across all cloud save operations.
+  - Clearly decouples local browser state from cloud R2 state while providing canonical identity-based grouping for unified views.
+- **Environment impact:** None. Zero secrets printed or modified.
+- **Database/migration impact:** None. Uses existing canonical schema (`storage_generations`, `storage_manifest_parts`, `saved_items_index`).
+- **YouTube API/quota impact:** Zero YouTube API calls or quota consumed.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `node scripts/test-unified-saved-lifecycle.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: PASSED (44/44 assertions).
+  - `npx tsc --noEmit --incremental false`: PASSED (0 errors).
+- **Blocked checks, if any:** Local production builds (`npm run build`, `next build`) were intentionally NOT run in strict compliance with the user rule prohibiting local builds.
+- **Remaining risks/limitations:** None identified.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.

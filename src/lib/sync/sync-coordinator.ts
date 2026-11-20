@@ -819,6 +819,8 @@ class SyncCoordinator {
           generationId: string;
           revision: number;
           recordsCount?: number;
+          existingRecordsCount?: number;
+          addedRecordsCount?: number;
           partsCount?: number;
           bytesUploaded?: number;
           aggregateSha256?: string;
@@ -884,6 +886,8 @@ class SyncCoordinator {
           revision: r.revision || 1,
           partsCount: r.partsCount ?? 0,
           recordsCount: r.recordsCount ?? 0,
+          existingRecordsCount: r.existingRecordsCount ?? 0,
+          addedRecordsCount: r.addedRecordsCount ?? 0,
           bytesUploaded: r.bytesUploaded ?? 0,
           aggregateSha256: r.aggregateSha256 || "",
           verifiedCount: r.verifiedCount ?? 0,
@@ -939,6 +943,14 @@ class SyncCoordinator {
 
       const now = new Date().toISOString();
       const totalRecordsCommitted = datasetReceipts.reduce((s, d) => s + d.recordsCount, 0);
+      const totalExistingRecordsPreserved = datasetReceipts.reduce(
+        (s, d) => s + (d.existingRecordsCount ?? 0),
+        0
+      );
+      const totalNewRecordsAdded = datasetReceipts.reduce(
+        (s, d) => s + (d.addedRecordsCount ?? 0),
+        0
+      );
       const totalBytesUploaded = datasetReceipts.reduce((s, d) => s + d.bytesUploaded, 0);
 
       const receipt: SaveReceipt = {
@@ -950,6 +962,8 @@ class SyncCoordinator {
         completedAt: now,
         totalOperationsSynced: committedOpIds.length,
         totalRecordsCommitted,
+        totalExistingRecordsPreserved,
+        totalNewRecordsAdded,
         totalBytesUploaded,
         datasets: datasetReceipts,
         ...(hasPointerFailure
@@ -971,6 +985,12 @@ class SyncCoordinator {
       this.lastErrorCategory = undefined;
       this.lastErrorMessage = undefined;
       await this.emitCurrentState();
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-cloud-save-success", { detail: receipt })
+        );
+      }
 
       if (this.broadcastChannel) {
         this.broadcastChannel.postMessage({

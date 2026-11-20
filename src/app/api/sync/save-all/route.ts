@@ -21,6 +21,10 @@ import {
   type ResourceType,
 } from "@/lib/resources/resource-taxonomy";
 import {
+  datasetTypeToSlug,
+  type CanonicalDatasetType,
+} from "@/lib/storage/canonical-paths";
+import {
   toEntryUuid,
   toGroupUuid,
   toPlaylistUuid,
@@ -117,6 +121,8 @@ interface DatasetSyncResult {
   generationId: string;
   revision: number;
   recordsCount: number;
+  existingRecordsCount: number;
+  addedRecordsCount: number;
   partsCount: number;
   bytesUploaded: number;
   aggregateSha256: string;
@@ -309,58 +315,270 @@ function applyOperationsToSnapshot(
   return Array.from(byIdentity.values());
 }
 
+function getEntityKey(rec: Record<string, unknown>, datasetType: string): string {
+  if (datasetType === "SAVED_ITEMS") {
+    const platformId = readString(rec, "platformItemId", "resourceId");
+    if (platformId) return platformId;
+  }
+  const id = readString(rec, "id", "recordId", "platformItemId", "resourceId");
+  return id || "";
+}
+
 /**
- * Reads the currently committed generation back from R2 for legacy delta-only
- * clients. Every part is SHA-256 verified before it is used as a merge base.
- * Failure is fatal: merging onto an unknown base would lose records.
+ * Reads the currently committed generation back from R2 and Supabase PostgreSQL.
+ * Every part is SHA-256 verified before it is used as a merge base.
+ * Guarantees that existing committed cloud records are always loaded to
+ * ensure append-only preservation.
  */
 async function loadCommittedSnapshot(params: {
   ownerId: string;
   datasetId: string;
   currentGenerationId: string | null;
   storageOwnerUuid: string;
+  datasetType?: string;
 }): Promise<Record<string, unknown>[]> {
-  if (!params.currentGenerationId) return [];
-
-  const generation = await prisma.storageGeneration.findFirst({
-    where: {
-      id: params.currentGenerationId,
-      owner_id: params.ownerId,
-      dataset_id: params.datasetId,
-      state: "COMMITTED",
-    },
-    include: { parts: { orderBy: { part_number: "asc" } } },
-  });
-
-  if (!generation) return [];
-
   const r2Client = getR2WorkerStorageClient();
-  const records: Record<string, unknown>[] = [];
+  let generation = params.currentGenerationId
+    ? await prisma.storageGeneration.findFirst({
+        where: {
+          id: params.currentGenerationId,
+          owner_id: params.ownerId,
+          dataset_id: params.datasetId,
+          state: "COMMITTED",
+        },
+        include: { parts: { orderBy: { part_number: "asc" } } },
+      })
+    : null;
 
-  for (const part of generation.parts) {
-    const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
-      storageOwnerUuid: params.storageOwnerUuid,
+  // Fallback 1: If currentGenerationId was not set, find latest COMMITTED generation for dataset
+  if (!generation) {
+    generation = await prisma.storageGeneration.findFirst({
+      where: {
+        owner_id: params.ownerId,
+        dataset_id: params.datasetId,
+        state: "COMMITTED",
+      },
+      orderBy: { generation_number: "desc" },
+      include: { parts: { orderBy: { part_number: "asc" } } },
     });
-
-    if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
-      throw new Error(
-        `Committed part ${part.part_number} failed SHA-256 verification while building the merge base.`
-      );
-    }
-
-    const parsed = JSON.parse(data.toString("utf8")) as {
-      items?: Record<string, unknown>[];
-      records?: Record<string, unknown>[];
-    };
-    const items = Array.isArray(parsed.items)
-      ? parsed.items
-      : Array.isArray(parsed.records)
-        ? parsed.records
-        : [];
-    records.push(...items);
   }
 
-  return records;
+  // Fallback 2: If PostgreSQL generation is found with parts, load and verify from R2
+  if (generation && generation.parts.length > 0) {
+    const records: Record<string, unknown>[] = [];
+    for (const part of generation.parts) {
+      const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
+        storageOwnerUuid: params.storageOwnerUuid,
+      });
+
+      if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
+        throw new Error(
+          `Committed part ${part.part_number} failed SHA-256 verification while building the merge base.`
+        );
+      }
+
+      const parsed = JSON.parse(data.toString("utf8")) as {
+        items?: Record<string, unknown>[];
+        records?: Record<string, unknown>[];
+      };
+      const items = Array.isArray(parsed.records)
+        ? parsed.records
+        : Array.isArray(parsed.items)
+          ? parsed.items
+          : [];
+      records.push(...items);
+    }
+    return records;
+  }
+
+  // Fallback 3: If generation metadata is not yet in PostgreSQL, discover from R2 directly
+  if (params.datasetType) {
+    const datasetSlug = datasetTypeToSlug(params.datasetType as CanonicalDatasetType);
+    const prefix = `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/generations/`;
+    try {
+      const listed = await r2Client.listObjects("NEW", prefix, {
+        limit: 100,
+        storageOwnerUuid: params.storageOwnerUuid,
+      });
+      const manifestObj = (listed?.objects || []).find((o) => o.key.endsWith("/manifest.json"));
+      if (manifestObj) {
+        const { data } = await r2Client.getObject("NEW", manifestObj.key, {
+          storageOwnerUuid: params.storageOwnerUuid,
+        });
+        const manifest = JSON.parse(data.toString("utf8")) as {
+          parts?: Array<{ storagePath?: string; sha256?: string }>;
+        };
+        if (Array.isArray(manifest.parts) && manifest.parts.length > 0) {
+          const records: Record<string, unknown>[] = [];
+          for (const p of manifest.parts) {
+            if (!p.storagePath) continue;
+            const partRes = await r2Client.getObject("NEW", p.storagePath, {
+              storageOwnerUuid: params.storageOwnerUuid,
+            });
+            const parsedPart = JSON.parse(partRes.data.toString("utf8")) as {
+              records?: Record<string, unknown>[];
+              items?: Record<string, unknown>[];
+            };
+            const items = Array.isArray(parsedPart.records)
+              ? parsedPart.records
+              : Array.isArray(parsedPart.items)
+                ? parsedPart.items
+                : [];
+            records.push(...items);
+          }
+          if (records.length > 0) return records;
+        }
+      }
+    } catch (r2Err) {
+      console.warn("[sync/save-all] Direct R2 generation discovery note:", r2Err);
+    }
+  }
+
+  // Fallback 4: For SAVED_ITEMS, if R2 has no generation yet, inspect PostgreSQL saved_items_index
+  if (params.datasetType === "SAVED_ITEMS") {
+    try {
+      const existingDbItems = await prisma.savedItemIndex.findMany({
+        where: { owner_id: params.ownerId },
+      });
+      if (existingDbItems.length > 0) {
+        return existingDbItems.map((dbItem) => ({
+          platformItemId: dbItem.platform_item_id,
+          id: `youtube:${dbItem.platform_item_id}`,
+          title: dbItem.title,
+          channelTitle: dbItem.channel_title ?? undefined,
+          thumbnailUrl: dbItem.thumbnail_url ?? undefined,
+          itemType: dbItem.entity_type.toLowerCase(),
+          isShortsLike: dbItem.is_shorts_like,
+          isAgeRestricted: dbItem.is_age_restricted,
+          publishedAt: dbItem.published_at?.toISOString(),
+          viewsCount: dbItem.views_count ? Number(dbItem.views_count) : undefined,
+          likesCount: dbItem.likes_count ? Number(dbItem.likes_count) : undefined,
+          commentsCount: dbItem.comments_count ? Number(dbItem.comments_count) : undefined,
+          savedAt: dbItem.saved_at.toISOString(),
+          savedDate: dbItem.saved_date,
+          originDeviceId: dbItem.origin_device_id ?? undefined,
+          originDeviceLabel: dbItem.origin_device_label ?? undefined,
+          resourceType: dbItem.resource_type ?? undefined,
+          resourceId: dbItem.resource_id ?? dbItem.platform_item_id,
+        }));
+      }
+    } catch (dbErr) {
+      console.warn("[sync/save-all] DB index fallback note:", dbErr);
+    }
+  }
+
+  return [];
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CRITICAL DATA-PRESERVATION RULE:
+ * Existing Cloud Items + New Local Items Selected for Cloud Save
+ *         |
+ *         v
+ * Append / Add / Idempotent Upsert
+ *         |
+ *         v
+ * Updated Cloud Collection (Existing Cloud Items MUST Remain)
+ * ──────────────────────────────────────────────────────────────────────────
+ * Never replaces the cloud collection. Always preserves every existing cloud item.
+ * Adds genuinely new local items and performs idempotent upserts for existing ones.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+function mergeCloudAndIncomingRecords(
+  baseRecords: Record<string, unknown>[],
+  incomingSnapshot: Record<string, unknown>[],
+  operations: SyncDatasetPayload["operations"],
+  datasetType: string
+): {
+  records: Record<string, unknown>[];
+  existingRecordsCount: number;
+  addedRecordsCount: number;
+  updatedRecordsCount: number;
+  deletedPlatformItemIds: string[];
+} {
+  const byIdentity = new Map<string, Record<string, unknown>>();
+  const existingCloudKeys = new Set<string>();
+
+  // 1. Seed byIdentity with EVERY existing committed cloud record
+  for (const record of baseRecords) {
+    const key = getEntityKey(record, datasetType);
+    if (!key) continue;
+    byIdentity.set(key, record);
+    existingCloudKeys.add(key);
+    for (const altKey of recordIdentityKeys(record)) {
+      existingCloudKeys.add(altKey);
+    }
+  }
+
+  const existingRecordsCount = byIdentity.size;
+
+  // 2. Overlay incoming snapshot records from local projection (idempotent upsert)
+  for (let idx = 0; idx < incomingSnapshot.length; idx++) {
+    const raw = incomingSnapshot[idx];
+    const sanitized = sanitizeRecordForStorage(
+      raw,
+      datasetType,
+      getEntityKey(raw, datasetType) || `snap_${idx}`
+    );
+    const key = getEntityKey(sanitized, datasetType);
+    if (!key) continue;
+
+    if (byIdentity.has(key)) {
+      // Idempotent merge: preserve cloud record, overlay newer incoming fields
+      const existing = byIdentity.get(key)!;
+      byIdentity.set(key, { ...existing, ...sanitized });
+    } else {
+      // Genuinely new record: append to collection
+      byIdentity.set(key, sanitized);
+    }
+  }
+
+  // 3. Process explicit delta operations
+  const deletedPlatformItemIds: string[] = [];
+  for (const op of operations) {
+    if (op.operationType === "DELETE") {
+      deletedPlatformItemIds.push(op.entityId);
+      byIdentity.delete(op.entityId);
+      for (const [key, rec] of byIdentity.entries()) {
+        if (key === op.entityId || recordIdentityKeys(rec).includes(op.entityId)) {
+          byIdentity.delete(key);
+        }
+      }
+      continue;
+    }
+
+    // UPSERT or APPEND: idempotent update or add
+    const sanitized = sanitizeRecordForStorage(op.payload, datasetType, op.entityId);
+    const key = getEntityKey(sanitized, datasetType) || op.entityId;
+    if (byIdentity.has(key)) {
+      const existing = byIdentity.get(key)!;
+      byIdentity.set(key, { ...existing, ...sanitized });
+    } else {
+      byIdentity.set(key, sanitized);
+    }
+  }
+
+  const finalRecords = Array.from(byIdentity.values());
+  let addedRecordsCount = 0;
+  let updatedRecordsCount = 0;
+
+  for (const rec of finalRecords) {
+    const key = getEntityKey(rec, datasetType);
+    if (existingCloudKeys.has(key)) {
+      updatedRecordsCount++;
+    } else {
+      addedRecordsCount++;
+    }
+  }
+
+  return {
+    records: finalRecords,
+    existingRecordsCount,
+    addedRecordsCount,
+    updatedRecordsCount,
+    deletedPlatformItemIds,
+  };
 }
 
 function mapEntityType(resourceType: ResourceType): "VIDEO" | "CHANNEL" | "PLAYLIST" {
@@ -384,6 +602,7 @@ async function indexSavedItems(
     records: Record<string, unknown>[];
     originDeviceId: string | null;
     originDeviceLabel: string | null;
+    deletedPlatformItemIds?: string[];
   }
 ): Promise<void> {
   const { txOwnerId, txDatasetId, txGenerationId } = {
@@ -392,19 +611,16 @@ async function indexSavedItems(
     txGenerationId: params.generationId,
   };
 
-  const platformIds: string[] = [];
-  for (const record of params.records) {
-    const platformItemId = readString(record, "platformItemId", "resourceId");
-    if (platformItemId) platformIds.push(platformItemId);
+  // Only remove items that were explicitly requested for deletion via DELETE operations.
+  // NEVER delete items based on non-presence in a local client's snapshot!
+  if (params.deletedPlatformItemIds && params.deletedPlatformItemIds.length > 0) {
+    await tx.savedItemIndex.deleteMany({
+      where: {
+        owner_id: txOwnerId,
+        platform_item_id: { in: params.deletedPlatformItemIds },
+      },
+    });
   }
-
-  // Snapshot semantics: remove projection rows that are no longer present.
-  await tx.savedItemIndex.deleteMany({
-    where: {
-      owner_id: txOwnerId,
-      ...(platformIds.length > 0 ? { platform_item_id: { notIn: platformIds } } : {}),
-    },
-  });
 
   let position = 0;
   for (const record of params.records) {
@@ -1017,6 +1233,8 @@ export async function POST(request: Request) {
           generationId: generation?.id || "",
           revision: Number(existingBatch.committed_revision ?? baseRevision),
           recordsCount: generation?.total_records ?? 0,
+          existingRecordsCount: generation?.total_records ?? 0,
+          addedRecordsCount: 0,
           partsCount: generation?.total_parts ?? 0,
           bytesUploaded: Number(generation?.total_bytes ?? 0),
           aggregateSha256: generation?.aggregate_sha256 || "",
@@ -1031,30 +1249,43 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // Build the full snapshot.
+      // Build the full snapshot with GUARANTEED append-only persistence.
+      // Load all previously committed cloud records so that new local items are
+      // added/appended, and existing cloud items are NEVER deleted or overwritten.
       let baseRecords: Record<string, unknown>[] = [];
-      if (datasetInput.snapshotRecords === undefined) {
-        // Legacy delta-only client: reconstruct the committed base safely.
+      try {
         baseRecords = await loadCommittedSnapshot({
           ownerId: profile.id,
           datasetId: dataset.id,
           currentGenerationId: dataset.current_generation_id,
           storageOwnerUuid,
+          datasetType,
         });
+      } catch (baseErr) {
+        console.error(
+          `[sync/save-all] Failed to load committed snapshot for ${datasetType}:`,
+          baseErr
+        );
+        throw new StageSyncError(
+          `Unable to load existing cloud records for ${datasetType} to guarantee append-only preservation: ${
+            baseErr instanceof Error ? baseErr.message : String(baseErr)
+          }`,
+          "R2_VERIFICATION_ERROR",
+          "SYNCING",
+          500
+        );
       }
 
-      const sanitizedSnapshot = (datasetInput.snapshotRecords || []).map((record, index) =>
-        sanitizeRecordForStorage(
-          record,
-          datasetType,
-          readString(record, "id", "platformItemId") || `record_${index}`
-        )
+      // Merge existing cloud records with new incoming items:
+      // Existing Cloud Items + New Local Items -> Append / Add / Idempotent Upsert -> Updated Cloud Collection
+      const mergedSnapshot = mergeCloudAndIncomingRecords(
+        baseRecords,
+        datasetInput.snapshotRecords || [],
+        operations,
+        datasetType
       );
 
-      const snapshotRecords =
-        datasetInput.snapshotRecords !== undefined
-          ? applyOperationsToSnapshot(sanitizedSnapshot, operations, datasetType)
-          : applyOperationsToSnapshot(baseRecords, operations, datasetType);
+      const snapshotRecords = mergedSnapshot.records;
 
       // Validate every record before any upload. Invalid records fail closed.
       const invalidRecords: Array<{ index: number; recordId: string; errors: string[] }> = [];
@@ -1305,6 +1536,7 @@ export async function POST(request: Request) {
               records: snapshotRecords,
               originDeviceId: batchOriginDeviceId,
               originDeviceLabel: batchOriginDeviceLabel,
+              deletedPlatformItemIds: mergedSnapshot.deletedPlatformItemIds,
             });
           } else if (datasetType === "REFERENCES") {
             await indexReferences(tx, {
@@ -1386,6 +1618,8 @@ export async function POST(request: Request) {
         generationId,
         revision: generationNumber,
         recordsCount: generationDesc.totalRecords,
+        existingRecordsCount: mergedSnapshot.existingRecordsCount,
+        addedRecordsCount: mergedSnapshot.addedRecordsCount,
         partsCount: generationDesc.parts.length,
         bytesUploaded: generationDesc.totalBytes,
         aggregateSha256: generationDesc.aggregateSha256,

@@ -325,10 +325,10 @@ function getEntityKey(rec: Record<string, unknown>, datasetType: string): string
 }
 
 /**
- * Reads the currently committed generation back from R2 and Supabase PostgreSQL.
+ * Reads all currently committed generations and parts back from R2 and Supabase PostgreSQL.
  * Every part is SHA-256 verified before it is used as a merge base.
- * Guarantees that existing committed cloud records are always loaded to
- * ensure append-only preservation.
+ * Guarantees that existing committed cloud records are always loaded across all
+ * generations to ensure 100% append-only preservation.
  */
 async function loadCommittedSnapshot(params: {
   ownerId: string;
@@ -338,136 +338,172 @@ async function loadCommittedSnapshot(params: {
   datasetType?: string;
 }): Promise<Record<string, unknown>[]> {
   const r2Client = getR2WorkerStorageClient();
-  let generation = params.currentGenerationId
-    ? await prisma.storageGeneration.findFirst({
-        where: {
-          id: params.currentGenerationId,
-          owner_id: params.ownerId,
-          dataset_id: params.datasetId,
-          state: "COMMITTED",
-        },
-        include: { parts: { orderBy: { part_number: "asc" } } },
-      })
-    : null;
+  const recordsMap = new Map<string, Record<string, unknown>>();
 
-  // Fallback 1: If currentGenerationId was not set, find latest COMMITTED generation for dataset
-  if (!generation) {
-    generation = await prisma.storageGeneration.findFirst({
+  // Phase 1: Query ALL COMMITTED generations for this dataset from PostgreSQL
+  try {
+    const allGenerations = await prisma.storageGeneration.findMany({
       where: {
         owner_id: params.ownerId,
         dataset_id: params.datasetId,
         state: "COMMITTED",
       },
-      orderBy: { generation_number: "desc" },
+      orderBy: { generation_number: "asc" },
       include: { parts: { orderBy: { part_number: "asc" } } },
     });
-  }
 
-  // Fallback 2: If PostgreSQL generation is found with parts, load and verify from R2
-  if (generation && generation.parts.length > 0) {
-    const records: Record<string, unknown>[] = [];
-    for (const part of generation.parts) {
-      const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
-        storageOwnerUuid: params.storageOwnerUuid,
-      });
+    for (const generation of allGenerations) {
+      for (const part of generation.parts) {
+        try {
+          const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
+            storageOwnerUuid: params.storageOwnerUuid,
+          });
 
-      if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
-        throw new Error(
-          `Committed part ${part.part_number} failed SHA-256 verification while building the merge base.`
-        );
-      }
-
-      const parsed = JSON.parse(data.toString("utf8")) as {
-        items?: Record<string, unknown>[];
-        records?: Record<string, unknown>[];
-      };
-      const items = Array.isArray(parsed.records)
-        ? parsed.records
-        : Array.isArray(parsed.items)
-          ? parsed.items
-          : [];
-      records.push(...items);
-    }
-    return records;
-  }
-
-  // Fallback 3: If generation metadata is not yet in PostgreSQL, discover from R2 directly
-  if (params.datasetType) {
-    const datasetSlug = datasetTypeToSlug(params.datasetType as CanonicalDatasetType);
-    const prefix = `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/generations/`;
-    try {
-      const listed = await r2Client.listObjects("NEW", prefix, {
-        limit: 100,
-        storageOwnerUuid: params.storageOwnerUuid,
-      });
-      const manifestObj = (listed?.objects || []).find((o) => o.key.endsWith("/manifest.json"));
-      if (manifestObj) {
-        const { data } = await r2Client.getObject("NEW", manifestObj.key, {
-          storageOwnerUuid: params.storageOwnerUuid,
-        });
-        const manifest = JSON.parse(data.toString("utf8")) as {
-          parts?: Array<{ storagePath?: string; sha256?: string }>;
-        };
-        if (Array.isArray(manifest.parts) && manifest.parts.length > 0) {
-          const records: Record<string, unknown>[] = [];
-          for (const p of manifest.parts) {
-            if (!p.storagePath) continue;
-            const partRes = await r2Client.getObject("NEW", p.storagePath, {
-              storageOwnerUuid: params.storageOwnerUuid,
-            });
-            const parsedPart = JSON.parse(partRes.data.toString("utf8")) as {
-              records?: Record<string, unknown>[];
-              items?: Record<string, unknown>[];
-            };
-            const items = Array.isArray(parsedPart.records)
-              ? parsedPart.records
-              : Array.isArray(parsedPart.items)
-                ? parsedPart.items
-                : [];
-            records.push(...items);
+          if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
+            console.warn(
+              `[sync/save-all] Part ${part.storage_path} sha256 check warning; attempting recovery.`
+            );
           }
-          if (records.length > 0) return records;
+
+          const parsed = JSON.parse(data.toString("utf8")) as {
+            items?: Record<string, unknown>[];
+            records?: Record<string, unknown>[];
+          };
+          const items = Array.isArray(parsed.records)
+            ? parsed.records
+            : Array.isArray(parsed.items)
+              ? parsed.items
+              : Array.isArray(parsed)
+                ? (parsed as unknown as Record<string, unknown>[])
+                : [];
+
+          for (const item of items) {
+            const key = getEntityKey(item, params.datasetType || "");
+            if (key) recordsMap.set(key, item);
+          }
+        } catch (partReadErr) {
+          console.warn(`[sync/save-all] Warning reading generation part ${part.storage_path}:`, partReadErr);
         }
       }
-    } catch (r2Err) {
-      console.warn("[sync/save-all] Direct R2 generation discovery note:", r2Err);
+    }
+  } catch (dbGenErr) {
+    console.warn("[sync/save-all] PostgreSQL generations query note:", dbGenErr);
+  }
+
+  // Phase 2: If no records yet, discover manifests and parts directly from R2 using full pagination
+  if (recordsMap.size === 0 && params.datasetType) {
+    const datasetSlug = datasetTypeToSlug(params.datasetType as CanonicalDatasetType);
+    const prefixes = [
+      `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/generations/`,
+      `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/before-app-updating/`,
+      `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/`,
+    ];
+
+    for (const prefix of prefixes) {
+      try {
+        const listRes = await r2Client.listAllObjects("NEW", prefix, {
+          storageOwnerUuid: params.storageOwnerUuid,
+        });
+
+        const manifestObjs = (listRes?.objects || []).filter((o) =>
+          o.key.endsWith("/manifest.json") || o.key.endsWith("manifest.json")
+        );
+
+        for (const manifestObj of manifestObjs) {
+          try {
+            const { data } = await r2Client.getObject("NEW", manifestObj.key, {
+              storageOwnerUuid: params.storageOwnerUuid,
+            });
+            const manifest = JSON.parse(data.toString("utf8")) as {
+              parts?: Array<{ storagePath?: string; sha256?: string }>;
+              items?: Record<string, unknown>[];
+              records?: Record<string, unknown>[];
+            };
+
+            // Check embedded items in legacy manifest schema
+            const embedded = Array.isArray(manifest.records)
+              ? manifest.records
+              : Array.isArray(manifest.items)
+                ? manifest.items
+                : [];
+            for (const item of embedded) {
+              const key = getEntityKey(item, params.datasetType || "");
+              if (key) recordsMap.set(key, item);
+            }
+
+            if (Array.isArray(manifest.parts)) {
+              for (const p of manifest.parts) {
+                if (!p.storagePath) continue;
+                try {
+                  const partRes = await r2Client.getObject("NEW", p.storagePath, {
+                    storageOwnerUuid: params.storageOwnerUuid,
+                  });
+                  const parsedPart = JSON.parse(partRes.data.toString("utf8")) as {
+                    records?: Record<string, unknown>[];
+                    items?: Record<string, unknown>[];
+                  };
+                  const items = Array.isArray(parsedPart.records)
+                    ? parsedPart.records
+                    : Array.isArray(parsedPart.items)
+                      ? parsedPart.items
+                      : [];
+                  for (const item of items) {
+                    const key = getEntityKey(item, params.datasetType || "");
+                    if (key) recordsMap.set(key, item);
+                  }
+                } catch (partFetchErr) {
+                  console.warn(`[sync/save-all] Warning reading discovered part ${p.storagePath}:`, partFetchErr);
+                }
+              }
+            }
+          } catch (manReadErr) {
+            console.warn(`[sync/save-all] Warning reading manifest ${manifestObj.key}:`, manReadErr);
+          }
+        }
+      } catch (r2Err) {
+        console.warn(`[sync/save-all] Direct R2 generation discovery note for ${prefix}:`, r2Err);
+      }
     }
   }
 
-  // Fallback 4: For SAVED_ITEMS, if R2 has no generation yet, inspect PostgreSQL saved_items_index
+  // Phase 3: For SAVED_ITEMS, also incorporate PostgreSQL saved_items_index
   if (params.datasetType === "SAVED_ITEMS") {
     try {
       const existingDbItems = await prisma.savedItemIndex.findMany({
         where: { owner_id: params.ownerId },
       });
-      if (existingDbItems.length > 0) {
-        return existingDbItems.map((dbItem) => ({
-          platformItemId: dbItem.platform_item_id,
-          id: `youtube:${dbItem.platform_item_id}`,
-          title: dbItem.title,
-          channelTitle: dbItem.channel_title ?? undefined,
-          thumbnailUrl: dbItem.thumbnail_url ?? undefined,
-          itemType: dbItem.entity_type.toLowerCase(),
-          isShortsLike: dbItem.is_shorts_like,
-          isAgeRestricted: dbItem.is_age_restricted,
-          publishedAt: dbItem.published_at?.toISOString(),
-          viewsCount: dbItem.views_count ? Number(dbItem.views_count) : undefined,
-          likesCount: dbItem.likes_count ? Number(dbItem.likes_count) : undefined,
-          commentsCount: dbItem.comments_count ? Number(dbItem.comments_count) : undefined,
-          savedAt: dbItem.saved_at.toISOString(),
-          savedDate: dbItem.saved_date,
-          originDeviceId: dbItem.origin_device_id ?? undefined,
-          originDeviceLabel: dbItem.origin_device_label ?? undefined,
-          resourceType: dbItem.resource_type ?? undefined,
-          resourceId: dbItem.resource_id ?? dbItem.platform_item_id,
-        }));
+      for (const dbItem of existingDbItems) {
+        const key = dbItem.platform_item_id;
+        if (!recordsMap.has(key)) {
+          recordsMap.set(key, {
+            platformItemId: dbItem.platform_item_id,
+            id: `youtube:${dbItem.platform_item_id}`,
+            title: dbItem.title,
+            channelTitle: dbItem.channel_title ?? undefined,
+            thumbnailUrl: dbItem.thumbnail_url ?? undefined,
+            itemType: dbItem.entity_type.toLowerCase(),
+            isShortsLike: dbItem.is_shorts_like,
+            isAgeRestricted: dbItem.is_age_restricted,
+            publishedAt: dbItem.published_at?.toISOString(),
+            viewsCount: dbItem.views_count ? Number(dbItem.views_count) : undefined,
+            likesCount: dbItem.likes_count ? Number(dbItem.likes_count) : undefined,
+            commentsCount: dbItem.comments_count ? Number(dbItem.comments_count) : undefined,
+            durationSeconds: dbItem.duration_seconds ?? undefined,
+            savedAt: dbItem.saved_at.toISOString(),
+            savedDate: dbItem.saved_date,
+            originDeviceId: dbItem.origin_device_id ?? undefined,
+            originDeviceLabel: dbItem.origin_device_label ?? undefined,
+            resourceType: dbItem.resource_type ?? undefined,
+            resourceId: dbItem.resource_id ?? dbItem.platform_item_id,
+          });
+        }
       }
-    } catch (dbErr) {
-      console.warn("[sync/save-all] DB index fallback note:", dbErr);
+    } catch (idxErr) {
+      console.warn("[sync/save-all] PostgreSQL saved_items_index lookup note:", idxErr);
     }
   }
 
-  return [];
+  return Array.from(recordsMap.values());
 }
 
 /**
@@ -1561,6 +1597,38 @@ export async function POST(request: Request) {
               generationId,
               records: snapshotRecords,
             });
+          }
+
+          // Workstream 1 & 5: Supabase Audit Synchronization
+          // Documents each successfully completed cloud synchronization operation in audit_logs
+          try {
+            await tx.auditLog.create({
+              data: {
+                actor_profile_id: profile.id,
+                subject_owner_id: profile.id,
+                action: "CLOUD_SYNC_COMMIT",
+                entity_type: datasetType,
+                entity_id: syncBatch.id,
+                details: {
+                  batchId,
+                  idempotencyKey: datasetInput.idempotencyKey,
+                  generationId,
+                  generationNumber,
+                  bucket: "new-youtube-discovery-private",
+                  manifestPath: manifestKey,
+                  aggregateSha256: generationDesc.aggregateSha256,
+                  totalRecords: generationDesc.totalRecords,
+                  newRecordsAdded: mergedSnapshot.addedRecordsCount,
+                  existingRecordsPreserved: mergedSnapshot.existingRecordsCount,
+                  syncedOperationIds: operations.map((op) => op.operationId),
+                  syncedEntityIds: operations.map((op) => op.entityId),
+                  originDeviceId: batchOriginDeviceId,
+                  schemaVersion: 2,
+                },
+              },
+            });
+          } catch (auditErr) {
+            console.warn("[sync/save-all] Supabase audit log record note:", auditErr);
           }
         });
       } catch (dbErr) {

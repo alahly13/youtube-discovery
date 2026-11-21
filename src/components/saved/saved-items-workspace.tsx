@@ -5,6 +5,7 @@ import {
   Calendar,
   CheckCircle2,
   Cloud,
+  Database,
   ExternalLink,
   Eye,
   FileCode,
@@ -28,14 +29,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NormalizedYouTubeDiscoveryItem } from "@/types/youtube";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
-import { saveEntityLocally } from "@/lib/storage/indexeddb-store";
+import {
+  saveEntityLocally,
+  removeLocalSavedItem,
+  removeLocalSavedItemsBatch,
+} from "@/lib/storage/indexeddb-store";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
 import { getDeviceLabel } from "@/lib/device/device-identity";
 import { AddToPlaylistDialog } from "@/components/library/add-to-playlist-dialog";
 import { RawJsonInspectorDialog } from "@/components/saved/raw-json-inspector-dialog";
 import { ExpandableDescription } from "@/components/youtube/expandable-description";
 import { Badge } from "@/components/ui/badge";
-import { ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { formatCompactCount, formatDate, formatDuration } from "@/lib/utils/format";
@@ -45,6 +49,12 @@ import {
   type SaveReceipt,
   type SaveStatusStage,
 } from "@/lib/sync/save-receipt";
+import type { CloudCatalogStats } from "@/app/api/saved-items/route";
+
+export type SavedItemStorageState =
+  | "LOCAL_ONLY"
+  | "LOCAL_AND_CLOUD"
+  | "CLOUD_ONLY";
 
 type TypeFilter = "all" | "video" | "shorts" | "channel" | "playlist";
 type SortOption = "date_desc" | "date_asc" | "title_az" | "views_desc";
@@ -64,7 +74,7 @@ interface CloudSaveFeedbackState {
 }
 
 /**
- * Normalizes an item's save timestamp to an epoch number.
+ * Normalizes an item's save timestamp to an epoch number for chronological sorting.
  */
 function getItemSaveTime(item: NormalizedYouTubeDiscoveryItem): number {
   if (item.savedAt) {
@@ -200,30 +210,36 @@ function groupItemsByCalendarDay(
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * Dedicated Saved Items Workspace — Local & R2 Cloud Unified (2026 Production)
+ * Authoritative Saved Items Workspace — 3-State / 3-Section Unified Architecture
  * ──────────────────────────────────────────────────────────────────────────
- * Core Architecture & Guarantees:
- *   1. Clear Storage Separation: Provides independent views [All], [Local Browser],
- *      and [R2 Cloud] without confusing origins or fabricating cloud state.
- *   2. Append-Only Persistence: Saving new local items APPENDS them to R2.
- *      Previously committed cloud items are preserved and NEVER deleted.
- *   3. Authoritative Cloud Retrieval: Queries /api/saved-items to display authentic
- *      items committed to Cloudflare R2 with SHA-256 integrity verification.
- *   4. Honest Error Handling: If cloud retrieval fails, displays a clear error
- *      banner with retry; never pretends an error is an empty collection.
- *   5. Reliable User Feedback: Real-time status, upload counts, verified counts,
- *      accurate commit summaries, and safe idempotent retry.
+ * Scope: Workstream 1, 2, 3, 4, 5 — Full Cloud Saved Library Recovery & Archival
+ *
+ * Distinct Persistence States:
+ *   1. LOCAL_ONLY: Exists in browser IndexedDB; no verified R2 commit receipt.
+ *      Displayed under: SECTION 1 — NEWLY ADDED — LOCAL BROWSER
+ *      Action: Save to R2 Cloud
+ *   2. LOCAL_AND_CLOUD: Exists in both locations; R2 upload is confirmed.
+ *      Displayed under: SECTION 2 — LOCAL + R2 CLOUD (Synchronization Recovery)
+ *      Action: Complete Local Cleanup (safe deletion of local copy only)
+ *   3. CLOUD_ONLY: Authoritatively discoverable from Cloudflare R2 New Bucket;
+ *      local copy cleanly removed.
+ *      Displayed under: SECTION 3 — FROM R2 CLOUD — COMPLETE ARCHIVE
  * ═══════════════════════════════════════════════════════════════════════════
  */
 export function SavedItemsWorkspace() {
   const inMemorySavedItems = useYouTubeWorkspaceStore((s) => s.savedItems);
   const toggleItemSaved = useYouTubeWorkspaceStore((s) => s.toggleItemSaved);
+  const removeLocalItemAfterCloudCommit = useYouTubeWorkspaceStore(
+    (s) => s.removeLocalItemAfterCloudCommit
+  );
+  const removeLocalItemsBatchAfterCloudCommit = useYouTubeWorkspaceStore(
+    (s) => s.removeLocalItemsBatchAfterCloudCommit
+  );
 
   // Authoritative merged dataset combining IndexedDB Local-First, Outbox, and Hydrated Cloud
   const {
     items: allLocalAndHydratedItems,
     localPendingItems,
-    cloudCommittedItems,
     refresh: refreshLocal,
   } = useMergedDataset<NormalizedYouTubeDiscoveryItem>(
     "SAVED_ITEMS",
@@ -233,20 +249,29 @@ export function SavedItemsWorkspace() {
   // Storage view state: "all" | "local" | "cloud"
   const [storageView, setStorageView] = useState<StorageView>("all");
 
-  // Authoritative Cloud Data from /api/saved-items
+  // Authoritative Cloud Data from /api/saved-items (R2 Cloudflare Worker)
   const [cloudApiItems, setCloudApiItems] = useState<NormalizedYouTubeDiscoveryItem[]>([]);
   const [cloudLoading, setCloudLoading] = useState<boolean>(true);
+  const [cloudLoadingMore, setCloudLoadingMore] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [cloudRevision, setCloudRevision] = useState<number>(0);
+  const [cloudTotalCount, setCloudTotalCount] = useState<number>(0);
+  const [cloudHasMore, setCloudHasMore] = useState<boolean>(false);
+  const [cloudNextOffset, setCloudNextOffset] = useState<number | null>(null);
+  const [cloudCatalogStats, setCloudCatalogStats] = useState<CloudCatalogStats | null>(null);
 
   // User feedback state for cloud upload & save operations
   const [saveFeedback, setSaveFeedback] = useState<CloudSaveFeedbackState | null>(null);
+
+  // Cleanup feedback state
+  const [cleanupMessage, setCleanupMessage] = useState<string | null>(null);
 
   // Filters, search & UI state
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [sortOption, setSortOption] = useState<SortOption>("date_desc");
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isCleaningBatch, setIsCleaningBatch] = useState(false);
   const [deviceLabel, setDeviceLabelState] = useState("This Device");
 
   // Dialog states
@@ -255,42 +280,81 @@ export function SavedItemsWorkspace() {
 
   /**
    * Fetches authoritative cloud saved items directly from Cloudflare R2 via /api/saved-items.
-   * Honest error delivery: if the request fails, sets cloudError rather than pretending empty.
+   * Supports progressive cursor/offset pagination.
    */
-  const fetchCloudItems = useCallback(async () => {
-    setCloudLoading(true);
-    setCloudError(null);
-    try {
-      const res = await fetch("/api/saved-items?limit=2000", {
-        headers: { "Cache-Control": "no-cache" },
-      });
+  const fetchCloudItems = useCallback(
+    async (options?: { offset?: number; append?: boolean }) => {
+      const currentOffset = options?.offset ?? 0;
+      const isAppending = options?.append ?? false;
 
-      if (!res.ok) {
-        let errDetail = `Status ${res.status}`;
-        try {
-          const errJson = await res.json();
-          if (errJson.error) errDetail = errJson.error;
-        } catch {
-          // Non-JSON response
-        }
-        throw new Error(errDetail);
-      }
-
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.items)) {
-        setCloudApiItems(data.items);
-        setCloudRevision(data.revision || 0);
+      if (!isAppending) {
+        setCloudLoading(true);
       } else {
-        throw new Error(data.error || "Malformed response from cloud saved items API");
+        setCloudLoadingMore(true);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unable to load cloud items from Cloudflare R2.";
-      console.warn("[SavedItemsWorkspace] Cloud retrieval error:", msg);
-      setCloudError(msg);
-    } finally {
-      setCloudLoading(false);
-    }
-  }, []);
+      setCloudError(null);
+
+      try {
+        const queryParams = new URLSearchParams({
+          limit: "1000",
+          offset: String(currentOffset),
+          sort: sortOption,
+          type: typeFilter,
+        });
+        if (searchQuery.trim()) {
+          queryParams.set("q", searchQuery.trim());
+        }
+
+        const res = await fetch(`/api/saved-items?${queryParams.toString()}`, {
+          headers: { "Cache-Control": "no-cache" },
+        });
+
+        if (!res.ok) {
+          let errDetail = `Status ${res.status}`;
+          try {
+            const errJson = await res.json();
+            if (errJson.error) errDetail = errJson.error;
+          } catch {
+            // Non-JSON response
+          }
+          throw new Error(errDetail);
+        }
+
+        const data = await res.json();
+        if (data.ok && Array.isArray(data.items)) {
+          setCloudApiItems((prev) => {
+            if (!isAppending) return data.items;
+            // Deduplicate items on append
+            const map = new Map<string, NormalizedYouTubeDiscoveryItem>();
+            for (const item of prev) {
+              if (item.platformItemId) map.set(item.platformItemId, item);
+            }
+            for (const item of data.items) {
+              if (item.platformItemId) map.set(item.platformItemId, item);
+            }
+            return Array.from(map.values());
+          });
+          setCloudRevision(data.revision || 0);
+          setCloudTotalCount(data.totalCount || 0);
+          setCloudHasMore(Boolean(data.hasMore));
+          setCloudNextOffset(data.nextOffset ?? null);
+          if (data.catalogStats) {
+            setCloudCatalogStats(data.catalogStats);
+          }
+        } else {
+          throw new Error(data.error || "Malformed response from cloud saved items API");
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Unable to load cloud items from Cloudflare R2.";
+        console.warn("[SavedItemsWorkspace] Cloud retrieval error:", msg);
+        setCloudError(msg);
+      } finally {
+        setCloudLoading(false);
+        setCloudLoadingMore(false);
+      }
+    },
+    [sortOption, typeFilter, searchQuery]
+  );
 
   useEffect(() => {
     setDeviceLabelState(getDeviceLabel());
@@ -320,6 +384,7 @@ export function SavedItemsWorkspace() {
       window.addEventListener("yt-discovery-cloud-save-success", handleCloudSaveSuccess);
       window.addEventListener("yt-discovery-hydration-changed", handleCloudSaveSuccess);
       window.addEventListener("yt-discovery-local-committed", handleCloudSaveSuccess);
+      window.addEventListener("yt-discovery-local-mutation", handleCloudSaveSuccess);
     }
 
     return () => {
@@ -328,121 +393,128 @@ export function SavedItemsWorkspace() {
         window.removeEventListener("yt-discovery-cloud-save-success", handleCloudSaveSuccess);
         window.removeEventListener("yt-discovery-hydration-changed", handleCloudSaveSuccess);
         window.removeEventListener("yt-discovery-local-committed", handleCloudSaveSuccess);
+        window.removeEventListener("yt-discovery-local-mutation", handleCloudSaveSuccess);
       }
     };
   }, [fetchCloudItems, refreshLocal]);
 
-  // Helper to identify historical "Before App Updating" items
-  const isHistorical = (item: NormalizedYouTubeDiscoveryItem) => {
-    const record = item as unknown as Record<string, unknown>;
-    return (
-      record.isBeforeAppUpdating === true ||
-      (typeof record.manifestId === "string" &&
-        (record.manifestId.includes("legacy") ||
-          record.manifestId.includes("before-app-updating"))) ||
-      (typeof record.provenance === "string" &&
-        record.provenance.includes("before-app-updating"))
-    );
-  };
+  // Fast set of verified platform item IDs present in Cloudflare R2
+  const verifiedCloudPlatformIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of cloudApiItems) {
+      if (item.platformItemId) set.add(item.platformItemId);
+    }
+    return set;
+  }, [cloudApiItems]);
 
-  const beforeUpdatingItems = useMemo(() => {
-    return allLocalAndHydratedItems.filter((item) => isHistorical(item));
-  }, [allLocalAndHydratedItems]);
-
-  // Non-historical local items stored in this browser
-  const nonHistoricalLocalItems = useMemo(() => {
-    return localPendingItems.filter((item) => !isHistorical(item));
+  // Fast set of pending operation entity IDs in outbox
+  const pendingOutboxEntityIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of localPendingItems) {
+      if (item.platformItemId) set.add(item.platformItemId);
+    }
+    return set;
   }, [localPendingItems]);
 
-  // Non-historical cloud items fetched from Cloudflare R2 and previously committed local records
-  const nonHistoricalCloudItems = useMemo(() => {
+  // Complete local items map from IndexedDB + in-memory store
+  const localItemsMap = useMemo(() => {
     const map = new Map<string, NormalizedYouTubeDiscoveryItem>();
-
-    // 1. Local hydrated cloud items from IndexedDB
-    for (const item of cloudCommittedItems) {
-      if (!isHistorical(item) && item.platformItemId) {
+    for (const item of allLocalAndHydratedItems) {
+      if (item.platformItemId) map.set(item.platformItemId, item);
+    }
+    for (const item of inMemorySavedItems) {
+      if (item.platformItemId && !map.has(item.platformItemId)) {
         map.set(item.platformItemId, item);
       }
     }
+    return map;
+  }, [allLocalAndHydratedItems, inMemorySavedItems]);
 
-    // 2. Authoritative items fetched from /api/saved-items (takes precedence)
+  // ─────────────────────────────────────────────────────────────────────────
+  // THREE EXPLICIT STORAGE STATE PARTITIONS:
+  // 1. localOnlyItems (LOCAL_ONLY): Present locally, not verified in R2 cloud
+  // 2. localAndCloudItems (LOCAL_AND_CLOUD): Present in both; cleanup pending
+  // 3. cloudArchiveItems (CLOUD_ONLY & Complete Archive): All authoritative R2 records
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const localOnlyItems = useMemo(() => {
+    const list: NormalizedYouTubeDiscoveryItem[] = [];
+    for (const [platformId, item] of localItemsMap.entries()) {
+      const inCloud = verifiedCloudPlatformIds.has(platformId);
+      const isPending = pendingOutboxEntityIds.has(platformId);
+      if (!inCloud || isPending) {
+        list.push({
+          ...item,
+          ...({ _storageState: "LOCAL_ONLY", _sourceLocation: "LOCAL" } as Record<string, unknown>),
+        });
+      }
+    }
+    return filterAndSortItems(list, typeFilter, searchQuery, sortOption);
+  }, [localItemsMap, verifiedCloudPlatformIds, pendingOutboxEntityIds, typeFilter, searchQuery, sortOption]);
+
+  const localAndCloudItems = useMemo(() => {
+    const list: NormalizedYouTubeDiscoveryItem[] = [];
+    for (const [platformId, item] of localItemsMap.entries()) {
+      const inCloud = verifiedCloudPlatformIds.has(platformId);
+      const isPending = pendingOutboxEntityIds.has(platformId);
+      if (inCloud && !isPending) {
+        list.push({
+          ...item,
+          ...({ _storageState: "LOCAL_AND_CLOUD", _sourceLocation: "BOTH" } as Record<string, unknown>),
+        });
+      }
+    }
+    return filterAndSortItems(list, typeFilter, searchQuery, sortOption);
+  }, [localItemsMap, verifiedCloudPlatformIds, pendingOutboxEntityIds, typeFilter, searchQuery, sortOption]);
+
+  const cloudArchiveItems = useMemo(() => {
+    const list = cloudApiItems.map((item) => {
+      const inLocal = localItemsMap.has(item.platformItemId);
+      const storageState: SavedItemStorageState = inLocal ? "LOCAL_AND_CLOUD" : "CLOUD_ONLY";
+      return {
+        ...item,
+        ...({ _storageState: storageState, _sourceLocation: inLocal ? "BOTH" : "CLOUD" } as Record<string, unknown>),
+      };
+    });
+    return filterAndSortItems(list, typeFilter, searchQuery, sortOption);
+  }, [cloudApiItems, localItemsMap, typeFilter, searchQuery, sortOption]);
+
+  // Combined deduplicated total library count
+  const totalUniqueItemsCount = useMemo(() => {
+    const allKeys = new Set<string>();
     for (const item of cloudApiItems) {
-      if (!isHistorical(item) && item.platformItemId) {
-        map.set(item.platformItemId, item);
-      }
+      if (item.platformItemId) allKeys.add(item.platformItemId);
     }
-
-    return Array.from(map.values());
-  }, [cloudApiItems, cloudCommittedItems]);
-
-  // Combined, deduplicated collection for "All" view with explicit source badges
-  const dedupedAllItems = useMemo(() => {
-    const map = new Map<string, NormalizedYouTubeDiscoveryItem & { _sourceLocation?: "LOCAL" | "CLOUD" | "BOTH" }>();
-
-    // 1. Seed with authoritative cloud items
-    for (const c of nonHistoricalCloudItems) {
-      if (!c.platformItemId) continue;
-      map.set(c.platformItemId, {
-        ...c,
-        _sourceLocation: "CLOUD",
-      });
+    for (const item of localOnlyItems) {
+      if (item.platformItemId) allKeys.add(item.platformItemId);
     }
+    return allKeys.size;
+  }, [cloudApiItems, localOnlyItems]);
 
-    // 2. Overlay local items; items in both are marked "BOTH"
-    for (const l of nonHistoricalLocalItems) {
-      if (!l.platformItemId) continue;
-      const existing = map.get(l.platformItemId);
-      if (existing) {
-        map.set(l.platformItemId, {
-          ...existing,
-          ...l,
-          _sourceLocation: "BOTH",
-        });
-      } else {
-        map.set(l.platformItemId, {
-          ...l,
-          _sourceLocation: "LOCAL",
-        });
-      }
-    }
+  // Daily calendar grouping for each of the 3 sections
+  const localOnlyDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(localOnlyItems, sortOption);
+  }, [localOnlyItems, sortOption]);
 
-    return Array.from(map.values());
-  }, [nonHistoricalCloudItems, nonHistoricalLocalItems]);
+  const localAndCloudDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(localAndCloudItems, sortOption);
+  }, [localAndCloudItems, sortOption]);
 
-  // Select the active list of items based on the active storage view
-  const activeItemsToDisplay = useMemo(() => {
-    let sourceList: NormalizedYouTubeDiscoveryItem[] = [];
-    if (storageView === "local") {
-      sourceList = nonHistoricalLocalItems;
-    } else if (storageView === "cloud") {
-      sourceList = nonHistoricalCloudItems;
-    } else {
-      sourceList = dedupedAllItems;
-    }
-    return filterAndSortItems(sourceList, typeFilter, searchQuery, sortOption);
-  }, [storageView, nonHistoricalLocalItems, nonHistoricalCloudItems, dedupedAllItems, typeFilter, searchQuery, sortOption]);
+  const cloudArchiveDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(cloudArchiveItems, sortOption);
+  }, [cloudArchiveItems, sortOption]);
 
-  const activeDailyGroups = useMemo(() => {
-    return groupItemsByCalendarDay(activeItemsToDisplay, sortOption);
-  }, [activeItemsToDisplay, sortOption]);
-
-  // Historical Before App Updating items
-  const filteredBeforeUpdatingItems = useMemo(() => {
-    return filterAndSortItems(beforeUpdatingItems, typeFilter, searchQuery, sortOption);
-  }, [beforeUpdatingItems, typeFilter, searchQuery, sortOption]);
-
-  const beforeUpdatingDailyGroups = useMemo(() => {
-    return groupItemsByCalendarDay(filteredBeforeUpdatingItems, sortOption);
-  }, [filteredBeforeUpdatingItems, sortOption]);
-
-  // Type counts across deduplicated all items
+  // Type counts across all unique items
   const counts = useMemo(() => {
     let videos = 0;
     let shorts = 0;
     let channels = 0;
     let playlists = 0;
-    const baseList = storageView === "local" ? nonHistoricalLocalItems : storageView === "cloud" ? nonHistoricalCloudItems : dedupedAllItems;
-    for (const item of baseList) {
+    const seen = new Set<string>();
+
+    const evaluateItem = (item: NormalizedYouTubeDiscoveryItem) => {
+      if (!item.platformItemId || seen.has(item.platformItemId)) return;
+      seen.add(item.platformItemId);
       if (item.itemType === "channel") {
         channels++;
       } else if (item.itemType === "playlist") {
@@ -452,25 +524,74 @@ export function SavedItemsWorkspace() {
       } else {
         videos++;
       }
+    };
+
+    for (const item of cloudApiItems) evaluateItem(item);
+    for (const item of localOnlyItems) evaluateItem(item);
+
+    return { all: seen.size, videos, shorts, channels, playlists };
+  }, [cloudApiItems, localOnlyItems]);
+
+  /**
+   * Workstream 1 & 5: Safe Local Cleanup of a single item after verified R2 persistence.
+   * Deletes ONLY that exact local record; never touches R2 or other local records.
+   */
+  const handleSingleLocalCleanup = async (item: NormalizedYouTubeDiscoveryItem) => {
+    const ownerId = syncCoordinator.getOwnerId();
+    if (!ownerId || !item.platformItemId) return;
+
+    try {
+      // 1. Remove exact record from IndexedDB entities_saved_items
+      await removeLocalSavedItem(ownerId, item.platformItemId);
+      // 2. Remove exact record from in-memory Zustand store
+      removeLocalItemAfterCloudCommit(item.platformItemId);
+      // 3. Refresh local hook state
+      refreshLocal();
+      setCleanupMessage(`Local copy of "${item.title.slice(0, 36)}" removed. Cloud copy preserved in R2.`);
+      setTimeout(() => setCleanupMessage(null), 5000);
+    } catch (err) {
+      console.error("[SavedItemsWorkspace] Local cleanup error:", err);
     }
-    return { all: baseList.length, videos, shorts, channels, playlists };
-  }, [storageView, nonHistoricalLocalItems, nonHistoricalCloudItems, dedupedAllItems]);
+  };
+
+  /**
+   * Workstream 1 & 5: Batch local cleanup of all verified LOCAL_AND_CLOUD items.
+   * Transforms verified local items into CLOUD_ONLY without data loss.
+   */
+  const handleCompleteAllLocalCleanups = async () => {
+    const ownerId = syncCoordinator.getOwnerId();
+    if (!ownerId || localAndCloudItems.length === 0) return;
+
+    setIsCleaningBatch(true);
+    try {
+      const ids = localAndCloudItems.map((i) => i.platformItemId).filter(Boolean);
+      await removeLocalSavedItemsBatch(ownerId, ids);
+      removeLocalItemsBatchAfterCloudCommit(ids);
+      refreshLocal();
+      setCleanupMessage(`Cleaned up ${ids.length} local copies. All records remain safely archived in Cloudflare R2.`);
+      setTimeout(() => setCleanupMessage(null), 6000);
+    } catch (err) {
+      console.error("[SavedItemsWorkspace] Batch local cleanup error:", err);
+    } finally {
+      setIsCleaningBatch(false);
+    }
+  };
 
   /**
    * Saves local items to Cloudflare R2 with reliable, honest user feedback across all stages.
    * Guarantees append-only persistence: existing cloud records are preserved intact.
    */
   const handleSaveToCloud = async () => {
-    const localCount = nonHistoricalLocalItems.length;
-    if (localCount === 0 && nonHistoricalCloudItems.length > 0) {
+    const pendingCount = localOnlyItems.length;
+    if (pendingCount === 0) {
       setSaveFeedback({
         stage: "CLOUD_COMMITTED",
         isSaving: false,
         totalSelected: 0,
         uploadedCount: 0,
-        verifiedCount: nonHistoricalCloudItems.length,
+        verifiedCount: cloudApiItems.length,
         failedCount: 0,
-        successMessage: `All local items are already synced with Cloudflare R2. ${nonHistoricalCloudItems.length} cloud items preserved.`,
+        successMessage: `All local items are already synced with Cloudflare R2. ${cloudApiItems.length} cloud records preserved.`,
       });
       return;
     }
@@ -479,17 +600,17 @@ export function SavedItemsWorkspace() {
     setSaveFeedback({
       stage: "SYNCING",
       isSaving: true,
-      totalSelected: localCount,
+      totalSelected: pendingCount,
       uploadedCount: 0,
       verifiedCount: 0,
       failedCount: 0,
     });
 
     try {
-      // 1. Ensure all nonHistoricalLocalItems are persisted locally in IndexedDB with pending outbox entries
+      // 1. Ensure all localOnlyItems are persisted locally in IndexedDB with pending outbox entries
       const ownerId = syncCoordinator.getOwnerId();
-      if (ownerId && nonHistoricalLocalItems.length > 0) {
-        for (const item of nonHistoricalLocalItems) {
+      if (ownerId && localOnlyItems.length > 0) {
+        for (const item of localOnlyItems) {
           if (!item.platformItemId) continue;
           try {
             await saveEntityLocally(
@@ -511,8 +632,8 @@ export function SavedItemsWorkspace() {
       if (result.ok) {
         const r = result.receipt;
         const savedDataset = r?.datasets.find((d) => d.datasetType === "SAVED_ITEMS") || r?.datasets[0];
-        const added = savedDataset?.addedRecordsCount ?? r?.totalNewRecordsAdded ?? (r ? localCount : 0);
-        const preserved = savedDataset?.existingRecordsCount ?? r?.totalExistingRecordsPreserved ?? nonHistoricalCloudItems.length;
+        const added = savedDataset?.addedRecordsCount ?? r?.totalNewRecordsAdded ?? (r ? pendingCount : 0);
+        const preserved = savedDataset?.existingRecordsCount ?? r?.totalExistingRecordsPreserved ?? cloudApiItems.length;
 
         // Authoritative reload of the cloud listing & local state
         await fetchCloudItems();
@@ -521,21 +642,21 @@ export function SavedItemsWorkspace() {
         setSaveFeedback({
           stage: "CLOUD_COMMITTED",
           isSaving: false,
-          totalSelected: localCount,
-          uploadedCount: added > 0 ? added : localCount,
-          verifiedCount: added > 0 ? added : localCount,
+          totalSelected: pendingCount,
+          uploadedCount: added > 0 ? added : pendingCount,
+          verifiedCount: added > 0 ? added : pendingCount,
           failedCount: 0,
-          successMessage: `Cloud save completed successfully. ${added} new items saved to Cloudflare R2. ${preserved} existing cloud items preserved. 0 duplicates added.`,
+          successMessage: `Cloud save completed successfully. ${added} new items committed to Cloudflare R2. ${preserved} existing cloud items preserved. 0 duplicates added.`,
           receipt: r,
         });
       } else {
         setSaveFeedback({
           stage: "FAILED",
           isSaving: false,
-          totalSelected: localCount,
+          totalSelected: pendingCount,
           uploadedCount: 0,
           verifiedCount: 0,
-          failedCount: localCount,
+          failedCount: pendingCount,
           errorMessage: result.error || "Failed to commit items to Cloudflare R2.",
           errorCategory: result.errorCategory || "WORKER_ERROR",
           receipt: result.receipt,
@@ -546,10 +667,10 @@ export function SavedItemsWorkspace() {
       setSaveFeedback({
         stage: "FAILED",
         isSaving: false,
-        totalSelected: localCount,
+        totalSelected: pendingCount,
         uploadedCount: 0,
         verifiedCount: 0,
-        failedCount: localCount,
+        failedCount: pendingCount,
         errorMessage: msg,
         errorCategory: "WORKER_ERROR",
       });
@@ -558,11 +679,83 @@ export function SavedItemsWorkspace() {
     }
   };
 
-  const hasAnyDisplayItems = activeItemsToDisplay.length > 0;
-  const hasHistoricalItems = filteredBeforeUpdatingItems.length > 0;
-
   return (
     <div className="space-y-6">
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* SAVED LIBRARY OVERVIEW & DETAILED STATS HEADER                        */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card className="p-3.5 sm:p-4 border-amber-500/30 bg-amber-500/5 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-semibold text-amber-500">
+            <HardDrive className="h-4 w-4" />
+            <span>Local Browser</span>
+          </div>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">
+            {localOnlyItems.length}
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted">Pending cloud sync</p>
+        </Card>
+
+        <Card className="p-3.5 sm:p-4 border-cyan-500/30 bg-cyan-500/5 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+            <Layers className="h-4 w-4" />
+            <span>Local + R2 Cloud</span>
+          </div>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">
+            {localAndCloudItems.length}
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted">Verified; cleanup pending</p>
+        </Card>
+
+        <Card className="p-3.5 sm:p-4 border-emerald-500/30 bg-emerald-500/5 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-500">
+            <Cloud className="h-4 w-4" />
+            <span>R2 Cloud Archive</span>
+          </div>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">
+            {cloudLoading ? "…" : cloudTotalCount || cloudApiItems.length}
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted">Authoritative R2 bucket</p>
+        </Card>
+
+        <Card className="p-3.5 sm:p-4 border-primary/30 bg-primary/5 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-semibold text-primary">
+            <Database className="h-4 w-4" />
+            <span>Total Unique</span>
+          </div>
+          <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">
+            {totalUniqueItemsCount}
+          </div>
+          <p className="mt-0.5 text-[11px] text-muted">Deduplicated library</p>
+        </Card>
+      </div>
+
+      {/* Cloud Catalog Reconstruction Metrics */}
+      {cloudCatalogStats && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-border/70 bg-surface-muted/50 text-[11px] text-muted">
+          <div className="flex flex-wrap items-center gap-4">
+            <span>
+              Objects Enumerated: <strong className="text-foreground">{cloudCatalogStats.enumeratedObjectsCount}</strong>
+            </span>
+            <span>
+              Manifests Inspected: <strong className="text-foreground">{cloudCatalogStats.enumeratedManifestsCount}</strong>
+            </span>
+            <span>
+              Parts Read: <strong className="text-foreground">{cloudCatalogStats.enumeratedPartsCount}</strong>
+            </span>
+            <span>
+              Historical Records: <strong className="text-purple-600 dark:text-purple-400">{cloudCatalogStats.historicalRecordsCount}</strong>
+            </span>
+            <span>
+              Recent Cloud Records: <strong className="text-emerald-500">{cloudCatalogStats.recentRecordsCount}</strong>
+            </span>
+          </div>
+          {cloudRevision > 0 && (
+            <span className="font-mono text-muted/80">Dataset Revision {cloudRevision}</span>
+          )}
+        </div>
+      )}
+
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {/* STORAGE VIEWS SELECTOR & ACTION BAR: [ All ] [ Local ] [ R2 Cloud ]  */}
       {/* ═════════════════════════════════════════════════════════════════════ */}
@@ -581,7 +774,7 @@ export function SavedItemsWorkspace() {
             <Layers className="h-3.5 w-3.5" />
             <span>All Storage</span>
             <span className="rounded-full bg-border/60 px-1.5 py-0.2 text-[10px] text-muted">
-              {dedupedAllItems.length}
+              {totalUniqueItemsCount}
             </span>
           </button>
 
@@ -597,7 +790,7 @@ export function SavedItemsWorkspace() {
             <HardDrive className="h-3.5 w-3.5" />
             <span>Local Browser</span>
             <span className="rounded-full bg-border/60 px-1.5 py-0.2 text-[10px] text-muted">
-              {nonHistoricalLocalItems.length}
+              {localOnlyItems.length}
             </span>
           </button>
 
@@ -613,7 +806,7 @@ export function SavedItemsWorkspace() {
             <Cloud className="h-3.5 w-3.5" />
             <span>R2 Cloud</span>
             <span className="rounded-full bg-border/60 px-1.5 py-0.2 text-[10px] text-muted">
-              {cloudLoading ? "…" : nonHistoricalCloudItems.length}
+              {cloudLoading ? "…" : cloudTotalCount || cloudApiItems.length}
             </span>
           </button>
         </div>
@@ -631,6 +824,19 @@ export function SavedItemsWorkspace() {
             <span className="hidden sm:inline">Refresh Cloud</span>
           </button>
 
+          {localAndCloudItems.length > 0 && (
+            <button
+              type="button"
+              onClick={handleCompleteAllLocalCleanups}
+              disabled={isCleaningBatch}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-semibold text-xs px-3.5 py-2 shadow-xs transition disabled:opacity-50"
+              title="Remove local copies of already-verified cloud items"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              <span>{isCleaningBatch ? "Cleaning…" : `Clean Up Local (${localAndCloudItems.length})`}</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={handleSaveToCloud}
@@ -647,9 +853,9 @@ export function SavedItemsWorkspace() {
               <>
                 <Cloud className="h-3.5 w-3.5" />
                 <span>Save to R2 Cloud</span>
-                {nonHistoricalLocalItems.length > 0 && (
+                {localOnlyItems.length > 0 && (
                   <span className="rounded-full bg-black/20 px-1.5 py-0.2 text-[10px] font-bold">
-                    {nonHistoricalLocalItems.length}
+                    {localOnlyItems.length}
                   </span>
                 )}
               </>
@@ -658,17 +864,36 @@ export function SavedItemsWorkspace() {
         </div>
       </div>
 
+      {/* Local Cleanup Confirmation Toast */}
+      {cleanupMessage && (
+        <div className="flex items-center justify-between p-3 rounded-lg border border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-xs font-medium">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{cleanupMessage}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCleanupMessage(null)}
+            className="hover:opacity-75"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {/* REAL-TIME CLOUD SAVE & UPLOAD PROGRESS FEEDBACK BANNER               */}
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {saveFeedback && (
-        <Card className={`p-4 sm:p-5 rounded-xl border shadow-sm transition ${
-          saveFeedback.isSaving
-            ? "border-amber-500/40 bg-amber-500/5 text-foreground"
-            : saveFeedback.stage === "CLOUD_COMMITTED"
-            ? "border-emerald-500/40 bg-emerald-500/5 text-foreground"
-            : "border-red-500/40 bg-red-500/5 text-foreground"
-        }`}>
+        <Card
+          className={`p-4 sm:p-5 rounded-xl border shadow-sm transition ${
+            saveFeedback.isSaving
+              ? "border-amber-500/40 bg-amber-500/5 text-foreground"
+              : saveFeedback.stage === "CLOUD_COMMITTED"
+              ? "border-emerald-500/40 bg-emerald-500/5 text-foreground"
+              : "border-red-500/40 bg-red-500/5 text-foreground"
+          }`}
+        >
           <div className="flex flex-col gap-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex items-center gap-3">
@@ -695,30 +920,30 @@ export function SavedItemsWorkspace() {
                         ? "Cloud Save Completed"
                         : "Cloud Save Failed"}
                     </h3>
-                    <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-bold ${
-                      saveFeedback.isSaving
-                        ? "bg-amber-500/20 text-amber-500"
-                        : saveFeedback.stage === "CLOUD_COMMITTED"
-                        ? "bg-emerald-500/20 text-emerald-500"
-                        : "bg-red-500/20 text-red-500"
-                    }`}>
+                    <span
+                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-bold ${
+                        saveFeedback.isSaving
+                          ? "bg-amber-500/20 text-amber-500"
+                          : saveFeedback.stage === "CLOUD_COMMITTED"
+                          ? "bg-emerald-500/20 text-emerald-500"
+                          : "bg-red-500/20 text-red-500"
+                      }`}
+                    >
                       {SAVE_STAGE_LABELS[saveFeedback.stage] || saveFeedback.stage}
                     </span>
                   </div>
 
                   <p className="mt-1 text-xs text-muted">
-                    {saveFeedback.isSaving ? (
-                      `Uploading local items to Cloudflare R2 and committing database index (Target: ${saveFeedback.totalSelected} items)…`
-                    ) : saveFeedback.successMessage ? (
-                      saveFeedback.successMessage
-                    ) : (
-                      saveFeedback.errorMessage || "An unexpected error occurred during cloud synchronization."
-                    )}
+                    {saveFeedback.isSaving
+                      ? `Uploading local items to Cloudflare R2 and committing Supabase audit receipt (Target: ${saveFeedback.totalSelected} items)…`
+                      : saveFeedback.successMessage
+                      ? saveFeedback.successMessage
+                      : saveFeedback.errorMessage ||
+                        "An unexpected error occurred during cloud synchronization."}
                   </p>
                 </div>
               </div>
 
-              {/* Close / Dismiss */}
               {!saveFeedback.isSaving && (
                 <button
                   type="button"
@@ -731,13 +956,23 @@ export function SavedItemsWorkspace() {
               )}
             </div>
 
-            {/* Progress Metrics & Action Buttons */}
             {saveFeedback.isSaving && (
               <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-muted pt-1">
-                <span>Selected: <strong className="text-foreground">{saveFeedback.totalSelected}</strong></span>
-                <span>Uploading: <strong className="text-foreground">{saveFeedback.totalSelected} / {saveFeedback.totalSelected}</strong></span>
-                <span>Integrity: <strong className="text-emerald-500">SHA-256 Verified</strong></span>
-                <span>Mode: <strong className="text-foreground">Append-Only</strong></span>
+                <span>
+                  Selected: <strong className="text-foreground">{saveFeedback.totalSelected}</strong>
+                </span>
+                <span>
+                  Uploading:{" "}
+                  <strong className="text-foreground">
+                    {saveFeedback.totalSelected} / {saveFeedback.totalSelected}
+                  </strong>
+                </span>
+                <span>
+                  Integrity: <strong className="text-emerald-500">SHA-256 Verified</strong>
+                </span>
+                <span>
+                  Mode: <strong className="text-foreground">Append-Only</strong>
+                </span>
               </div>
             )}
 
@@ -751,7 +986,9 @@ export function SavedItemsWorkspace() {
                   <RefreshCw className="h-3 w-3" />
                   <span>Retry Save to R2 Cloud</span>
                 </button>
-                <span className="text-xs text-muted">Local browser items remain safely preserved in IndexedDB.</span>
+                <span className="text-xs text-muted">
+                  Local browser items remain safely preserved in IndexedDB.
+                </span>
               </div>
             )}
           </div>
@@ -768,7 +1005,13 @@ export function SavedItemsWorkspace() {
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
             <input
               type="text"
-              placeholder={`Search in ${storageView === "local" ? "Local Browser" : storageView === "cloud" ? "R2 Cloud" : "All Saved Items"}…`}
+              placeholder={`Search in ${
+                storageView === "local"
+                  ? "Local Browser"
+                  : storageView === "cloud"
+                  ? "R2 Cloud Archive"
+                  : "All Saved Items"
+              }…`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-10 w-full rounded-lg border border-border bg-surface pl-10 pr-9 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)] transition"
@@ -883,83 +1126,8 @@ export function SavedItemsWorkspace() {
         </div>
       </Card>
 
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* STORAGE VIEW BANNER / STATUS HEADER                                  */}
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {storageView === "local" ? (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 shadow-xs">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-500 font-bold shadow-xs">
-              <HardDrive className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-foreground tracking-tight">
-                  LOCAL BROWSER — This Device
-                </h2>
-                <span className="inline-flex items-center rounded-full bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-xs font-bold text-amber-500">
-                  {nonHistoricalLocalItems.length} {nonHistoricalLocalItems.length === 1 ? "item" : "items"}
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-muted">
-                Persisted locally in IndexedDB storage on <span className="font-semibold text-foreground">{deviceLabel}</span>. Preserved offline; click &ldquo;Save to R2 Cloud&rdquo; to append to cloud storage.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : storageView === "cloud" ? (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-xl border border-emerald-500/30 bg-emerald-500/5 shadow-xs">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-500 font-bold shadow-xs">
-              <Cloud className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-foreground tracking-tight">
-                  R2 CLOUD — Committed Storage
-                </h2>
-                <span className="inline-flex items-center rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 text-xs font-bold text-emerald-500">
-                  {cloudLoading ? "Loading…" : `${nonHistoricalCloudItems.length} committed`}
-                </span>
-                {cloudRevision > 0 && (
-                  <span className="inline-flex items-center rounded-md bg-surface-muted px-2 py-0.5 text-[10px] font-mono text-muted">
-                    Rev {cloudRevision}
-                  </span>
-                )}
-              </div>
-              <p className="mt-0.5 text-xs text-muted">
-                Authoritative multi-device persistence committed to Cloudflare R2 bucket and Supabase PostgreSQL dataset registry.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-5 rounded-xl border border-primary/30 bg-primary/5 shadow-xs">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary font-bold shadow-xs">
-              <Layers className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-foreground tracking-tight">
-                  ALL SAVED ITEMS — Unified Storage
-                </h2>
-                <span className="inline-flex items-center rounded-full bg-primary/15 border border-primary/30 px-2 py-0.5 text-xs font-bold text-primary">
-                  {dedupedAllItems.length} {dedupedAllItems.length === 1 ? "item" : "items"}
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-muted">
-                Deduplicated collection combining items from this local browser and committed Cloudflare R2 cloud storage with provenance badges.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* CLOUD ERROR STATE BANNER (Honest Error Delivery)                      */}
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {storageView === "cloud" && cloudError && (
+      {/* Cloud Error State Banner (Honest Error Delivery) */}
+      {cloudError && (
         <Card className="p-5 border-red-500/40 bg-red-500/5 text-foreground rounded-xl">
           <div className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-500/20 text-red-500">
@@ -967,10 +1135,10 @@ export function SavedItemsWorkspace() {
             </div>
             <div className="flex-1">
               <h3 className="text-sm font-bold text-red-600 dark:text-red-400">
-                Unable to load cloud items from Cloudflare R2
+                Unable to load cloud archive from Cloudflare R2
               </h3>
               <p className="mt-1 text-xs text-muted">
-                {cloudError}. Your local browser items remain completely safe and accessible in IndexedDB.
+                {cloudError}. Your local browser items remain completely safe in IndexedDB.
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <button
@@ -979,15 +1147,7 @@ export function SavedItemsWorkspace() {
                   className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-xs px-3.5 py-1.5 transition"
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
-                  <span>Retry Loading Cloud Items</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStorageView("local")}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface hover:bg-surface-muted px-3 py-1.5 text-xs text-muted hover:text-foreground transition"
-                >
-                  <HardDrive className="h-3.5 w-3.5 text-amber-500" />
-                  <span>View Local Browser Items</span>
+                  <span>Retry Loading Cloud Archive</span>
                 </button>
               </div>
             </div>
@@ -995,217 +1155,284 @@ export function SavedItemsWorkspace() {
         </Card>
       )}
 
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* CLOUD LOADING SKELETON STATE                                         */}
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {storageView === "cloud" && cloudLoading && !cloudError && (
-        <Card className="flex flex-col items-center justify-center p-14 text-center">
+      {/* Cloud Loading Spinner */}
+      {cloudLoading && !cloudError && (
+        <Card className="flex flex-col items-center justify-center p-12 text-center">
           <RefreshCw className="h-8 w-8 text-emerald-500 animate-spin mb-3" />
           <h3 className="text-sm font-semibold text-foreground">
-            Connecting to Cloudflare R2…
+            Reconstructing Authoritative R2 Cloud Catalog…
           </h3>
           <p className="mt-1 text-xs text-muted max-w-sm">
-            Retrieving authoritative cloud saved items and verifying SHA-256 integrity receipts.
+            Enumerating generations, verifying manifest parts, and retrieving historical records.
           </p>
         </Card>
       )}
 
       {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* MAIN ITEMS DISPLAY (Chronological Daily Grouping)                    */}
+      {/* SECTION 1 — NEWLY ADDED — LOCAL BROWSER (LOCAL_ONLY)                  */}
       {/* ═════════════════════════════════════════════════════════════════════ */}
-      {!cloudLoading && hasAnyDisplayItems && (
-        <div className="space-y-8 pl-1">
-          {activeDailyGroups.map((group) => (
-            <section key={`${storageView}-${group.key}`} className="space-y-4">
-              <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
-                <div className={`flex h-6 w-6 items-center justify-center rounded ${
-                  storageView === "local"
-                    ? "bg-amber-500/15 text-amber-500"
-                    : storageView === "cloud"
-                    ? "bg-emerald-500/15 text-emerald-500"
-                    : "bg-primary/15 text-primary"
-                }`}>
-                  <Calendar className="h-3.5 w-3.5" />
-                </div>
-                <h3 className={`text-xs font-bold tracking-wider uppercase ${
-                  storageView === "local"
-                    ? "text-amber-500"
-                    : storageView === "cloud"
-                    ? "text-emerald-500"
-                    : "text-primary"
-                }`}>
-                  {group.label}
-                </h3>
-                <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
-                  {group.items.length} {group.items.length === 1 ? "item" : "items"}
-                </span>
-                <div className={`h-px flex-1 ${
-                  storageView === "local"
-                    ? "bg-amber-500/20"
-                    : storageView === "cloud"
-                    ? "bg-emerald-500/20"
-                    : "bg-primary/20"
-                }`} />
-              </div>
-
-              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                {group.items.map((item) => (
-                  <SavedItemCard
-                    key={`${storageView}-${item.itemType}-${item.platformItemId}`}
-                    item={item}
-                    isLocalOnly={storageView === "local" || (item as unknown as Record<string, unknown>)._sourceLocation === "LOCAL"}
-                    onRemove={() => toggleItemSaved(item)}
-                    onAddToPlaylist={() => setPlaylistTarget(item)}
-                    onInspectJson={() => setInspectedItem(item)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
-
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* EMPTY STATES FOR DIFFERENT STORAGE VIEWS                             */}
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {!cloudLoading && !hasAnyDisplayItems && !cloudError && (
-        <Card className="flex flex-col items-center justify-center p-14 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-surface-muted text-muted">
-            {storageView === "local" ? (
-              <HardDrive className="h-7 w-7 opacity-40 text-amber-500" />
-            ) : storageView === "cloud" ? (
-              <Cloud className="h-7 w-7 opacity-40 text-emerald-500" />
-            ) : (
-              <Layers className="h-7 w-7 opacity-40" />
-            )}
-          </div>
-
-          <h3 className="text-base font-semibold text-foreground">
-            {storageView === "local"
-              ? "No locally saved items in this browser"
-              : storageView === "cloud"
-              ? "No cloud items found in Cloudflare R2"
-              : "No saved items found"}
-          </h3>
-
-          <p className="mt-1 text-xs text-muted max-w-md">
-            {storageView === "local" ? (
-              `You haven't saved any items locally on ${deviceLabel}. Bookmark items from Search or Explorers to collect them.`
-            ) : storageView === "cloud" ? (
-              nonHistoricalLocalItems.length > 0 ? (
-                `You have ${nonHistoricalLocalItems.length} items saved locally in this browser. Click "Save to R2 Cloud" above to upload them to Cloudflare R2.`
-              ) : (
-                "No records have been committed to Cloudflare R2 yet. Save items in the app and click 'Save to R2 Cloud' to back them up."
-              )
-            ) : (
-              searchQuery ? `No items match query "${searchQuery}" or type filter "${typeFilter}".` : "You haven't saved any YouTube videos, channels, or playlists yet."
-            )}
-          </p>
-
-          <div className="mt-6 flex flex-wrap justify-center gap-3">
-            {storageView === "cloud" && nonHistoricalLocalItems.length > 0 ? (
-              <button
-                type="button"
-                onClick={handleSaveToCloud}
-                disabled={isSyncing}
-                className="inline-flex items-center gap-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs px-4 py-2 transition shadow-xs"
-              >
-                <Cloud className="h-3.5 w-3.5" />
-                <span>Save Local Items to R2 Cloud ({nonHistoricalLocalItems.length})</span>
-              </button>
-            ) : (
-              <>
-                <ButtonLink href="/search" variant="primary" className="h-9 px-4 text-xs font-medium">
-                  Explore Search
-                </ButtonLink>
-                <ButtonLink href="/channels" variant="secondary" className="h-9 px-4 text-xs">
-                  Explore Channels
-                </ButtonLink>
-                <ButtonLink href="/playlists" variant="secondary" className="h-9 px-4 text-xs">
-                  Explore Playlists
-                </ButtonLink>
-              </>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* HISTORICAL ARCHIVE SECTION: Before App Updating (Purple Theme)       */}
-      {/* ═════════════════════════════════════════════════════════════════════ */}
-      {hasHistoricalItems && (
-        <div className="space-y-6 pt-6">
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center" aria-hidden="true">
-              <div className="w-full border-t border-purple-500/30" />
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-background px-4 text-xs font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400">
-                Historical Archive Divider
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-xl border border-purple-500/30 bg-purple-500/5 shadow-xs">
+      {(storageView === "all" || storageView === "local") && (
+        <div className="space-y-4 pt-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 shadow-xs">
             <div className="flex items-center gap-3.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-purple-500/20 text-purple-600 dark:text-purple-400 font-bold shadow-xs">
-                <Sparkles className="h-5 w-5" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-500 font-bold shadow-xs">
+                <HardDrive className="h-5 w-5" />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-bold text-foreground tracking-tight">
-                    Before App Updating
+                    NEWLY ADDED — LOCAL BROWSER
                   </h2>
-                  <span className="inline-flex items-center rounded-full bg-purple-500/15 border border-purple-500/30 px-2 py-0.5 text-xs font-bold text-purple-600 dark:text-purple-400">
-                    {filteredBeforeUpdatingItems.length} {filteredBeforeUpdatingItems.length === 1 ? "item" : "items"}
+                  <span className="inline-flex items-center rounded-full bg-amber-500/20 border border-amber-500/40 px-2.5 py-0.5 text-xs font-bold text-amber-600 dark:text-amber-400">
+                    {localOnlyItems.length} {localOnlyItems.length === 1 ? "item" : "items"}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-muted">
-                  Historical saved items preserved from previous application versions, securely stored in Cloudflare R2 under <code className="text-foreground">before-app-updating/…</code>.
+                <p className="mt-0.5 text-xs text-muted">
+                  Saved in local browser IndexedDB on <span className="font-semibold text-foreground">{deviceLabel}</span>. Awaiting verified upload to Cloudflare R2.
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:self-center">
-              <Link href="/other-actions">
-                <ButtonLink href="/other-actions" variant="secondary" className="gap-1.5 h-8 px-3 text-xs">
-                  <Sparkles className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
-                  Migration Actions
-                </ButtonLink>
-              </Link>
-            </div>
+            {localOnlyItems.length > 0 && (
+              <button
+                type="button"
+                onClick={handleSaveToCloud}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-black font-semibold text-xs px-3.5 py-1.5 transition self-start sm:self-center shadow-xs"
+              >
+                <Cloud className="h-3.5 w-3.5" />
+                <span>Upload to R2 Cloud</span>
+              </button>
+            )}
           </div>
 
-          <div className="space-y-8 pl-1">
-            {beforeUpdatingDailyGroups.map((group) => (
-              <section key={`before-updating-${group.key}`} className="space-y-4">
-                <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
-                  <div className="flex h-6 w-6 items-center justify-center rounded bg-purple-500/15 text-purple-600 dark:text-purple-400">
-                    <Calendar className="h-3.5 w-3.5" />
+          {localOnlyItems.length > 0 ? (
+            <div className="space-y-8 pl-1">
+              {localOnlyDailyGroups.map((group) => (
+                <section key={`local-only-${group.key}`} className="space-y-4">
+                  <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                    <div className="flex h-6 w-6 items-center justify-center rounded bg-amber-500/15 text-amber-500">
+                      <Calendar className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-xs font-bold tracking-wider uppercase text-amber-500">
+                      {group.label}
+                    </h3>
+                    <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                      {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                    </span>
+                    <div className="h-px flex-1 bg-amber-500/20" />
                   </div>
-                  <h3 className="text-xs font-bold tracking-wider text-purple-600 dark:text-purple-400 uppercase">
-                    {group.label}
-                  </h3>
-                  <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
-                    {group.items.length} {group.items.length === 1 ? "item" : "items"}
-                  </span>
-                  <div className="h-px flex-1 bg-purple-500/20" />
-                </div>
 
-                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                  {group.items.map((item) => (
-                    <SavedItemCard
-                      key={`before-updating-${item.itemType}-${item.platformItemId}`}
-                      item={item}
-                      onRemove={() => toggleItemSaved(item)}
-                      onAddToPlaylist={() => setPlaylistTarget(item)}
-                      onInspectJson={() => setInspectedItem(item)}
-                    />
-                  ))}
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {group.items.map((item) => (
+                      <SavedItemCard
+                        key={`local-only-${item.itemType}-${item.platformItemId}`}
+                        item={item}
+                        storageState="LOCAL_ONLY"
+                        onRemove={() => toggleItemSaved(item)}
+                        onAddToPlaylist={() => setPlaylistTarget(item)}
+                        onInspectJson={() => setInspectedItem(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 text-center rounded-xl border border-dashed border-border/70 text-xs text-muted">
+              All local items on this device have completed verified cloud synchronization.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 2 — LOCAL + R2 CLOUD (LOCAL_AND_CLOUD — Cleanup Pending)     */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {(storageView === "all" || storageView === "local" || storageView === "cloud") && (
+        <div className="space-y-4 pt-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 shadow-xs">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 font-bold shadow-xs">
+                <Layers className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-foreground tracking-tight">
+                    LOCAL + R2 CLOUD
+                  </h2>
+                  <span className="inline-flex items-center rounded-full bg-cyan-500/20 border border-cyan-500/40 px-2.5 py-0.5 text-xs font-bold text-cyan-600 dark:text-cyan-400">
+                    {localAndCloudItems.length} {localAndCloudItems.length === 1 ? "item" : "items"}
+                  </span>
                 </div>
-              </section>
-            ))}
+                <p className="mt-0.5 text-xs text-muted">
+                  Present in both local browser and Cloudflare R2. Cloud persistence verified; complete local cleanup to transition to Cloud Only.
+                </p>
+              </div>
+            </div>
+
+            {localAndCloudItems.length > 0 && (
+              <button
+                type="button"
+                onClick={handleCompleteAllLocalCleanups}
+                disabled={isCleaningBatch}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white font-semibold text-xs px-3.5 py-1.5 transition self-start sm:self-center shadow-xs disabled:opacity-50"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>{isCleaningBatch ? "Cleaning…" : "Complete All Local Cleanups"}</span>
+              </button>
+            )}
           </div>
+
+          {localAndCloudItems.length > 0 ? (
+            <div className="space-y-8 pl-1">
+              {localAndCloudDailyGroups.map((group) => (
+                <section key={`local-cloud-${group.key}`} className="space-y-4">
+                  <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                    <div className="flex h-6 w-6 items-center justify-center rounded bg-cyan-500/15 text-cyan-600 dark:text-cyan-400">
+                      <Calendar className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-xs font-bold tracking-wider uppercase text-cyan-600 dark:text-cyan-400">
+                      {group.label}
+                    </h3>
+                    <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                      {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                    </span>
+                    <div className="h-px flex-1 bg-cyan-500/20" />
+                  </div>
+
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {group.items.map((item) => (
+                      <SavedItemCard
+                        key={`local-cloud-${item.itemType}-${item.platformItemId}`}
+                        item={item}
+                        storageState="LOCAL_AND_CLOUD"
+                        onRemove={() => toggleItemSaved(item)}
+                        onCompleteLocalCleanup={() => handleSingleLocalCleanup(item)}
+                        onAddToPlaylist={() => setPlaylistTarget(item)}
+                        onInspectJson={() => setInspectedItem(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="p-6 text-center rounded-xl border border-dashed border-border/70 text-xs text-muted">
+              No items pending local cleanup. All synchronized items are securely retained in Cloudflare R2.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 3 — FROM R2 CLOUD — COMPLETE ARCHIVE (CLOUD_ONLY)            */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {(storageView === "all" || storageView === "cloud") && (
+        <div className="space-y-4 pt-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 shadow-xs">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-500 font-bold shadow-xs">
+                <Cloud className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-foreground tracking-tight">
+                    FROM R2 CLOUD — COMPLETE ARCHIVE
+                  </h2>
+                  <span className="inline-flex items-center rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    {cloudLoading ? "Loading…" : `${cloudTotalCount || cloudArchiveItems.length} records`}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-muted">
+                  Complete historical archive discovered from Cloudflare R2 New Bucket, including older generations and manifest parts.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void fetchCloudItems()}
+              disabled={cloudLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface hover:bg-surface-muted px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground transition self-start sm:self-center disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${cloudLoading ? "animate-spin text-emerald-500" : ""}`} />
+              <span>Refresh Archive</span>
+            </button>
+          </div>
+
+          {!cloudLoading && cloudArchiveItems.length > 0 && (
+            <div className="space-y-8 pl-1">
+              {cloudArchiveDailyGroups.map((group) => (
+                <section key={`cloud-archive-${group.key}`} className="space-y-4">
+                  <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                    <div className="flex h-6 w-6 items-center justify-center rounded bg-emerald-500/15 text-emerald-500">
+                      <Calendar className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-xs font-bold tracking-wider uppercase text-emerald-500">
+                      {group.label}
+                    </h3>
+                    <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                      {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                    </span>
+                    <div className="h-px flex-1 bg-emerald-500/20" />
+                  </div>
+
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {group.items.map((item) => (
+                      <SavedItemCard
+                        key={`cloud-archive-${item.itemType}-${item.platformItemId}`}
+                        item={item}
+                        storageState={
+                          (item as unknown as Record<string, unknown>)._storageState as SavedItemStorageState || "CLOUD_ONLY"
+                        }
+                        onRemove={() => toggleItemSaved(item)}
+                        onCompleteLocalCleanup={
+                          localItemsMap.has(item.platformItemId)
+                            ? () => handleSingleLocalCleanup(item)
+                            : undefined
+                        }
+                        onAddToPlaylist={() => setPlaylistTarget(item)}
+                        onInspectJson={() => setInspectedItem(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+
+              {/* Progressive Cloud Pagination Button */}
+              {cloudHasMore && (
+                <div className="flex flex-col items-center justify-center py-6 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (cloudNextOffset !== null) {
+                        void fetchCloudItems({ offset: cloudNextOffset, append: true });
+                      }
+                    }}
+                    disabled={cloudLoadingMore}
+                    className="inline-flex items-center gap-2 rounded-xl bg-surface hover:bg-surface-muted border border-border px-6 py-2.5 text-xs font-bold text-foreground transition shadow-xs hover:shadow-md disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${cloudLoadingMore ? "animate-spin text-emerald-500" : ""}`} />
+                    <span>
+                      {cloudLoadingMore
+                        ? "Loading More Cloud Items…"
+                        : `Load More Historical Items (Showing ${cloudArchiveItems.length} of ${cloudTotalCount})`}
+                    </span>
+                  </button>
+                  <p className="text-[11px] text-muted">
+                    Progressively reads earlier generations and manifest parts without replacing earlier results.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!cloudLoading && cloudArchiveItems.length === 0 && !cloudError && (
+            <div className="p-8 text-center rounded-xl border border-dashed border-border/70 text-xs text-muted">
+              No cloud archive items found in Cloudflare R2.
+            </div>
+          )}
         </div>
       )}
 
@@ -1231,23 +1458,20 @@ export function SavedItemsWorkspace() {
 }
 
 /**
- * Unified item card for Saved Items supporting Videos, Shorts, Channels, and Playlists.
- * Features unambiguous provenance badges:
- *   - "LOCAL & CLOUD" (Cyan): Saved locally and committed in Cloudflare R2
- *   - "LOCAL BROWSER" (Amber): Saved locally in this browser; waiting for cloud sync
- *   - "R2 CLOUD" (Emerald): Confirmed multi-device persistence in Cloudflare R2
- *   - "Before App Updating" (Purple): Historical archive
+ * Enhanced Saved Item Card with 3 Explicit Storage Badges and Local Cleanup Action.
  */
 function SavedItemCard({
   item,
-  isLocalOnly,
+  storageState,
   onRemove,
+  onCompleteLocalCleanup,
   onAddToPlaylist,
   onInspectJson,
 }: {
   item: NormalizedYouTubeDiscoveryItem;
-  isLocalOnly?: boolean;
+  storageState: SavedItemStorageState;
   onRemove: () => void;
+  onCompleteLocalCleanup?: () => void;
   onAddToPlaylist: () => void;
   onInspectJson: () => void;
 }) {
@@ -1262,15 +1486,7 @@ function SavedItemCard({
     : `/watch/${item.platformItemId}`;
 
   const rawItem = item as unknown as Record<string, unknown>;
-  const sourceLocation = rawItem._sourceLocation as string | undefined;
-
-  const isBoth = sourceLocation === "BOTH";
-  const isLocal =
-    isLocalOnly ??
-    (sourceLocation === "LOCAL" ||
-      rawItem._localStatus === "LOCAL_PENDING" ||
-      rawItem._localStatus === "PENDING_SYNC" ||
-      (rawItem._syncStatus === "LOCAL" && rawItem._localStatus !== "COMMITTED"));
+  const isHistorical = Boolean(rawItem._isHistorical || rawItem.isBeforeAppUpdating);
 
   const originLabel: string | null =
     typeof rawItem._originDeviceLabel === "string"
@@ -1318,35 +1534,38 @@ function SavedItemCard({
           )}
         </div>
 
-        {/* Top-Right: Explicit Storage Provenance Badge */}
+        {/* Top-Right: Explicit 3-State Storage Provenance Badge */}
         <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
-          {Boolean(rawItem.isBeforeAppUpdating) ? (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-600 text-white shadow-xs">
+          {isHistorical ? (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-600 text-white shadow-xs"
+              title="Historical saved item preserved from earlier versions in Cloudflare R2"
+            >
               <Sparkles className="h-3 w-3" />
-              Before App Updating
+              LEGACY CLOUD RECORD
             </span>
-          ) : isBoth ? (
+          ) : storageState === "LOCAL_AND_CLOUD" ? (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-cyan-600 text-white shadow-xs"
-              title="Persisted both in this local browser and committed to Cloudflare R2"
+              title="Verified in Cloudflare R2; local browser copy cleanup pending"
             >
               <HardDrive className="h-2.5 w-2.5" />
               <span>+</span>
               <Cloud className="h-2.5 w-2.5" />
-              <span>LOCAL & CLOUD</span>
+              <span>LOCAL & R2 CLOUD</span>
             </span>
-          ) : isLocal ? (
+          ) : storageState === "LOCAL_ONLY" ? (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500 text-black shadow-xs"
-              title="Saved locally in browser storage on this device; pending cloud backup"
+              title="Saved locally in browser storage on this device; awaiting R2 upload"
             >
               <HardDrive className="h-3 w-3" />
-              LOCAL BROWSER
+              LOCAL ONLY
             </span>
           ) : (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-600 text-white shadow-xs"
-              title="Committed to Cloudflare R2 object storage"
+              title="Authoritatively committed in Cloudflare R2 object storage"
             >
               <Cloud className="h-3 w-3" />
               R2 CLOUD
@@ -1414,9 +1633,9 @@ function SavedItemCard({
           {typeof item.subscriberCount === "number" && (
             <span className="font-medium">{formatCompactCount(item.subscriberCount)} subs</span>
           )}
-          {item.publishedAt && (
+          {item.savedAt && (
             <span className="ml-auto text-[11px] text-muted/80">
-              {formatDate(item.publishedAt)}
+              {formatDate(item.savedAt)}
             </span>
           )}
         </div>
@@ -1425,7 +1644,7 @@ function SavedItemCard({
         <ExpandableDescription description={item.description} />
 
         {/* Card Footer Actions */}
-        <div className="mt-4 pt-3 flex items-center justify-between border-t border-border/60">
+        <div className="mt-4 pt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60">
           <div className="flex items-center gap-1">
             {/* Add to personal playlist button */}
             <button
@@ -1462,16 +1681,31 @@ function SavedItemCard({
             </button>
           </div>
 
-          {/* Remove from Saved Items */}
-          <button
-            type="button"
-            onClick={onRemove}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs text-muted hover:bg-danger/10 hover:text-danger transition"
-            title="Remove from Saved Items"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>Remove</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Complete Local Cleanup Button for LOCAL_AND_CLOUD items */}
+            {storageState === "LOCAL_AND_CLOUD" && onCompleteLocalCleanup && (
+              <button
+                type="button"
+                onClick={onCompleteLocalCleanup}
+                className="inline-flex items-center gap-1 rounded-md bg-cyan-600/15 hover:bg-cyan-600 text-cyan-600 hover:text-white dark:text-cyan-400 px-2 py-1 text-[11px] font-semibold transition"
+                title="Remove local browser copy (already verified in R2 Cloud)"
+              >
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Clean Local</span>
+              </button>
+            )}
+
+            {/* Remove from Saved Items */}
+            <button
+              type="button"
+              onClick={onRemove}
+              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs text-muted hover:bg-danger/10 hover:text-danger transition"
+              title="Remove from Saved Items"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Remove</span>
+            </button>
+          </div>
         </div>
       </div>
     </Card>

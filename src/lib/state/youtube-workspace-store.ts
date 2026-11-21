@@ -73,6 +73,8 @@ interface YouTubeWorkspaceStore {
   setCurrentManifest: (manifest: YouTubeManifest | null) => void;
   markManifestSaved: (manifestId: string) => void;
   toggleItemSaved: (item: NormalizedYouTubeDiscoveryItem) => void;
+  removeLocalItemAfterCloudCommit: (platformItemId: string) => void;
+  removeLocalItemsBatchAfterCloudCommit: (platformItemIds: string[]) => void;
   saveSearch: (search: Omit<SavedSearch, "id" | "createdAt">) => SavedSearch;
   updateSavedSearch: (id: string, patch: Partial<SavedSearch>) => void;
   deleteSavedSearch: (id: string) => void;
@@ -235,6 +237,22 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
 
           return { savedItems: [itemToSave, ...state.savedItems] };
         }),
+      removeLocalItemAfterCloudCommit: (platformItemId: string) => {
+        const cleanId = platformItemId.replace(/^youtube:/, "");
+        set((state) => ({
+          savedItems: state.savedItems.filter(
+            (item) => (item.platformItemId || item.id?.replace(/^youtube:/, "")) !== cleanId
+          ),
+        }));
+      },
+      removeLocalItemsBatchAfterCloudCommit: (platformItemIds: string[]) => {
+        const cleanSet = new Set(platformItemIds.map((id) => id.replace(/^youtube:/, "")));
+        set((state) => ({
+          savedItems: state.savedItems.filter(
+            (item) => !cleanSet.has(item.platformItemId || item.id?.replace(/^youtube:/, "") || "")
+          ),
+        }));
+      },
       saveSearch: (searchData) => {
         const id = `search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newSearch: SavedSearch = {

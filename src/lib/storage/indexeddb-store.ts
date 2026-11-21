@@ -1434,6 +1434,108 @@ export async function markEntitiesCommitted(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Safe Local Saved Items Cleanup After Confirmed R2 Cloud Persistence
+ * ──────────────────────────────────────────────────────────────────────────
+ * Scope: Workstream 1 & 5 — Local Browser Cleanup of Verified Cloud Records.
+ *
+ * Guarantees:
+ *   1. Surgical deletion: Removes ONLY the exact specified saved item record
+ *      from `entities_saved_items` in IndexedDB.
+ *   2. Zero side effects: Never touches other saved items, never touches other
+ *      datasets, never touches outbox operations belonging to other mutations.
+ *   3. Non-destructive: Does NOT create a cloud DELETE tombstone, because the
+ *      record is safely and permanently committed in Cloudflare R2.
+ *   4. Transition to CLOUD_ONLY: Removing the local browser copy transitions
+ *      the item cleanly from `LOCAL_AND_CLOUD` to `CLOUD_ONLY` in /ssaved.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+export async function removeLocalSavedItem(
+  ownerId: string,
+  platformItemId: string
+): Promise<boolean> {
+  const cleanOwner = ownerId?.trim();
+  const cleanPlatformId = platformItemId?.trim().replace(/^youtube:/, "");
+  if (!cleanOwner || !cleanPlatformId) return false;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_ITEMS]);
+    const store = tx.objectStore(IDB_STORES.SAVED_ITEMS);
+
+    const candidateKeys: Array<[string, string]> = [
+      [cleanOwner, cleanPlatformId],
+      [cleanOwner, `youtube:${cleanPlatformId}`],
+    ];
+
+    let deleted = false;
+    const tryDelete = (idx: number) => {
+      if (idx >= candidateKeys.length) return;
+      const req = store.delete(candidateKeys[idx]);
+      req.onsuccess = () => {
+        deleted = true;
+        tryDelete(idx + 1);
+      };
+      req.onerror = () => {
+        tryDelete(idx + 1);
+      };
+    };
+    tryDelete(0);
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "SAVED_ITEMS", entityId: cleanPlatformId, action: "LOCAL_CLEANUP" },
+          })
+        );
+      }
+      resolve(deleted);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to delete local saved item"));
+  });
+}
+
+/**
+ * Batch version of removeLocalSavedItem for performing bulk local cleanup
+ * after verifying multiple cloud receipts.
+ */
+export async function removeLocalSavedItemsBatch(
+  ownerId: string,
+  platformItemIds: string[]
+): Promise<number> {
+  const cleanOwner = ownerId?.trim();
+  if (!cleanOwner || !Array.isArray(platformItemIds) || platformItemIds.length === 0) return 0;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_ITEMS]);
+    const store = tx.objectStore(IDB_STORES.SAVED_ITEMS);
+    let count = 0;
+
+    for (const rawId of platformItemIds) {
+      const cleanId = String(rawId || "").trim().replace(/^youtube:/, "");
+      if (!cleanId) continue;
+      store.delete([cleanOwner, cleanId]);
+      store.delete([cleanOwner, `youtube:${cleanId}`]);
+      count++;
+    }
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "SAVED_ITEMS", count, action: "LOCAL_CLEANUP_BATCH" },
+          })
+        );
+      }
+      resolve(count);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to batch delete local saved items"));
+  });
+}
+
+/**
  * Reconciles any interrupted sync batches or hanging IN_FLIGHT operations on startup.
  * Guarantees zero data loss if a tab closed or browser crashed during cloud sync.
  */

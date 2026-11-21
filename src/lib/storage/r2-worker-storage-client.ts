@@ -437,6 +437,57 @@ export class R2WorkerStorageClient {
   }
 
   /**
+   * Enumerate ALL objects under a prefix by following R2 pagination cursors.
+   * Continues until truncated === false or cursor is exhausted.
+   * Eliminates the 100-item ceiling and guarantees complete discovery of historical objects.
+   */
+  async listAllObjects(
+    bucketKind: R2BucketKind,
+    prefix = "",
+    options?: {
+      maxObjects?: number;
+      delimiter?: string;
+      storageOwnerUuid?: string;
+    }
+  ): Promise<{ objects: R2WorkerObjectMeta[]; pagesCount: number; truncated: boolean }> {
+    const cleanPrefix = prefix.replace(/^\/+/, "");
+    const allObjects: R2WorkerObjectMeta[] = [];
+    let cursor: string | undefined = undefined;
+    let pagesCount = 0;
+    const maxObjects = options?.maxObjects || 25000;
+
+    do {
+      pagesCount++;
+      const res = await this.listObjects(bucketKind, cleanPrefix, {
+        cursor,
+        limit: 1000,
+        delimiter: options?.delimiter,
+        storageOwnerUuid: options?.storageOwnerUuid,
+      });
+
+      if (Array.isArray(res.objects) && res.objects.length > 0) {
+        allObjects.push(...res.objects);
+      }
+
+      if (allObjects.length >= maxObjects) {
+        return {
+          objects: allObjects.slice(0, maxObjects),
+          pagesCount,
+          truncated: true,
+        };
+      }
+
+      cursor = res.truncated && res.cursor ? res.cursor : undefined;
+    } while (cursor);
+
+    return {
+      objects: allObjects,
+      pagesCount,
+      truncated: false,
+    };
+  }
+
+  /**
    * Delete an object.
    * Safety: NEW Worker allows deleting ONLY temporary objects (`/temp/`).
    * OLD Worker rejects any deletion of historical manifests.
@@ -515,6 +566,13 @@ export class R2WorkerStorageClient {
     storageOwnerUuid?: string
   ) {
     return this.listObjects("NEW", prefix, { cursor, limit, storageOwnerUuid });
+  }
+
+  async listAllNewObjects(
+    prefix?: string,
+    options?: { maxObjects?: number; delimiter?: string; storageOwnerUuid?: string }
+  ) {
+    return this.listAllObjects("NEW", prefix, options);
   }
 
   async deleteTempObject(key: string, storageOwnerUuid?: string) {

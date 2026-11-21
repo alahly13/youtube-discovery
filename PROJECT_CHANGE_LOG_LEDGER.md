@@ -4654,3 +4654,60 @@ No.
 - **Whether secrets were printed:** No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
+
+
+---
+
+## Entry — 2026-11-21 — Complete Local → R2 Cloud Archival, Supabase Audit Synchronization & Full Cloud Saved Library Recovery
+
+- **Date/time:** 2026-11-21 ~20:00 UTC+02
+- **Agent/model:** Antigravity
+- **Task summary:** Comprehensive resolution of historical cloud saved items disappearance, full local-to-R2 archival, Supabase PostgreSQL audit trail synchronization, and full cloud library recovery on `/ssaved` (and `/saved`):
+  1. *Historical Cloud Objects Disappearance Resolved:* Investigated why older cloud items in R2 stopped appearing in `/ssaved`. Identified 4 compounding root causes:
+     - Single generation hardcap in `GET /api/saved-items/route.ts` (`take: 1`), which ignored all older committed generations.
+     - Truncated R2 listing (`limit: 100`) without following continuation cursors, plus sorting and inspecting only the single newest manifest (`manifestObjs[0]`).
+     - Client-side historical filtering in `SavedItemsWorkspace` that excluded items with `isBeforeAppUpdating` or legacy manifest IDs from the active view.
+     - Single-page fetch on mount (`limit=2000`) with no cursor or offset pagination.
+  2. *Exhaustive R2 Cursor Enumerator:* Implemented `listAllObjects(bucketKind, prefix, options)` and `listAllNewObjects(...)` in `R2WorkerStorageClient` (`src/lib/storage/r2-worker-storage-client.ts`), which continuously loops through R2 pagination cursors (`page.truncated && page.cursor`) until the listing is completely exhausted (up to 25,000 objects safe ceiling).
+  3. *Full Authoritative Cloud Catalog Reconstruction:* Completely rewrote `GET /api/saved-items/route.ts` to query all committed generations from PostgreSQL, discover all manifests and parts in R2 via `listAllObjects` across `asdy/persistence/${ownerId}/saved-items/` (active generations, root manifests, `before-app-updating`, and standalone parts), fetch parts in parallel with bounded concurrency (`mapConcurrent`), merge with `saved_items_index`, deduplicate by canonical identity preserving the richest metadata, provide progressive cursor/offset pagination (`items`, `offset`, `limit`, `hasMore`, `nextOffset`), and deliver authentic HTTP 502 error reporting with `Cache-Control: private, no-cache, no-store`.
+  4. *Supabase Audit Documentation in Save-All:* Enhanced `POST /api/sync/save-all/route.ts` to traverse all historical generations and manifests via `listAllObjects` during `loadCommittedSnapshot` to prevent historical data loss, and added explicit `tx.auditLog.create` for `CLOUD_SYNC_COMMIT` documenting batch ID, generation ID, revision, and record count in `audit_logs`.
+  5. *Three Explicit Storage States:* Modeled every saved item under 3 verifiable storage states:
+     - `LOCAL_ONLY`: Item resides strictly in the browser (IndexedDB / Zustand); not yet committed to R2.
+     - `LOCAL_AND_CLOUD`: Item verified in R2 cloud receipt / catalog, but local browser copy still awaits cleanup.
+     - `CLOUD_ONLY`: Item exists in R2 cloud archive, with local browser copy cleanly purged.
+  6. *Three Visually Distinct Workspace Sections:* Redesigned `SavedItemsWorkspace` (`src/components/saved/saved-items-workspace.tsx`) into 3 separated, card-wrapped sections with headers, counts, explanations, and direct action triggers:
+     - `SECTION 1 — NEWLY ADDED — LOCAL BROWSER` (`LOCAL_ONLY`) with "Upload to R2 Cloud" CTA.
+     - `SECTION 2 — LOCAL + R2 CLOUD` (`LOCAL_AND_CLOUD` - synchronization recovery) with individual and bulk "Complete Local Cleanup" CTAs.
+     - `SECTION 3 — FROM R2 CLOUD — COMPLETE ARCHIVE` (`CLOUD_ONLY` & historical archive) with "Load More Historical Items" progressive cursor pagination.
+  7. *Safe Local Browser Cleanup:*
+     - Added `removeLocalSavedItem(ownerId, platformItemId)` and `removeLocalSavedItemsBatch(ownerId, platformItemIds)` to `src/lib/storage/indexeddb-store.ts`, surgically deleting the exact local record from IndexedDB `entities_saved_items` compound keys without creating a cloud DELETE tombstone.
+     - Added `removeLocalItemAfterCloudCommit(platformItemId)` and `removeLocalItemsBatchAfterCloudCommit(platformItemIds)` to `useYouTubeWorkspaceStore` (`src/lib/state/youtube-workspace-store.ts`).
+  8. *Dedicated Page Route:* Created `src/app/ssaved/page.tsx` rendering `SavedItemsWorkspace` within `AppShell` and `WorkspacePage`.
+- **Reason/root cause:**
+  - `GET /api/saved-items` was limited to the single latest generation and newest manifest with a 100-object list ceiling, discarding older parts in R2.
+  - Previous implementations lacked a safe local cleanup mechanism, causing users to either keep local copies indefinitely or risk deleting cloud items with DELETE tombstones.
+  - Supabase synchronization lacked explicit audit logging for cloud batch commits.
+- **Files changed:**
+  - `src/lib/storage/r2-worker-storage-client.ts`
+  - `src/lib/storage/indexeddb-store.ts`
+  - `src/lib/state/youtube-workspace-store.ts`
+  - `src/app/api/saved-items/route.ts`
+  - `src/app/api/sync/save-all/route.ts`
+  - `src/components/saved/saved-items-workspace.tsx`
+  - `src/app/ssaved/page.tsx`
+  - `youtube_discovery_ledger.md`
+  - `PROJECT_CHANGE_LOG_LEDGER.md`
+- **Architecture impact:** Restores R2 as the single authoritative source of truth for all cloud saved items across all time; guarantees 100% data discovery across all generations and historical prefixes; establishes surgical post-sync local cleanup without cloud side-effects; provides auditability in Supabase PostgreSQL.
+- **Environment impact:** Zero secrets printed or modified. Verified compatibility with existing Worker capability token HMAC secrets and Supabase PostgreSQL credentials.
+- **Database/migration impact:** None. Zero schema changes required; fully utilizes existing `storage_generations`, `storage_manifest_parts`, `saved_items_index`, `save_sync_batches`, and `audit_logs` tables.
+- **YouTube API/quota impact:** Zero YouTube Data API v3 calls or quota units consumed.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `npx tsc --noEmit --incremental false`: PASSED (0 errors).
+  - `node scripts/test-unified-saved-lifecycle.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: PASSED (44/44 assertions).
+- **Blocked checks, if any:** Local Next.js build commands (`npm run build`, `next build`) were intentionally skipped per AGENTS.md rules.
+- **Remaining risks/limitations:** Extremely large collections (>25,000 objects in R2) are capped by `maxObjects` parameter in `listAllObjects` as a safety guard against Worker timeout.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.

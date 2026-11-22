@@ -60,6 +60,87 @@ export type VerificationSubstate =
   | "SUPABASE_VERIFIED"
   | "MANIFEST_VERIFIED";
 
+/**
+ * Generation & Part Artifact Verification Data Contracts (2026 SaaS)
+ * Comparison unit is Generation + Part files, NOT individual records.
+ */
+export interface PartReconciliationResult {
+  ownerId: string;
+  datasetId: string;
+  datasetType: string;
+  generationId: string;
+  generationNumber: number;
+  partId: string;
+  partNumber: number;
+  partKey: string;
+
+  indexedDB: {
+    batchExists: boolean;
+    batchId?: string;
+    snapshotMatches: boolean;
+    recordCount: number;
+    hasPendingMutations: boolean;
+    matchingLocalRecordIds: string[];
+  };
+
+  r2: {
+    manifestExists: boolean;
+    partExists: boolean;
+    partReadable: boolean;
+    checksumMatches: boolean;
+    byteSizeMatches: boolean;
+    itemCountMatches: boolean;
+    ownerMatches: boolean;
+    generationMatches: boolean;
+    actualByteCount?: number;
+    actualSha256?: string;
+  };
+
+  supabase: {
+    generationCommitted: boolean;
+    partReceiptExists: boolean;
+    ownerMatches: boolean;
+    objectKeyMatches: boolean;
+    checksumMatches: boolean;
+    itemCountMatches: boolean;
+    registeredSha256?: string;
+    registeredByteCount?: number;
+  };
+
+  cleanupEligible: boolean;
+  isHistorical?: boolean;
+  reasons: string[];
+}
+
+export interface GenerationReconciliationSummary {
+  generationId: string;
+  generationNumber: number;
+  state: string;
+  totalParts: number;
+  totalRecords: number;
+  fullyVerified: boolean;
+  cleanupEligible: boolean;
+  isHistorical?: boolean;
+  parts: PartReconciliationResult[];
+}
+
+export interface ArtifactReconciliationStats {
+  generationsInspected?: number;
+  manifestsInspected?: number;
+  partsInspected?: number;
+  partsVerified?: number;
+  partsEligibleForCleanup?: number;
+  partsWithConflicts?: number;
+  missingOrInvalidR2Objects?: number;
+  incompleteOrUncommittedSupabaseArtifacts?: number;
+  localRecordsEligibleForCleanup?: number;
+  totalLocalRecords?: number;
+  totalCloudRecords?: number;
+  localOnlyCount?: number;
+  localAndCloudCount?: number;
+  cloudOnlyCount?: number;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. StorageStatusBadge
 // ─────────────────────────────────────────────────────────────────────────────
@@ -284,6 +365,9 @@ interface StorageComparisonPanelProps {
   cleanupEligibleCount: number;
   onOpenCleanupDialog: () => void;
   datasetLabel: string;
+  generationSummaries?: GenerationReconciliationSummary[];
+  partResults?: PartReconciliationResult[];
+  artifactStats?: ArtifactReconciliationStats;
 }
 
 export function StorageComparisonPanel({
@@ -293,8 +377,17 @@ export function StorageComparisonPanel({
   cleanupEligibleCount,
   onOpenCleanupDialog,
   datasetLabel,
+  generationSummaries = [],
+  partResults = [],
+  artifactStats,
 }: StorageComparisonPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showMatrix, setShowMatrix] = useState(false);
+
+  const totalParts = artifactStats?.partsInspected ?? partResults.length;
+  const verifiedParts = artifactStats?.partsVerified ?? partResults.filter((p) => p.r2.partReadable && p.r2.checksumMatches && p.supabase.partReceiptExists).length;
+  const eligibleParts = artifactStats?.partsEligibleForCleanup ?? partResults.filter((p) => p.cleanupEligible).length;
+  const conflictsCount = (artifactStats?.missingOrInvalidR2Objects ?? 0) + (artifactStats?.incompleteOrUncommittedSupabaseArtifacts ?? 0) + (artifactStats?.partsWithConflicts ?? 0);
 
   return (
     <Card className="overflow-hidden border border-border/80 bg-surface shadow-xs">
@@ -309,11 +402,11 @@ export function StorageComparisonPanel({
                 STORAGE INTEGRITY CENTER
               </h3>
               <span className="rounded-full bg-border/60 px-2 py-0.2 text-[10px] font-semibold text-muted">
-                3-Way Reconciliation
+                Generation & Part Verification
               </span>
             </div>
             <p className="mt-1 text-xs text-muted">
-              Compares local IndexedDB, Cloudflare R2 manifests, and Supabase PostgreSQL for {datasetLabel}.
+              Artifact-level 3-way check across IndexedDB batches, Cloudflare R2 manifests/parts, and Supabase PostgreSQL for {datasetLabel}.
             </p>
           </div>
         </div>
@@ -333,7 +426,7 @@ export function StorageComparisonPanel({
             ) : (
               <RefreshCw className="h-3.5 w-3.5" />
             )}
-            <span>{isComparing ? "Comparing…" : "Compare Local + R2 + Supabase"}</span>
+            <span>{isComparing ? "Verifying Artifacts…" : "Verify Generations & Parts"}</span>
           </Button>
 
           {cleanupEligibleCount > 0 && (
@@ -362,36 +455,206 @@ export function StorageComparisonPanel({
       </div>
 
       {isExpanded && (
-        <div className="border-t border-border/60 bg-surface-muted/40 p-4 text-xs text-muted sm:p-5">
+        <div className="border-t border-border/60 bg-surface-muted/40 p-4 text-xs text-muted sm:p-5 space-y-4">
+          {/* Architecture Pillars */}
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-border/60 bg-surface p-3">
-              <div className="font-semibold text-foreground">1. Local IndexedDB</div>
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <HardDrive className="h-3.5 w-3.5 text-amber-500" />
+                <span>1. Local IndexedDB</span>
+              </div>
               <p className="mt-1 text-[11px] leading-relaxed">
-                Source of offline durability. Records are staged locally and immediately queryable.
+                Offline durability layer. Local batches map to verified generation parts; pending outbox operations block premature cleanup.
               </p>
             </div>
             <div className="rounded-lg border border-border/60 bg-surface p-3">
-              <div className="font-semibold text-foreground">2. Cloudflare R2</div>
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <Cloud className="h-3.5 w-3.5 text-cyan-500" />
+                <span>2. Cloudflare R2</span>
+              </div>
               <p className="mt-1 text-[11px] leading-relaxed">
-                Authoritative immutable generational manifests and parts. Permanent multi-device truth.
+                Authoritative immutable generations (<code className="text-[10px]">manifest.json</code> + <code className="text-[10px]">parts/part-*.json</code>). Verified by SHA-256 and byte size.
               </p>
             </div>
             <div className="rounded-lg border border-border/60 bg-surface p-3">
-              <div className="font-semibold text-foreground">3. Supabase PostgreSQL</div>
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5 text-emerald-500" />
+                <span>3. Supabase PostgreSQL</span>
+              </div>
               <p className="mt-1 text-[11px] leading-relaxed">
-                Relational search indexes, device provenance, generational lineage, and audit trails.
+                Canonical receipt registry (<code className="text-[10px]">storage_generations</code> &amp; <code className="text-[10px]">storage_manifest_parts</code>) guaranteeing transaction commit.
               </p>
             </div>
           </div>
+
+          {/* Artifact Telemetry Bar */}
+          {lastComparedAt && (
+            <div className="rounded-lg border border-border/60 bg-surface p-3.5">
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
+                <div className="font-semibold text-foreground text-xs flex items-center gap-1.5">
+                  <Layers className="h-3.5 w-3.5 text-primary" />
+                  <span>Artifact Verification Telemetry</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMatrix(!showMatrix)}
+                  className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-1"
+                >
+                  <span>{showMatrix ? "Hide Artifact Matrix" : "View Artifact Matrix"}</span>
+                  {showMatrix ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5 text-center">
+                <div className="rounded border border-border/40 bg-surface-muted/30 p-2">
+                  <div className="text-[10px] uppercase font-bold text-muted">Generations</div>
+                  <div className="text-base font-extrabold text-foreground mt-0.5">
+                    {artifactStats?.generationsInspected ?? generationSummaries.length}
+                  </div>
+                </div>
+                <div className="rounded border border-border/40 bg-surface-muted/30 p-2">
+                  <div className="text-[10px] uppercase font-bold text-muted">Parts Inspected</div>
+                  <div className="text-base font-extrabold text-foreground mt-0.5">
+                    {totalParts}
+                  </div>
+                </div>
+                <div className="rounded border border-border/40 bg-surface-muted/30 p-2">
+                  <div className="text-[10px] uppercase font-bold text-emerald-500">Parts Verified</div>
+                  <div className="text-base font-extrabold text-emerald-500 mt-0.5">
+                    {verifiedParts}
+                  </div>
+                </div>
+                <div className="rounded border border-border/40 bg-surface-muted/30 p-2">
+                  <div className="text-[10px] uppercase font-bold text-cyan-500">Cleanup Ready Parts</div>
+                  <div className="text-base font-extrabold text-cyan-500 mt-0.5">
+                    {eligibleParts}
+                  </div>
+                </div>
+                <div className="rounded border border-border/40 bg-surface-muted/30 p-2 col-span-2 sm:col-span-1">
+                  <div className="text-[10px] uppercase font-bold text-muted">Conflicts / Missing</div>
+                  <div className={`text-base font-extrabold mt-0.5 ${conflictsCount > 0 ? "text-rose-500" : "text-emerald-500"}`}>
+                    {conflictsCount}
+                  </div>
+                </div>
+              </div>
+
+              {/* Expandable Generation & Part Verification Matrix Table */}
+              {showMatrix && (
+                <div className="mt-3 overflow-x-auto border-t border-border/40 pt-3">
+                  {generationSummaries.length === 0 && partResults.length === 0 ? (
+                    <p className="text-[11px] text-muted text-center py-2">
+                      No cloud generation artifacts loaded yet. Click &quot;Verify Generations &amp; Parts&quot; above.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {generationSummaries.map((gen) => (
+                        <div
+                          key={gen.generationId}
+                          className="rounded-lg border border-border/60 bg-surface-muted/20 p-2.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 mb-2 border-b border-border/40">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-foreground text-[11px]">
+                                Generation #{gen.generationNumber} ({gen.generationId.slice(0, 16)}…)
+                              </span>
+                              {gen.isHistorical && (
+                                <span className="rounded bg-purple-500/15 px-1.5 py-0.2 text-[10px] font-bold text-purple-400">
+                                  Historical Archive
+                                </span>
+                              )}
+                              <span className="rounded bg-emerald-500/15 px-1.5 py-0.2 text-[10px] font-bold text-emerald-500">
+                                {gen.state}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-muted">
+                              {gen.totalParts} part{gen.totalParts !== 1 ? "s" : ""} · {gen.totalRecords} record{gen.totalRecords !== 1 ? "s" : ""}
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            {gen.parts.map((p) => (
+                              <div
+                                key={p.partKey}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded bg-surface p-2 text-[11px] border border-border/40"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-muted text-[10px]">
+                                    {p.partKey.split("/").pop()}
+                                  </span>
+                                  <span className="text-muted">
+                                    ({p.r2.actualByteCount ? `${(p.r2.actualByteCount / 1024).toFixed(1)} KB` : "size unk"} · {p.indexedDB.recordCount} records)
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                  {/* R2 status */}
+                                  <span
+                                    className={`inline-flex items-center gap-1 ${p.r2.partReadable && p.r2.checksumMatches ? "text-emerald-500" : "text-amber-500"}`}
+                                    title={`R2: ${p.r2.partReadable ? "Readable" : "Missing"}, SHA-256: ${p.r2.checksumMatches ? "Matches" : "Mismatch"}`}
+                                  >
+                                    <Cloud className="h-3 w-3" />
+                                    <span>R2 SHA-256</span>
+                                    {p.r2.checksumMatches ? <CheckCircle2 className="h-2.5 w-2.5" /> : <AlertCircle className="h-2.5 w-2.5" />}
+                                  </span>
+
+                                  {/* Supabase status */}
+                                  <span
+                                    className={`inline-flex items-center gap-1 ${p.supabase.partReceiptExists && p.supabase.checksumMatches ? "text-emerald-500" : "text-amber-500"}`}
+                                    title={`Supabase: ${p.supabase.partReceiptExists ? "Receipt Committed" : "Receipt Missing"}`}
+                                  >
+                                    <Database className="h-3 w-3" />
+                                    <span>Supabase Receipt</span>
+                                    {p.supabase.partReceiptExists ? <CheckCircle2 className="h-2.5 w-2.5" /> : <AlertCircle className="h-2.5 w-2.5" />}
+                                  </span>
+
+                                  {/* IndexedDB status */}
+                                  <span
+                                    className={`inline-flex items-center gap-1 ${!p.indexedDB.hasPendingMutations ? "text-emerald-500" : "text-amber-500"}`}
+                                    title={`IndexedDB: ${p.indexedDB.hasPendingMutations ? "Pending outbox mutations" : "Snapshot verified"}`}
+                                  >
+                                    <HardDrive className="h-3 w-3" />
+                                    <span>IndexedDB</span>
+                                    {!p.indexedDB.hasPendingMutations ? <CheckCircle2 className="h-2.5 w-2.5" /> : <Clock className="h-2.5 w-2.5" />}
+                                  </span>
+
+                                  {/* Status Pill */}
+                                  {p.cleanupEligible ? (
+                                    <span className="rounded bg-emerald-500/15 px-1.5 py-0.2 text-[10px] font-bold text-emerald-500">
+                                      Cleanup Eligible
+                                    </span>
+                                  ) : p.isHistorical ? (
+                                    <span className="rounded bg-purple-500/15 px-1.5 py-0.2 text-[10px] font-bold text-purple-400">
+                                      Historical Safe
+                                    </span>
+                                  ) : (
+                                    <span className="rounded bg-amber-500/15 px-1.5 py-0.2 text-[10px] font-bold text-amber-500" title={p.reasons.join(", ")}>
+                                      Audit Pending
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {lastComparedAt && (
             <div className="mt-3 flex items-center justify-between text-[11px] text-muted">
               <span>Last 3-way reconciliation: {new Date(lastComparedAt).toLocaleString()}</span>
-              <span className="font-mono text-[10px]">Zero Cloud Deletions Guaranteed</span>
+              <span className="font-mono text-[10px] text-emerald-500">Zero Cloud Deletions Guaranteed · Zero Per-Item R2 Calls</span>
             </div>
           )}
         </div>
       )}
     </Card>
+  );
+}
   );
 }
 

@@ -47,6 +47,9 @@ import {
   StorageStatusSection,
   StorageCleanupConfirmationDialog,
   type StorageStateCategory,
+  type GenerationReconciliationSummary,
+  type PartReconciliationResult,
+  type ArtifactReconciliationStats,
 } from "@/components/storage/unified-storage-components";
 
 /**
@@ -184,6 +187,9 @@ export function SavedTitlesLinksWorkspace() {
     Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
   >(new Map());
   const [cloudOnlyItems, setCloudOnlyItems] = useState<SavedReferenceRecord[]>([]);
+  const [generationSummaries, setGenerationSummaries] = useState<GenerationReconciliationSummary[]>([]);
+  const [partResults, setPartResults] = useState<PartReconciliationResult[]>([]);
+  const [artifactStats, setArtifactStats] = useState<ArtifactReconciliationStats | undefined>(undefined);
 
   // Cleanup confirmation state
   const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
@@ -200,11 +206,15 @@ export function SavedTitlesLinksWorkspace() {
       );
   }, [items]);
 
-  // Execute 3-way reconciliation comparison against R2 and Supabase
+  // Execute 3-way reconciliation comparison against R2 and Supabase (Generation & Part Level)
   const runReconciliation = useCallback(async () => {
     setIsComparing(true);
     setStatusMessage(null);
     try {
+      const pendingIds = localReferences
+        .filter(({ record }) => record._localStatus === "LOCAL_PENDING" || record._syncStatus === "LOCAL")
+        .map(({ record }) => recordIdOf(record));
+
       const localRecordsPayload = localReferences.map(({ record, kind }) => ({
         id: recordIdOf(record),
         recordId: record.recordId || record.id,
@@ -215,6 +225,8 @@ export function SavedTitlesLinksWorkspace() {
         notes: record.notes,
         savedAt: record.savedAt,
         createdAt: record.createdAt,
+        _localStatus: record._localStatus,
+        _syncStatus: record._syncStatus,
       }));
 
       const res = await fetch("/api/storage/reconciliation/compare", {
@@ -223,6 +235,10 @@ export function SavedTitlesLinksWorkspace() {
         body: JSON.stringify({
           datasetType: "REFERENCES",
           resourceType: kindFilter === "ALL" ? undefined : kindFilter,
+          localContext: {
+            ownerId: syncCoordinator.getOwnerId() || undefined,
+            pendingEntityIds: pendingIds,
+          },
           localRecords: localRecordsPayload,
         }),
       });
@@ -245,6 +261,16 @@ export function SavedTitlesLinksWorkspace() {
         setReconciliationMap(nextMap);
         setLastComparedAt(data.timestamp || new Date().toISOString());
 
+        if (Array.isArray(data.generations)) {
+          setGenerationSummaries(data.generations);
+        }
+        if (Array.isArray(data.partResults)) {
+          setPartResults(data.partResults);
+        }
+        if (data.summary) {
+          setArtifactStats(data.summary);
+        }
+
         // Process cloud-only items
         if (Array.isArray(data.cloudOnlyRecords)) {
           const parsedCloudOnly: SavedReferenceRecord[] = data.cloudOnlyRecords.map((c: any) => ({
@@ -263,7 +289,7 @@ export function SavedTitlesLinksWorkspace() {
         }
 
         setStatusMessage(
-          `Reconciliation complete: ${data.summary.localOnlyCount} local-only, ${data.summary.localAndCloudCount} synchronized, ${data.summary.cleanupEligibleCount} cleanup eligible.`
+          `Reconciliation complete: ${data.summary?.localOnlyCount ?? 0} local-only, ${data.summary?.localAndCloudCount ?? 0} synchronized, ${data.summary?.localRecordsEligibleForCleanup ?? data.summary?.cleanupEligibleCount ?? 0} cleanup eligible.`
         );
       }
     } catch (err) {
@@ -813,6 +839,9 @@ export function SavedTitlesLinksWorkspace() {
         cleanupEligibleCount={cleanupEligibleList.length}
         onOpenCleanupDialog={() => setCleanupModalOpen(true)}
         datasetLabel="Saved Titles & Links"
+        generationSummaries={generationSummaries}
+        partResults={partResults}
+        artifactStats={artifactStats}
       />
 
       {/* 3. Toolbar */}

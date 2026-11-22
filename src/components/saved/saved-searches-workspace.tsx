@@ -37,6 +37,9 @@ import {
   StorageStatusSection,
   StorageCleanupConfirmationDialog,
   type StorageStateCategory,
+  type GenerationReconciliationSummary,
+  type PartReconciliationResult,
+  type ArtifactReconciliationStats,
 } from "@/components/storage/unified-storage-components";
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -124,16 +127,23 @@ export function SavedSearchesWorkspace() {
     Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
   >(new Map());
   const [cloudOnlySearches, setCloudOnlySearches] = useState<SavedSearch[]>([]);
+  const [generationSummaries, setGenerationSummaries] = useState<GenerationReconciliationSummary[]>([]);
+  const [partResults, setPartResults] = useState<PartReconciliationResult[]>([]);
+  const [artifactStats, setArtifactStats] = useState<ArtifactReconciliationStats | undefined>(undefined);
 
   // Cleanup confirmation state
   const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
 
-  // Run authentic 3-way reconciliation comparison against R2 and Supabase
+  // Run authentic 3-way reconciliation comparison against R2 and Supabase (Generation & Part Level)
   const runReconciliation = useCallback(async () => {
     setIsComparing(true);
     setSyncNotice(null);
     try {
+      const pendingIds = savedSearches
+        .filter((s: any) => s._localStatus === "LOCAL_PENDING" || s._syncStatus === "LOCAL")
+        .map((s) => s.id);
+
       const localRecordsPayload = savedSearches.map((s) => ({
         id: s.id,
         recordId: (s as any).recordId || s.id,
@@ -142,6 +152,8 @@ export function SavedSearchesWorkspace() {
         query: s.query,
         notes: s.notes,
         createdAt: s.createdAt,
+        _localStatus: (s as any)._localStatus,
+        _syncStatus: (s as any)._syncStatus,
       }));
 
       const res = await fetch("/api/storage/reconciliation/compare", {
@@ -150,6 +162,10 @@ export function SavedSearchesWorkspace() {
         body: JSON.stringify({
           datasetType: "REFERENCES",
           resourceType: "SAVED_SEARCH",
+          localContext: {
+            ownerId: "asdy",
+            pendingEntityIds: pendingIds,
+          },
           localRecords: localRecordsPayload,
         }),
       });
@@ -172,12 +188,40 @@ export function SavedSearchesWorkspace() {
         setReconciliationMap(nextMap);
         setLastComparedAt(data.timestamp || new Date().toISOString());
 
+        if (Array.isArray(data.generations)) {
+          setGenerationSummaries(data.generations);
+        }
+        if (Array.isArray(data.partResults)) {
+          setPartResults(data.partResults);
+        }
+        if (data.summary) {
+          setArtifactStats(data.summary);
+        }
+
         // Process cloud-only searches
         if (Array.isArray(data.cloudOnlyRecords)) {
           const parsedCloudOnly: SavedSearch[] = data.cloudOnlyRecords.map((c: any) => ({
             id: c.id,
             title: c.title,
             query: c.query || "",
+            resourceSelection: (c.resourceType as any) || "ALL",
+            notes: c.notes,
+            createdAt: c.createdAt || new Date().toISOString(),
+            _storageState: "CLOUD_ONLY",
+          }));
+          setCloudOnlySearches(parsedCloudOnly);
+        }
+
+        setSyncNotice(
+          `Reconciliation complete: ${data.summary?.localOnlyCount ?? 0} local-only, ${data.summary?.localAndCloudCount ?? 0} synchronized, ${data.summary?.localRecordsEligibleForCleanup ?? data.summary?.cleanupEligibleCount ?? 0} cleanup eligible.`
+        );
+      }
+    } catch (err) {
+      setSyncNotice(err instanceof Error ? err.message : "Failed to run 3-way reconciliation.");
+    } finally {
+      setIsComparing(false);
+    }
+  }, [savedSearches]);
             notes: c.notes,
             createdAt: c.createdAt || new Date().toISOString(),
             isPinned: false,
@@ -563,6 +607,9 @@ export function SavedSearchesWorkspace() {
         cleanupEligibleCount={cleanupEligibleList.length}
         onOpenCleanupDialog={() => setCleanupModalOpen(true)}
         datasetLabel="Saved Searches"
+        generationSummaries={generationSummaries}
+        partResults={partResults}
+        artifactStats={artifactStats}
       />
 
       {/* 3. Search, Undo/Redo, Sync and Stats Bar */}

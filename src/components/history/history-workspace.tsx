@@ -62,6 +62,9 @@ import {
   StorageStatusSection,
   StorageCleanupConfirmationDialog,
   type StorageStateCategory,
+  type GenerationReconciliationSummary,
+  type PartReconciliationResult,
+  type ArtifactReconciliationStats,
 } from "@/components/storage/unified-storage-components";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -150,6 +153,9 @@ export function HistoryWorkspace() {
     Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
   >(new Map());
   const [cloudOnlySearches, setCloudOnlySearches] = useState<SearchHistoryItem[]>([]);
+  const [generationSummaries, setGenerationSummaries] = useState<GenerationReconciliationSummary[]>([]);
+  const [partResults, setPartResults] = useState<PartReconciliationResult[]>([]);
+  const [artifactStats, setArtifactStats] = useState<ArtifactReconciliationStats | undefined>(undefined);
   const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
 
@@ -219,10 +225,14 @@ export function HistoryWorkspace() {
     return Array.from(map.values());
   }, [searchHistory, archiveItems]);
 
-  // Run authentic 3-way reconciliation comparison against R2 and Supabase
+  // Run authentic 3-way reconciliation comparison against R2 and Supabase (Generation & Part Level)
   const runReconciliation = useCallback(async () => {
     setIsComparing(true);
     try {
+      const pendingIds = searchHistory
+        .filter((s: any) => s._localStatus === "LOCAL_PENDING" || s._syncStatus === "LOCAL")
+        .map((s) => s.id);
+
       const localRecordsPayload = unifiedSearches.map((item) => ({
         id: item.id,
         recordId: item.id,
@@ -231,6 +241,8 @@ export function HistoryWorkspace() {
         query: item.query,
         createdAt: item.timestamp,
         savedAt: item.timestamp,
+        _localStatus: (item as any)._localStatus,
+        _syncStatus: (item as any)._syncStatus,
       }));
 
       const res = await fetch("/api/storage/reconciliation/compare", {
@@ -239,6 +251,10 @@ export function HistoryWorkspace() {
         body: JSON.stringify({
           datasetType: "SEARCH_HISTORY",
           resourceType: "SEARCH_HISTORY",
+          localContext: {
+            ownerId: "asdy",
+            pendingEntityIds: pendingIds,
+          },
           localRecords: localRecordsPayload,
         }),
       });
@@ -261,6 +277,16 @@ export function HistoryWorkspace() {
         setReconciliationMap(nextMap);
         setLastComparedAt(data.timestamp || new Date().toISOString());
 
+        if (Array.isArray(data.generations)) {
+          setGenerationSummaries(data.generations);
+        }
+        if (Array.isArray(data.partResults)) {
+          setPartResults(data.partResults);
+        }
+        if (data.summary) {
+          setArtifactStats(data.summary);
+        }
+
         // Process cloud-only searches
         if (Array.isArray(data.cloudOnlyRecords)) {
           const parsedCloudOnly: SearchHistoryItem[] = data.cloudOnlyRecords.map((c: any) => ({
@@ -277,7 +303,7 @@ export function HistoryWorkspace() {
         }
 
         showToast(
-          `Reconciliation complete: ${data.summary.localOnlyCount} local-only, ${data.summary.localAndCloudCount} synchronized, ${data.summary.cleanupEligibleCount} cleanup eligible.`
+          `Reconciliation complete: ${data.summary?.localOnlyCount ?? 0} local-only, ${data.summary?.localAndCloudCount ?? 0} synchronized, ${data.summary?.localRecordsEligibleForCleanup ?? data.summary?.cleanupEligibleCount ?? 0} cleanup eligible.`
         );
       }
     } catch (err) {
@@ -285,7 +311,7 @@ export function HistoryWorkspace() {
     } finally {
       setIsComparing(false);
     }
-  }, [unifiedSearches]);
+  }, [unifiedSearches, searchHistory]);
 
   useEffect(() => {
     if (unifiedSearches.length > 0) {
@@ -919,6 +945,9 @@ export function HistoryWorkspace() {
         cleanupEligibleCount={cleanupEligibleList.length}
         onOpenCleanupDialog={() => setCleanupModalOpen(true)}
         datasetLabel="Search Execution History"
+        generationSummaries={generationSummaries}
+        partResults={partResults}
+        artifactStats={artifactStats}
       />
 
       {/* 3. Telemetry Cards */}

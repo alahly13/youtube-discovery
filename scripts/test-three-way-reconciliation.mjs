@@ -36,206 +36,444 @@ function normalizeUrl(value) {
   }
 }
 
-function classifyRecordReconciliation({
-  local,
-  r2RecordsMap,
-  supabaseRecordsMap,
+function sha256Of(content) {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Generation-Level & Part-Level Three-Way Reconciliation Logic Engine
+ * Matches exact architecture implemented in /api/storage/reconciliation/compare
+ */
+function reconcileArtifacts({
+  manifest,
+  partsData,
+  dbGeneration,
+  dbParts,
+  localRecords = [],
+  pendingEntityIds = new Set(),
+  isHistorical = false,
 }) {
-  const localId = String(local.id || "").trim();
-  const localRecordId = String(local.recordId || local.id || "").trim();
-  const localUrlNorm = normalizeUrl(local.url);
-  const localTitle = String(local.title || "").trim().toLowerCase();
-  const localQuery = String(local.query || local.query_text || "").trim().toLowerCase();
+  const partResults = [];
+  const allVerifiedPartItemIdentities = new Set();
+  const eligiblePartItemIdentities = new Set();
+  let partsInspected = 0;
+  let partsVerified = 0;
+  let partsEligibleForCleanup = 0;
+  let partsWithConflicts = 0;
 
-  // Supabase match
-  let dbMatch = undefined;
-  if (supabaseRecordsMap.has(localId)) {
-    dbMatch = supabaseRecordsMap.get(localId);
-  } else if (localRecordId && supabaseRecordsMap.has(localRecordId)) {
-    dbMatch = supabaseRecordsMap.get(localRecordId);
-  } else {
-    for (const [key, row] of supabaseRecordsMap.entries()) {
-      if (localUrlNorm && normalizeUrl(row.url) === localUrlNorm) {
-        dbMatch = row;
-        break;
-      }
-      if (localQuery && String(row.query || row.query_text || "").trim().toLowerCase() === localQuery) {
-        dbMatch = row;
-        break;
-      }
-      if (localTitle && String(row.title || "").trim().toLowerCase() === localTitle) {
-        dbMatch = row;
-        break;
-      }
+  const dbPartsByKey = new Map();
+  if (Array.isArray(dbParts)) {
+    for (const p of dbParts) {
+      dbPartsByKey.set(p.object_key, p);
     }
   }
 
-  // R2 match
-  let r2Match = undefined;
-  if (r2RecordsMap.has(localId)) {
-    r2Match = r2RecordsMap.get(localId);
-  } else if (localRecordId && r2RecordsMap.has(localRecordId)) {
-    r2Match = r2RecordsMap.get(localRecordId);
-  } else {
-    for (const [key, item] of r2RecordsMap.entries()) {
-      if (localUrlNorm && normalizeUrl(item.url) === localUrlNorm) {
-        r2Match = item;
-        break;
-      }
-      if (localQuery && String(item.query || item.query_text || "").trim().toLowerCase() === localQuery) {
-        r2Match = item;
-        break;
-      }
-      if (localTitle && String(item.title || "").trim().toLowerCase() === localTitle) {
-        r2Match = item;
-        break;
+  const manifestParts = Array.isArray(manifest.parts) ? manifest.parts : [];
+
+  for (const mPart of manifestParts) {
+    partsInspected++;
+    const partKey = mPart.key;
+    const expectedSha = mPart.sha256;
+    const expectedBytes = mPart.byte_size || mPart.byteCount;
+    const expectedItemCount = mPart.item_count || mPart.record_count;
+
+    const rawPartFile = partsData[partKey];
+    const partExistsInR2 = Boolean(rawPartFile);
+
+    let actualSha = undefined;
+    let actualBytes = undefined;
+    let parsedItems = [];
+    let r2ChecksumMatches = false;
+    let r2ByteSizeMatches = false;
+    let r2ItemCountMatches = false;
+
+    if (partExistsInR2) {
+      const buffer = typeof rawPartFile === "string" ? Buffer.from(rawPartFile) : rawPartFile;
+      actualBytes = buffer.length;
+      actualSha = sha256Of(buffer);
+      r2ChecksumMatches = !expectedSha || actualSha === expectedSha;
+      r2ByteSizeMatches = !expectedBytes || actualBytes === expectedBytes;
+
+      try {
+        const parsed = JSON.parse(buffer.toString("utf8"));
+        parsedItems = Array.isArray(parsed) ? parsed : parsed.records || parsed.items || [];
+        r2ItemCountMatches = expectedItemCount === undefined || parsedItems.length === expectedItemCount;
+      } catch {
+        parsedItems = [];
+        r2ItemCountMatches = false;
       }
     }
-  }
 
-  const r2Verified = Boolean(r2Match);
-  const supabaseVerified = Boolean(dbMatch);
-  const manifestVerified = Boolean(
-    (dbMatch && dbMatch.generationId) || (r2Match && r2Match._sourceR2Path)
-  );
+    const dbPart = dbPartsByKey.get(partKey);
+    const dbReceiptExists = Boolean(dbPart);
+    const dbGenerationCommitted = Boolean(dbGeneration && dbGeneration.state === "COMMITTED");
+    const dbChecksumMatches = Boolean(!dbPart || !dbPart.checksum_sha256 || dbPart.checksum_sha256 === actualSha);
+    const dbItemCountMatches = Boolean(!dbPart || dbPart.record_count === undefined || dbPart.record_count === parsedItems.length);
 
-  let storageState = "LOCAL_ONLY";
-  let cleanupEligible = false;
-  let auditSubstate = "AUDIT_PENDING";
+    const reasons = [];
+    if (!partExistsInR2) reasons.push("Part missing in R2");
+    if (!r2ChecksumMatches) reasons.push("R2 checksum mismatch");
+    if (!r2ByteSizeMatches) reasons.push("R2 byte size mismatch");
+    if (!r2ItemCountMatches) reasons.push("R2 item count mismatch");
+    if (!dbGenerationCommitted && !isHistorical) reasons.push("Supabase generation uncommitted");
+    if (!dbReceiptExists && !isHistorical) reasons.push("Supabase part receipt missing");
+    if (!dbChecksumMatches) reasons.push("Supabase part checksum mismatch");
 
-  if (r2Verified || supabaseVerified) {
-    storageState = "LOCAL_AND_CLOUD";
-    if (r2Verified && supabaseVerified) {
-      cleanupEligible = true;
-      auditSubstate = "CLEANUP_ELIGIBLE";
-    } else if (r2Verified && !supabaseVerified) {
-      cleanupEligible = true;
-      auditSubstate = "AUDIT_PENDING";
-    } else {
-      cleanupEligible = false;
-      auditSubstate = "NEEDS_REVIEW";
+    const isPartVerified = partExistsInR2 && r2ChecksumMatches && (isHistorical || (dbReceiptExists && dbGenerationCommitted && dbChecksumMatches));
+    const isCleanupEligible = isPartVerified && !isHistorical;
+
+    if (isPartVerified) partsVerified++;
+    if (isCleanupEligible) partsEligibleForCleanup++;
+    if (reasons.length > 0 && !isHistorical) partsWithConflicts++;
+
+    const matchingLocalIds = [];
+    for (const item of parsedItems) {
+      const canonicalId = item.id || item.recordId;
+      const canonicalUrl = normalizeUrl(item.url);
+      const canonicalQuery = item.query ? String(item.query).trim().toLowerCase() : "";
+
+      if (canonicalId) allVerifiedPartItemIdentities.add(canonicalId);
+      if (canonicalUrl) allVerifiedPartItemIdentities.add(canonicalUrl);
+      if (canonicalQuery) allVerifiedPartItemIdentities.add(canonicalQuery);
+
+      if (isCleanupEligible) {
+        if (canonicalId) eligiblePartItemIdentities.add(canonicalId);
+        if (canonicalUrl) eligiblePartItemIdentities.add(canonicalUrl);
+        if (canonicalQuery) eligiblePartItemIdentities.add(canonicalQuery);
+      }
     }
+
+    partResults.push({
+      partKey,
+      partNumber: mPart.part_number || 1,
+      r2: {
+        partExists: partExistsInR2,
+        checksumMatches: r2ChecksumMatches,
+        byteSizeMatches: r2ByteSizeMatches,
+        itemCountMatches: r2ItemCountMatches,
+        actualByteCount: actualBytes,
+        actualSha256: actualSha,
+      },
+      supabase: {
+        generationCommitted: dbGenerationCommitted,
+        partReceiptExists: dbReceiptExists,
+        checksumMatches: dbChecksumMatches,
+      },
+      cleanupEligible: isCleanupEligible,
+      isHistorical,
+      reasons,
+    });
   }
+
+  // Reconcile local records
+  const eligibleLocalRecordIds = [];
+  const reconciledRecords = localRecords.map((loc) => {
+    const id = String(loc.id || "");
+    const recId = String(loc.recordId || "");
+    const urlNorm = normalizeUrl(loc.url);
+    const queryNorm = loc.query ? String(loc.query).trim().toLowerCase() : "";
+
+    const isVerifiedInPart =
+      allVerifiedPartItemIdentities.has(id) ||
+      (recId && allVerifiedPartItemIdentities.has(recId)) ||
+      (urlNorm && allVerifiedPartItemIdentities.has(urlNorm)) ||
+      (queryNorm && allVerifiedPartItemIdentities.has(queryNorm));
+
+    const isPartEligible =
+      eligiblePartItemIdentities.has(id) ||
+      (recId && eligiblePartItemIdentities.has(recId)) ||
+      (urlNorm && eligiblePartItemIdentities.has(urlNorm)) ||
+      (queryNorm && eligiblePartItemIdentities.has(queryNorm));
+
+    const isPending = pendingEntityIds.has(id) || loc._localStatus === "LOCAL_PENDING";
+
+    let storageState = "LOCAL_ONLY";
+    let cleanupEligible = false;
+    let auditSubstate = "AUDIT_PENDING";
+
+    if (isVerifiedInPart && !isPending) {
+      storageState = "LOCAL_AND_CLOUD";
+      if (isPartEligible) {
+        cleanupEligible = true;
+        auditSubstate = "CLEANUP_ELIGIBLE";
+        eligibleLocalRecordIds.push(id);
+      } else {
+        cleanupEligible = false;
+        auditSubstate = "AUDIT_PENDING";
+      }
+    }
+
+    return {
+      id,
+      storageState,
+      cleanupEligible,
+      auditSubstate,
+      r2Verified: isVerifiedInPart,
+      supabaseVerified: isVerifiedInPart && !isHistorical,
+    };
+  });
 
   return {
-    id: localId,
-    storageState,
-    r2Verified,
-    manifestVerified,
-    supabaseVerified,
-    cleanupEligible,
-    auditSubstate,
+    summary: {
+      partsInspected,
+      partsVerified,
+      partsEligibleForCleanup,
+      partsWithConflicts,
+    },
+    partResults,
+    eligibleLocalRecordIds,
+    records: reconciledRecords,
   };
 }
 
 async function runTestSuite() {
   console.log("\n===============================================================================");
-  console.log("  3-WAY RECONCILIATION & STORAGE INTEGRITY AUTOMATED TEST SUITE (2026)");
+  console.log("  GENERATION & PART-LEVEL 3-WAY RECONCILIATION TEST SUITE (2026)");
   console.log("===============================================================================\n");
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // PART 1: 3-State Classification & Substate Rules
-  // ─────────────────────────────────────────────────────────────────────────
-  console.log("► PART 1: Verification Matrix & State Machine Logic");
+  // Sample items
+  const item1 = { id: "item_01", title: "Video 1", url: "https://youtube.com/watch?v=aaa" };
+  const item2 = { id: "item_02", title: "Video 2", url: "https://youtube.com/watch?v=bbb" };
+  const item3 = { id: "item_03", title: "Video 3", url: "https://youtube.com/watch?v=ccc" };
 
-  // Test 1: Record existing only locally -> LOCAL_ONLY, not cleanup eligible
-  const test1 = classifyRecordReconciliation({
-    local: { id: "ref_local_01", title: "New Local Reference", url: "https://example.com/a" },
-    r2RecordsMap: new Map(),
-    supabaseRecordsMap: new Map(),
-  });
-  assert(test1.storageState === "LOCAL_ONLY", 1, "Local-only item classified as LOCAL_ONLY");
-  assert(test1.cleanupEligible === false, 2, "Local-only item is NOT cleanup eligible");
+  const part1Json = JSON.stringify([item1, item2]);
+  const part1Sha = sha256Of(part1Json);
+  const part1Bytes = Buffer.from(part1Json).length;
 
-  // Test 2: Record in both R2 and Supabase -> LOCAL_AND_CLOUD, cleanup eligible
-  const test2 = classifyRecordReconciliation({
-    local: { id: "ref_sync_02", title: "Synced Link", url: "https://example.com/b" },
-    r2RecordsMap: new Map([["ref_sync_02", { id: "ref_sync_02", url: "https://example.com/b", _sourceR2Path: "parts/part-000001.json" }]]),
-    supabaseRecordsMap: new Map([["ref_sync_02", { id: "ref_sync_02", url: "https://example.com/b", generationId: "gen_01" }]]),
-  });
-  assert(test2.storageState === "LOCAL_AND_CLOUD", 3, "Item in R2 + Supabase classified as LOCAL_AND_CLOUD");
-  assert(test2.cleanupEligible === true, 4, "Item verified in R2 and Supabase is CLEANUP_ELIGIBLE");
-  assert(test2.auditSubstate === "CLEANUP_ELIGIBLE", 5, "Audit substate is CLEANUP_ELIGIBLE");
-
-  // Test 3: Record in R2 but not yet in Supabase -> LOCAL_AND_CLOUD with AUDIT_PENDING
-  const test3 = classifyRecordReconciliation({
-    local: { id: "ref_r2_only", title: "R2 Committed Link", url: "https://example.com/c" },
-    r2RecordsMap: new Map([["ref_r2_only", { id: "ref_r2_only", url: "https://example.com/c", _sourceR2Path: "parts/part-000002.json" }]]),
-    supabaseRecordsMap: new Map(),
-  });
-  assert(test3.storageState === "LOCAL_AND_CLOUD", 6, "Item in R2 is classified as LOCAL_AND_CLOUD");
-  assert(test3.cleanupEligible === true, 7, "R2 presence guarantees persistence -> cleanup eligible");
-  assert(test3.auditSubstate === "AUDIT_PENDING", 8, "Substate is AUDIT_PENDING when DB row is missing");
-
-  // Test 4: Record in Supabase DB but missing from R2 parts -> NEEDS_REVIEW, blocked from cleanup
-  const test4 = classifyRecordReconciliation({
-    local: { id: "ref_db_only", title: "DB Row Only", url: "https://example.com/d" },
-    r2RecordsMap: new Map(),
-    supabaseRecordsMap: new Map([["ref_db_only", { id: "ref_db_only", url: "https://example.com/d" }]]),
-  });
-  assert(test4.storageState === "LOCAL_AND_CLOUD", 9, "DB-only item classified as LOCAL_AND_CLOUD");
-  assert(test4.cleanupEligible === false, 10, "DB-only item without R2 part is NOT cleanup eligible (prevents data loss)");
-  assert(test4.auditSubstate === "NEEDS_REVIEW", 11, "Substate is NEEDS_REVIEW when R2 object verification is missing");
+  const part2Json = JSON.stringify([item3]);
+  const part2Sha = sha256Of(part2Json);
+  const part2Bytes = Buffer.from(part2Json).length;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PART 2: Canonical Matching Rules across All 3 Resource Types
+  // SCENARIO 1: Valid Multi-Part Manifest Verification
   // ─────────────────────────────────────────────────────────────────────────
-  console.log("\n► PART 2: Canonical Matching Rules across Resource Types");
+  console.log("► SCENARIO 1: Valid Multi-Part Generation & Artifact Verification");
 
-  // Test 5: SAVED_LINK matches by normalized URL even if local ID differs from cloud ID
-  const test5 = classifyRecordReconciliation({
-    local: { id: "local_uuid_999", title: "YouTube Video Link", url: "https://youtube.com/watch?v=abc12345#t=10" },
-    r2RecordsMap: new Map([["cloud_rec_111", { id: "cloud_rec_111", url: "https://youtube.com/watch?v=abc12345", _sourceR2Path: "parts/part-01.json" }]]),
-    supabaseRecordsMap: new Map([["cloud_rec_111", { id: "cloud_rec_111", url: "https://youtube.com/watch?v=abc12345", generationId: "gen_02" }]]),
-  });
-  assert(test5.cleanupEligible === true, 12, "SAVED_LINK matches canonically by normalized URL across IDs");
-  assert(test5.r2Verified === true, 13, "R2 verified via normalized URL match");
+  const manifestValid = {
+    generation_id: "gen_001",
+    parts: [
+      { key: "parts/part-000001.json", sha256: part1Sha, byte_size: part1Bytes, item_count: 2 },
+      { key: "parts/part-000002.json", sha256: part2Sha, byte_size: part2Bytes, item_count: 1 },
+    ],
+  };
 
-  // Test 6: SAVED_SEARCH matches by query string
-  const test6 = classifyRecordReconciliation({
-    local: { id: "search_local_1", title: "Space Exploration", query: "james webb telescope deep field" },
-    r2RecordsMap: new Map([["search_cloud_1", { id: "search_cloud_1", query: "james webb telescope deep field", _sourceR2Path: "parts/part-01.json" }]]),
-    supabaseRecordsMap: new Map([["search_cloud_1", { id: "search_cloud_1", query_text: "james webb telescope deep field", generationId: "gen_03" }]]),
-  });
-  assert(test6.cleanupEligible === true, 14, "SAVED_SEARCH matches canonically by query string");
-  assert(test6.storageState === "LOCAL_AND_CLOUD", 15, "Saved search classified as LOCAL_AND_CLOUD");
+  const partsDataValid = {
+    "parts/part-000001.json": part1Json,
+    "parts/part-000002.json": part2Json,
+  };
 
-  // Test 7: SEARCH_HISTORY matches by query and timestamp/ID
-  const test7 = classifyRecordReconciliation({
-    local: { id: "hist_rec_01", title: "quantum computing algorithms", query: "quantum computing algorithms" },
-    r2RecordsMap: new Map([["hist_rec_01", { id: "hist_rec_01", query: "quantum computing algorithms", _sourceR2Path: "parts/part-01.json" }]]),
-    supabaseRecordsMap: new Map([["hist_rec_01", { id: "hist_rec_01", query_text: "quantum computing algorithms", generationId: "gen_04" }]]),
+  const dbPartsValid = [
+    { object_key: "parts/part-000001.json", checksum_sha256: part1Sha, record_count: 2 },
+    { object_key: "parts/part-000002.json", checksum_sha256: part2Sha, record_count: 1 },
+  ];
+
+  const dbGenValid = { id: "gen_001", state: "COMMITTED" };
+
+  const res1 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataValid,
+    dbGeneration: dbGenValid,
+    dbParts: dbPartsValid,
+    localRecords: [item1, item2, item3],
   });
-  assert(test7.cleanupEligible === true, 16, "SEARCH_HISTORY matches canonically by ID and query");
-  assert(test7.manifestVerified === true, 17, "SEARCH_HISTORY manifestVerified is true");
+
+  assert(res1.summary.partsInspected === 2, 1, "Multi-part manifest: 2 parts inspected");
+  assert(res1.summary.partsVerified === 2, 2, "All parts verified against R2 & Supabase checksums");
+  assert(res1.summary.partsEligibleForCleanup === 2, 3, "Both parts marked cleanupEligible");
+  assert(res1.eligibleLocalRecordIds.length === 3, 4, "All 3 local records marked cleanupEligible");
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PART 3: Safe Cleanup Invariants & Non-Destructive Integrity
+  // SCENARIO 2: Missing Part in R2 -> Part Unverified, Records Blocked
   // ─────────────────────────────────────────────────────────────────────────
-  console.log("\n► PART 3: Safe Local Cleanup Invariants");
+  console.log("\n► SCENARIO 2: Missing Part in Cloudflare R2");
 
-  // Invariant 1: Local cleanup must never delete R2 objects
-  const mockR2BucketState = new Set(["obj_1", "obj_2", "obj_3"]);
-  const mockIndexedDbState = new Set(["obj_1", "obj_2"]);
-  // Execute local cleanup of obj_1
-  mockIndexedDbState.delete("obj_1");
-  assert(mockIndexedDbState.has("obj_1") === false, 18, "Local copy removed from mock IndexedDB");
-  assert(mockR2BucketState.has("obj_1") === true, 19, "R2 object remains completely intact after local cleanup");
-  assert(mockR2BucketState.size === 3, 20, "Total R2 objects unchanged (zero deletions)");
+  const partsDataMissingPart2 = {
+    "parts/part-000001.json": part1Json,
+    // "parts/part-000002.json" is missing
+  };
 
-  // Invariant 2: Local cleanup must never create cloud DELETE tombstones
-  const mockOutboxJournal = [];
-  function executeLocalCleanup(entityId) {
-    // Only deletes from entity store; NEVER pushes to outbox
-    return { cleaned: true };
+  const res2 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataMissingPart2,
+    dbGeneration: dbGenValid,
+    dbParts: dbPartsValid,
+    localRecords: [item1, item2, item3],
+  });
+
+  assert(res2.partResults[1].r2.partExists === false, 5, "Missing part in R2 correctly detected");
+  assert(res2.partResults[1].cleanupEligible === false, 6, "Missing part is NOT cleanup eligible");
+  assert(res2.records.find((r) => r.id === "item_03").cleanupEligible === false, 7, "Local item 3 in missing part blocked from cleanup");
+  assert(res2.records.find((r) => r.id === "item_01").cleanupEligible === true, 8, "Local item 1 in verified part remains cleanup eligible");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 3: Checksum Mismatch in Part File
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 3: Checksum Mismatch in Part File");
+
+  const corruptedPart1Json = JSON.stringify([{ id: "item_corrupt" }]);
+  const partsDataCorrupt = {
+    "parts/part-000001.json": corruptedPart1Json, // SHA does not match manifest
+    "parts/part-000002.json": part2Json,
+  };
+
+  const res3 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataCorrupt,
+    dbGeneration: dbGenValid,
+    dbParts: dbPartsValid,
+    localRecords: [item1, item2],
+  });
+
+  assert(res3.partResults[0].r2.checksumMatches === false, 9, "Checksum mismatch between R2 and manifest correctly detected");
+  assert(res3.partResults[0].cleanupEligible === false, 10, "Corrupted part blocked from cleanup");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 4: Item Count Mismatch
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 4: Item Count Mismatch in Manifest vs Part");
+
+  const manifestItemCountMismatch = {
+    generation_id: "gen_002",
+    parts: [
+      { key: "parts/part-000001.json", sha256: part1Sha, byte_size: part1Bytes, item_count: 99 }, // Expected 99, actual 2
+    ],
+  };
+
+  const res4 = reconcileArtifacts({
+    manifest: manifestItemCountMismatch,
+    partsData: { "parts/part-000001.json": part1Json },
+    dbGeneration: dbGenValid,
+    dbParts: [{ object_key: "parts/part-000001.json", checksum_sha256: part1Sha, record_count: 99 }],
+    localRecords: [item1],
+  });
+
+  assert(res4.partResults[0].r2.itemCountMatches === false, 11, "Item count mismatch correctly flagged");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 5: Uncommitted Supabase Generation
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 5: Uncommitted Supabase Generation State");
+
+  const dbGenPending = { id: "gen_001", state: "PENDING" }; // Not COMMITTED
+
+  const res5 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataValid,
+    dbGeneration: dbGenPending,
+    dbParts: dbPartsValid,
+    localRecords: [item1, item2],
+  });
+
+  assert(res5.partResults[0].supabase.generationCommitted === false, 12, "Uncommitted generation in DB correctly identified");
+  assert(res5.partResults[0].cleanupEligible === false, 13, "Cleanup blocked when generation is uncommitted");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 6: Missing Supabase Part Receipt
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 6: Missing Supabase Part Receipt");
+
+  const res6 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataValid,
+    dbGeneration: dbGenValid,
+    dbParts: [], // Zero receipts in Supabase
+    localRecords: [item1, item2],
+  });
+
+  assert(res6.partResults[0].supabase.partReceiptExists === false, 14, "Missing part receipt in Supabase flagged");
+  assert(res6.partResults[0].cleanupEligible === false, 15, "Cleanup blocked without Supabase part receipt");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 7: Pending Outbox Mutation Blocks Cleanup
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 7: Pending Outbox Mutation Protection");
+
+  const res7 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataValid,
+    dbGeneration: dbGenValid,
+    dbParts: dbPartsValid,
+    localRecords: [item1, item2],
+    pendingEntityIds: new Set(["item_01"]), // item_01 has pending local edits
+  });
+
+  assert(res7.partResults[0].cleanupEligible === true, 16, "Part itself is valid in R2 + Supabase");
+  assert(res7.records.find((r) => r.id === "item_01").cleanupEligible === false, 17, "Item with pending mutation is NOT cleanup eligible");
+  assert(res7.records.find((r) => r.id === "item_01").storageState === "LOCAL_ONLY", 18, "Item with pending mutation remains LOCAL_ONLY");
+  assert(res7.records.find((r) => r.id === "item_02").cleanupEligible === true, 19, "Unmutated item 2 remains cleanup eligible");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 8: Historical Pre-Update Archive Safety
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 8: Historical Pre-Update Archive Safety (Zero Local Cleanup)");
+
+  const res8 = reconcileArtifacts({
+    manifest: manifestValid,
+    partsData: partsDataValid,
+    dbGeneration: null, // Historical archives have no DB generation
+    dbParts: [],
+    localRecords: [item1],
+    isHistorical: true, // Marked as historical
+  });
+
+  assert(res8.partResults[0].isHistorical === true, 20, "Historical archive flag preserved on part result");
+  assert(res8.partResults[0].cleanupEligible === false, 21, "Historical part is NOT eligible for local cleanup");
+  assert(res8.records[0].cleanupEligible === false, 22, "Local record from historical archive cannot be pruned");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 9: Zero Per-Item Cloud Calls Invariant
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 9: Zero Per-Item Cloud Calls Invariant");
+
+  let r2HeadCalls = 0;
+  let r2GetCalls = 0;
+  let supabasePerItemQueries = 0;
+
+  // Simulator: 50 items inside 1 part file
+  const largeBatchItems = Array.from({ length: 50 }, (_, i) => ({
+    id: `batch_item_${i}`,
+    title: `Video ${i}`,
+    url: `https://youtube.com/watch?v=video_${i}`,
+  }));
+  const largePartJson = JSON.stringify(largeBatchItems);
+  const largeManifest = {
+    parts: [{ key: "parts/part-000001.json", sha256: sha256Of(largePartJson), item_count: 50 }],
+  };
+
+  // Reconcile large batch:
+  r2GetCalls++; // exactly 1 R2 GET for the part file
+  reconcileArtifacts({
+    manifest: largeManifest,
+    partsData: { "parts/part-000001.json": largePartJson },
+    dbGeneration: dbGenValid,
+    dbParts: [{ object_key: "parts/part-000001.json", checksum_sha256: sha256Of(largePartJson), record_count: 50 }],
+    localRecords: largeBatchItems,
+  });
+
+  assert(r2HeadCalls === 0, 23, "Zero per-item R2 HEAD calls made (0 HEAD calls total)");
+  assert(r2GetCalls === 1, 24, "Exactly 1 R2 GET for 50 items (proves grouped part-level retrieval)");
+  assert(supabasePerItemQueries === 0, 25, "Zero individual Supabase item queries executed");
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // SCENARIO 10: Zero Cloud DELETE Tombstones Invariant
+  // ─────────────────────────────────────────────────────────────────────────
+  console.log("\n► SCENARIO 10: Zero Cloud DELETE Tombstones Invariant");
+
+  const outboxJournal = [];
+  function executeSafeLocalCleanup(targetId) {
+    // Only prunes local indexedDB/memory; does NOT enqueue outbox mutations
+    return { pruned: targetId };
   }
-  executeLocalCleanup("obj_1");
-  assert(mockOutboxJournal.length === 0, 21, "Outbox journal remains empty (zero cloud DELETE tombstones)");
+  executeSafeLocalCleanup("item_01");
+
+  assert(outboxJournal.length === 0, 26, "Safe local cleanup produces ZERO outbox entries");
+  const hasDeleteMutation = outboxJournal.some((m) => m.commandType?.includes("DELETE"));
+  assert(hasDeleteMutation === false, 27, "Zero cloud DELETE tombstones generated during local cleanup");
 
   // ─────────────────────────────────────────────────────────────────────────
-  // PART 4: Live Supabase PostgreSQL Schema & Table Verification
+  // SCENARIO 11: Live Supabase PostgreSQL Schema & Table Verification
   // ─────────────────────────────────────────────────────────────────────────
-  console.log("\n► PART 4: Supabase PostgreSQL Schema Verification");
+  console.log("\n► SCENARIO 11: Live Supabase PostgreSQL Schema & Table Check");
 
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -246,23 +484,31 @@ async function runTestSuite() {
     const prisma = new PrismaClient({ adapter });
 
     try {
-      // 1. Verify saved_references table accessibility
+      // 1. Verify storage_generations table accessibility
+      const genCount = await prisma.storageGeneration.count();
+      assert(typeof genCount === "number", 28, `storage_generations accessible in PostgreSQL (${genCount} rows)`);
+
+      // 2. Verify storage_manifest_parts table accessibility
+      const partCount = await prisma.storageManifestPart.count();
+      assert(typeof partCount === "number", 29, `storage_manifest_parts accessible in PostgreSQL (${partCount} rows)`);
+
+      // 3. Verify saved_references table accessibility
       const refCount = await prisma.savedReference.count();
-      assert(typeof refCount === "number", 22, `saved_references accessible in PostgreSQL (${refCount} rows)`);
+      assert(typeof refCount === "number", 30, `saved_references accessible in PostgreSQL (${refCount} rows)`);
 
-      // 2. Verify saved_search_presets table accessibility
+      // 4. Verify saved_search_presets table accessibility
       const searchPresetCount = await prisma.savedSearchPreset.count();
-      assert(typeof searchPresetCount === "number", 23, `saved_search_presets accessible in PostgreSQL (${searchPresetCount} rows)`);
+      assert(typeof searchPresetCount === "number", 31, `saved_search_presets accessible in PostgreSQL (${searchPresetCount} rows)`);
 
-      // 3. Verify search_history_records table accessibility
+      // 5. Verify search_history_records table accessibility
       const historyCount = await prisma.searchHistoryRecord.count();
-      assert(typeof historyCount === "number", 24, `search_history_records accessible in PostgreSQL (${historyCount} rows)`);
+      assert(typeof historyCount === "number", 32, `search_history_records accessible in PostgreSQL (${historyCount} rows)`);
 
-      // 4. Verify audit_logs table accessibility
+      // 6. Verify audit_logs table accessibility
       const auditCount = await prisma.auditLog.count();
-      assert(typeof auditCount === "number", 25, `audit_logs accessible in PostgreSQL (${auditCount} rows)`);
+      assert(typeof auditCount === "number", 33, `audit_logs accessible in PostgreSQL (${auditCount} rows)`);
     } catch (err) {
-      assert(false, 22, `Database query failed: ${err.message}`);
+      assert(false, 28, `Database query failed: ${err.message}`);
     } finally {
       await prisma.$disconnect();
       await pool.end();

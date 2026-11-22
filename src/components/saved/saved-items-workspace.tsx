@@ -259,6 +259,13 @@ export function SavedItemsWorkspace() {
   const [cloudHasMore, setCloudHasMore] = useState<boolean>(false);
   const [cloudNextOffset, setCloudNextOffset] = useState<number | null>(null);
   const [cloudCatalogStats, setCloudCatalogStats] = useState<CloudCatalogStats | null>(null);
+  const [historicalArchiveMeta, setHistoricalArchiveMeta] = useState<{
+    generationId: string;
+    bucket: string;
+    exactGenerationPrefix: string;
+    exactPartsPrefix: string;
+    totalRecords: number;
+  } | null>(null);
 
   // User feedback state for cloud upload & save operations
   const [saveFeedback, setSaveFeedback] = useState<CloudSaveFeedbackState | null>(null);
@@ -340,6 +347,15 @@ export function SavedItemsWorkspace() {
           setCloudNextOffset(data.nextOffset ?? null);
           if (data.catalogStats) {
             setCloudCatalogStats(data.catalogStats);
+          }
+          if (data.beforeAppUpdatingArchive) {
+            setHistoricalArchiveMeta({
+              generationId: data.beforeAppUpdatingArchive.generationId,
+              bucket: data.beforeAppUpdatingArchive.bucket,
+              exactGenerationPrefix: data.beforeAppUpdatingArchive.exactGenerationPrefix,
+              exactPartsPrefix: data.beforeAppUpdatingArchive.exactPartsPrefix,
+              totalRecords: data.beforeAppUpdatingArchive.totalRecords,
+            });
           }
         } else {
           throw new Error(data.error || "Malformed response from cloud saved items API");
@@ -467,6 +483,37 @@ export function SavedItemsWorkspace() {
     return filterAndSortItems(list, typeFilter, searchQuery, sortOption);
   }, [localItemsMap, verifiedCloudPlatformIds, pendingOutboxEntityIds, typeFilter, searchQuery, sortOption]);
 
+  // Active recent cloud items (committed in recent generations)
+  const activeCloudItems = useMemo(() => {
+    const list = cloudApiItems
+      .filter((item) => !(item as unknown as Record<string, unknown>)._isHistorical)
+      .map((item) => {
+        const inLocal = localItemsMap.has(item.platformItemId);
+        const storageState: SavedItemStorageState = inLocal ? "LOCAL_AND_CLOUD" : "CLOUD_ONLY";
+        return {
+          ...item,
+          ...({ _storageState: storageState, _sourceLocation: inLocal ? "BOTH" : "CLOUD" } as Record<string, unknown>),
+        };
+      });
+    return filterAndSortItems(list, typeFilter, searchQuery, sortOption);
+  }, [cloudApiItems, localItemsMap, typeFilter, searchQuery, sortOption]);
+
+  // BEFORE APP UPDATING historical archive items (exact gen_legacy_20261112_vkyh94 prefix)
+  const beforeUpdatingItems = useMemo(() => {
+    const list = cloudApiItems
+      .filter((item) => Boolean((item as unknown as Record<string, unknown>)._isHistorical))
+      .map((item) => ({
+        ...item,
+        ...({
+          _storageState: "CLOUD_ONLY" as SavedItemStorageState,
+          _sourceLocation: "CLOUD",
+          _isHistorical: true,
+        } as Record<string, unknown>),
+      }));
+    return filterAndSortItems(list, typeFilter, searchQuery, sortOption);
+  }, [cloudApiItems, typeFilter, searchQuery, sortOption]);
+
+  // Combined cloud collection for backward compatibility
   const cloudArchiveItems = useMemo(() => {
     const list = cloudApiItems.map((item) => {
       const inLocal = localItemsMap.has(item.platformItemId);
@@ -491,7 +538,7 @@ export function SavedItemsWorkspace() {
     return allKeys.size;
   }, [cloudApiItems, localOnlyItems]);
 
-  // Daily calendar grouping for each of the 3 sections
+  // Daily calendar grouping for each of the sections
   const localOnlyDailyGroups = useMemo(() => {
     return groupItemsByCalendarDay(localOnlyItems, sortOption);
   }, [localOnlyItems, sortOption]);
@@ -499,6 +546,14 @@ export function SavedItemsWorkspace() {
   const localAndCloudDailyGroups = useMemo(() => {
     return groupItemsByCalendarDay(localAndCloudItems, sortOption);
   }, [localAndCloudItems, sortOption]);
+
+  const activeCloudDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(activeCloudItems, sortOption);
+  }, [activeCloudItems, sortOption]);
+
+  const beforeUpdatingDailyGroups = useMemo(() => {
+    return groupItemsByCalendarDay(beforeUpdatingItems, sortOption);
+  }, [beforeUpdatingItems, sortOption]);
 
   const cloudArchiveDailyGroups = useMemo(() => {
     return groupItemsByCalendarDay(cloudArchiveItems, sortOption);
@@ -710,23 +765,23 @@ export function SavedItemsWorkspace() {
         <Card className="p-3.5 sm:p-4 border-emerald-500/30 bg-emerald-500/5 shadow-xs">
           <div className="flex items-center gap-2 text-xs font-semibold text-emerald-500">
             <Cloud className="h-4 w-4" />
-            <span>R2 Cloud Archive</span>
+            <span>R2 Cloud (Active)</span>
           </div>
           <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">
-            {cloudLoading ? "…" : cloudTotalCount || cloudApiItems.length}
+            {cloudLoading ? "…" : activeCloudItems.length}
           </div>
-          <p className="mt-0.5 text-[11px] text-muted">Authoritative R2 bucket</p>
+          <p className="mt-0.5 text-[11px] text-muted">Recent generation</p>
         </Card>
 
-        <Card className="p-3.5 sm:p-4 border-primary/30 bg-primary/5 shadow-xs">
-          <div className="flex items-center gap-2 text-xs font-semibold text-primary">
-            <Database className="h-4 w-4" />
-            <span>Total Unique</span>
+        <Card className="p-3.5 sm:p-4 border-purple-500/30 bg-purple-500/5 shadow-xs">
+          <div className="flex items-center gap-2 text-xs font-semibold text-purple-600 dark:text-purple-400">
+            <Sparkles className="h-4 w-4" />
+            <span>Historical Archive</span>
           </div>
           <div className="mt-2 text-2xl font-bold tracking-tight text-foreground">
-            {totalUniqueItemsCount}
+            {cloudLoading ? "…" : beforeUpdatingItems.length}
           </div>
-          <p className="mt-0.5 text-[11px] text-muted">Deduplicated library</p>
+          <p className="mt-0.5 text-[11px] text-muted">Before app updating</p>
         </Card>
       </div>
 
@@ -1326,7 +1381,7 @@ export function SavedItemsWorkspace() {
       )}
 
       {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* SECTION 3 — FROM R2 CLOUD — COMPLETE ARCHIVE (CLOUD_ONLY)            */}
+      {/* SECTION 3 — FROM R2 CLOUD — ACTIVE RECENT GENERATIONS                 */}
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {(storageView === "all" || storageView === "cloud") && (
         <div className="space-y-4 pt-4">
@@ -1338,14 +1393,14 @@ export function SavedItemsWorkspace() {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-bold text-foreground tracking-tight">
-                    FROM R2 CLOUD — COMPLETE ARCHIVE
+                    FROM R2 CLOUD — ACTIVE RECENT GENERATIONS
                   </h2>
                   <span className="inline-flex items-center rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                    {cloudLoading ? "Loading…" : `${cloudTotalCount || cloudArchiveItems.length} records`}
+                    {cloudLoading ? "Loading…" : `${activeCloudItems.length} active records`}
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-muted">
-                  Complete historical archive discovered from Cloudflare R2 New Bucket, including older generations and manifest parts.
+                  Recently synchronized items authoritatively committed to Cloudflare R2 New Bucket.
                 </p>
               </div>
             </div>
@@ -1361,10 +1416,10 @@ export function SavedItemsWorkspace() {
             </button>
           </div>
 
-          {!cloudLoading && cloudArchiveItems.length > 0 && (
+          {!cloudLoading && activeCloudItems.length > 0 && (
             <div className="space-y-8 pl-1">
-              {cloudArchiveDailyGroups.map((group) => (
-                <section key={`cloud-archive-${group.key}`} className="space-y-4">
+              {activeCloudDailyGroups.map((group) => (
+                <section key={`cloud-active-${group.key}`} className="space-y-4">
                   <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
                     <div className="flex h-6 w-6 items-center justify-center rounded bg-emerald-500/15 text-emerald-500">
                       <Calendar className="h-3.5 w-3.5" />
@@ -1381,7 +1436,7 @@ export function SavedItemsWorkspace() {
                   <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
                     {group.items.map((item) => (
                       <SavedItemCard
-                        key={`cloud-archive-${item.itemType}-${item.platformItemId}`}
+                        key={`cloud-active-${item.itemType}-${item.platformItemId}`}
                         item={item}
                         storageState={
                           (item as unknown as Record<string, unknown>)._storageState as SavedItemStorageState || "CLOUD_ONLY"
@@ -1399,8 +1454,116 @@ export function SavedItemsWorkspace() {
                   </div>
                 </section>
               ))}
+            </div>
+          )}
 
-              {/* Progressive Cloud Pagination Button */}
+          {!cloudLoading && activeCloudItems.length === 0 && !cloudError && (
+            <div className="p-6 text-center rounded-xl border border-dashed border-border/70 text-xs text-muted">
+              No recent active cloud generation items in this view. Check the Historical Archive below for pre-update records.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* DISTINCT VISUAL HORIZONTAL DIVIDER                                    */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {(storageView === "all" || storageView === "cloud") && (
+        <div className="relative my-10">
+          <div className="absolute inset-0 flex items-center" aria-hidden="true">
+            <div className="w-full border-t-2 border-dashed border-purple-500/50" />
+          </div>
+          <div className="relative flex justify-center">
+            <span className="bg-background px-5 py-2 text-xs font-black tracking-widest uppercase text-purple-400 border-2 border-purple-500/60 rounded-full shadow-lg flex items-center gap-2.5">
+              <Sparkles className="h-4 w-4 text-purple-400 animate-pulse" />
+              BEFORE APP UPDATING — HISTORICAL ARCHIVE
+              <span className="inline-flex items-center rounded-full bg-purple-500/20 px-2 py-0.5 text-[10px] font-bold text-purple-300">
+                {beforeUpdatingItems.length} RECORDS
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* SECTION 4 — BEFORE APP UPDATING — HISTORICAL ARCHIVE (IMMUTABLE R2)   */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {(storageView === "all" || storageView === "cloud") && (
+        <div className="space-y-4 pt-2">
+          {/* Historical Archive Provenance Card */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-xl border border-purple-500/30 bg-purple-500/5 shadow-xs">
+            <div className="flex items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-500/20 text-purple-400 font-bold shadow-xs">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-bold text-foreground tracking-tight">
+                    BEFORE APP UPDATING — HISTORICAL ARCHIVE
+                  </h2>
+                  <span className="inline-flex items-center rounded-full bg-purple-500/20 border border-purple-500/40 px-2.5 py-0.5 text-xs font-bold text-purple-300">
+                    {cloudLoading ? "Loading…" : `${beforeUpdatingItems.length} historical records`}
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-surface-muted border border-border px-2 py-0.5 text-[10px] font-mono font-medium text-muted">
+                    gen_legacy_20261112_vkyh94
+                  </span>
+                </div>
+                <p className="text-xs text-muted max-w-3xl leading-relaxed">
+                  Authentic historical saved items uploaded to Cloudflare R2 before the application architecture update.
+                  Preserved with complete fidelity in bucket <code className="text-purple-300 font-mono text-[11px]">new-youtube-discovery-private</code> under generation <code className="text-purple-300 font-mono text-[11px]">gen_legacy_20261112_vkyh94</code>.
+                </p>
+                <div className="flex flex-wrap items-center gap-4 pt-1 text-[11px] text-muted">
+                  <span className="flex items-center gap-1.5">
+                    <Database className="h-3.5 w-3.5 text-purple-400" />
+                    <span>Bucket: <strong>new-youtube-discovery-private</strong></span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5 text-purple-400" />
+                    <span>Archived: <strong>November 12, 2026</strong></span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    <span>Status: <strong>Permanent Immutable Read-Only</strong></span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Historical Items Render Grid */}
+          {!cloudLoading && beforeUpdatingItems.length > 0 && (
+            <div className="space-y-8 pl-1">
+              {beforeUpdatingDailyGroups.map((group) => (
+                <section key={`before-updating-${group.key}`} className="space-y-4">
+                  <div className="sticky top-16 z-10 flex items-center gap-3 bg-background/95 py-2 backdrop-blur-md">
+                    <div className="flex h-6 w-6 items-center justify-center rounded bg-purple-500/15 text-purple-400">
+                      <Calendar className="h-3.5 w-3.5" />
+                    </div>
+                    <h3 className="text-xs font-bold tracking-wider uppercase text-purple-400">
+                      {group.label}
+                    </h3>
+                    <span className="rounded-full bg-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted">
+                      {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                    </span>
+                    <div className="h-px flex-1 bg-purple-500/20" />
+                  </div>
+
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {group.items.map((item) => (
+                      <SavedItemCard
+                        key={`before-updating-${item.itemType}-${item.platformItemId}`}
+                        item={item}
+                        storageState="CLOUD_ONLY"
+                        onRemove={() => {}}
+                        onAddToPlaylist={() => setPlaylistTarget(item)}
+                        onInspectJson={() => setInspectedItem(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+
+              {/* Progressive Pagination for Large Historical Archives */}
               {cloudHasMore && (
                 <div className="flex flex-col items-center justify-center py-6 gap-2">
                   <button
@@ -1413,24 +1576,24 @@ export function SavedItemsWorkspace() {
                     disabled={cloudLoadingMore}
                     className="inline-flex items-center gap-2 rounded-xl bg-surface hover:bg-surface-muted border border-border px-6 py-2.5 text-xs font-bold text-foreground transition shadow-xs hover:shadow-md disabled:opacity-50"
                   >
-                    <RefreshCw className={`h-3.5 w-3.5 ${cloudLoadingMore ? "animate-spin text-emerald-500" : ""}`} />
+                    <RefreshCw className={`h-3.5 w-3.5 ${cloudLoadingMore ? "animate-spin text-purple-400" : ""}`} />
                     <span>
                       {cloudLoadingMore
-                        ? "Loading More Cloud Items…"
-                        : `Load More Historical Items (Showing ${cloudArchiveItems.length} of ${cloudTotalCount})`}
+                        ? "Loading More Historical Items…"
+                        : `Load More Archive Items (Showing ${beforeUpdatingItems.length} of ${cloudTotalCount})`}
                     </span>
                   </button>
                   <p className="text-[11px] text-muted">
-                    Progressively reads earlier generations and manifest parts without replacing earlier results.
+                    Progressively reads earlier generation parts without replacing loaded records.
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {!cloudLoading && cloudArchiveItems.length === 0 && !cloudError && (
+          {!cloudLoading && beforeUpdatingItems.length === 0 && !cloudError && (
             <div className="p-8 text-center rounded-xl border border-dashed border-border/70 text-xs text-muted">
-              No cloud archive items found in Cloudflare R2.
+              No historical before-app-updating items found for the current query/filter.
             </div>
           )}
         </div>
@@ -1539,10 +1702,10 @@ function SavedItemCard({
           {isHistorical ? (
             <span
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-600 text-white shadow-xs"
-              title="Historical saved item preserved from earlier versions in Cloudflare R2"
+              title="Historical saved item preserved before app updating in Cloudflare R2"
             >
               <Sparkles className="h-3 w-3" />
-              LEGACY CLOUD RECORD
+              BEFORE APP UPDATING
             </span>
           ) : storageState === "LOCAL_AND_CLOUD" ? (
             <span
@@ -1695,16 +1858,26 @@ function SavedItemCard({
               </button>
             )}
 
-            {/* Remove from Saved Items */}
-            <button
-              type="button"
-              onClick={onRemove}
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs text-muted hover:bg-danger/10 hover:text-danger transition"
-              title="Remove from Saved Items"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>Remove</span>
-            </button>
+            {/* Remove or Historical Archive Protected Badge */}
+            {isHistorical ? (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-md"
+                title="Historical archive record permanently preserved in Cloudflare R2"
+              >
+                <Sparkles className="h-3 w-3" />
+                <span>Historical Archive</span>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={onRemove}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs text-muted hover:bg-danger/10 hover:text-danger transition"
+                title="Remove from Saved Items"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Remove</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

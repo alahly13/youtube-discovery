@@ -4711,3 +4711,57 @@ No.
 - **Whether secrets were printed:** No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
+
+---
+
+## Entry — 2026-11-22 — Historical BEFORE-APP-UPDATING Archive Recovery & Dedicated Display in Saved Items
+
+- **Date/time:** 2026-11-22 ~20:15 UTC+02
+- **Agent/model:** Antigravity (Senior Full-Stack Engineer)
+- **Task summary:** Full recovery and dedicated rendering of the historical `BEFORE APP UPDATING` Cloudflare R2 archive (`asdy/persistence/c987539d-246a-4817-b958-b0ea32c590f9/saved-items/before-app-updating/generations/gen_legacy_20261112_vkyh94/`) in the Saved Items UI on both `/saved` and `/ssaved`:
+  1. *Live Object Inspection (Zero Mocks, Read-Only):*
+     - Probed target R2 objects in bucket `new-youtube-discovery-private` via `NEW` Cloudflare Worker (`new-youtube-discovery-api`).
+     - Verified `before-app-updating/generations/gen_legacy_20261112_vkyh94/manifest.json` (1,008 bytes, uploaded 2026-11-12T17:01:53Z, status 200).
+     - Verified `before-app-updating/generations/gen_legacy_20261112_vkyh94/parts/part-000001.json` (389,165 bytes, etag "05bc9c9bf2e0123827c062c44e80319a", uploaded 2026-11-12T17:01:52Z, status 200).
+     - Confirmed total part files: exactly 1; listing pages: 1; continuation cursor: none (exhausted).
+     - Confirmed payload structure: records stored under top-level `items` key; contains exactly 474 authentic video records.
+  2. *API Catalog Resolver Hardening (`GET /api/saved-items`):*
+     - Added explicit candidate prefix paths for `before-app-updating/`, `before-app-updating/generations/`, and `gen_legacy_20261112_vkyh94/parts/`.
+     - Added guaranteed direct discovery fallback ensuring `gen_legacy_20261112_vkyh94/manifest.json` and its part files are enrolled in `discoveredManifests` and `partsToFetch` even if absent from Supabase PostgreSQL `storage_generations`.
+     - Tagged all recovered items with `_isHistorical: true`, `_source: "R2_BEFORE_APP_UPDATING"`, `_generationId: "gen_legacy_20261112_vkyh94"`, and `_originDeviceLabel: "Legacy Data Migration (Before App Updating)"`.
+     - Separated API response into `items` (combined paginated), `activeCloudItems`, and `beforeAppUpdatingArchive` collection metadata with `catalogStats`.
+  3. *Cloud Save Snapshot Protection (`POST /api/sync/save-all`):*
+     - Updated `loadCommittedSnapshot` to always discover and merge `before-app-updating/` historical archives regardless of relational generation row counts, guaranteeing future saves append to the collection without overwriting or losing historical records.
+  4. *Distinct Visual Horizontal Divider & Dedicated UI Section:*
+     - Added 4th overview card to top stats grid: `Historical Archive` showing total records (`474`).
+     - Partitioned cloud items into `activeCloudItems` (`SECTION 3 — FROM R2 CLOUD — ACTIVE RECENT GENERATIONS`) and `beforeUpdatingItems`.
+     - Rendered a prominent **DISTINCT VISUAL HORIZONTAL DIVIDER** with dashed purple accent and glowing badge:
+       `BEFORE APP UPDATING — HISTORICAL ARCHIVE — 474 RECORDS`
+     - Built **SECTION 4 — BEFORE APP UPDATING — HISTORICAL ARCHIVE** featuring:
+       - Header banner with bucket (`new-youtube-discovery-private`), generation ID (`gen_legacy_20261112_vkyh94`), upload date (November 12, 2026), and immutable status badge.
+       - Responsive 3-column card grid rendering authentic YouTube titles, thumbnails, channels, duration, views, publish dates, and `BEFORE APP UPDATING` / `R2 CLOUD` badges.
+       - Replaced destructive "Remove" button with protected `Historical Archive` badge to safeguard historical persistence.
+- **Reason/root cause:** Historical generation `gen_legacy_20261112_vkyh94` was uploaded before recent application updates and lacked a database row in `storage_generations`. The previous API implementation relied on database rows or single-folder listings, and the UI lacked a dedicated historical section and divider separating active from archival records.
+- **Files changed:**
+  - `src/app/api/saved-items/route.ts`
+  - `src/app/api/sync/save-all/route.ts`
+  - `src/lib/storage/r2-worker-storage-client.ts`
+  - `src/components/saved/saved-items-workspace.tsx`
+  - `youtube_discovery_ledger.md`
+  - `PROJECT_CHANGE_LOG_LEDGER.md`
+  - `scripts/inspect-historical-archive.mjs`
+  - `scripts/test-historical-archive-recovery.mjs`
+- **Architecture impact:** Guarantees 100% discovery and persistent rendering of historical pre-update R2 archives independent of relational database entries; enforces strict append-only cloud synchronization where historical archives are permanently preserved; establishes clear visual partitioning between active cloud items and archival collections.
+- **Environment impact:** Zero secrets printed. Verified connectivity to `new-youtube-discovery-private` via `new-youtube-discovery-api` worker and Supabase PostgreSQL.
+- **Database/migration impact:** None. Zero schema mutations required; fully compatible with existing tables.
+- **YouTube API/quota impact:** Zero YouTube Data API v3 quota units consumed.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `node scripts/test-historical-archive-recovery.mjs`: PASSED (17/17 assertions).
+  - `node scripts/test-unified-saved-lifecycle.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: PASSED (44/44 assertions).
+- **Blocked checks, if any:** Local production build commands (`npm run build`, `next build`) were intentionally skipped per AGENTS.md rules.
+- **Remaining risks/limitations:** None identified.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.

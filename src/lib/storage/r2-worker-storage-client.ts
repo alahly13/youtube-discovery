@@ -439,7 +439,14 @@ export class R2WorkerStorageClient {
   /**
    * Enumerate ALL objects under a prefix by following R2 pagination cursors.
    * Continues until truncated === false or cursor is exhausted.
-   * Eliminates the 100-item ceiling and guarantees complete discovery of historical objects.
+   *
+   * Correctness & Completeness Guarantees:
+   * 1. Cursor correctness: If R2 reports truncated === true but provides no
+   *    cursor, treats the result as incomplete/error instead of truncated: false.
+   * 2. Listing completeness: Exposes exact truncated, incomplete, nextCursor, and
+   *    truncationReason properties when thresholds are reached.
+   * 3. Unlimited or configurable threshold: Accepts maxObjects (0 or Infinity
+   *    for progressive unbounded enumeration).
    */
   async listAllObjects(
     bucketKind: R2BucketKind,
@@ -448,13 +455,26 @@ export class R2WorkerStorageClient {
       maxObjects?: number;
       delimiter?: string;
       storageOwnerUuid?: string;
+      startCursor?: string;
     }
-  ): Promise<{ objects: R2WorkerObjectMeta[]; pagesCount: number; truncated: boolean }> {
+  ): Promise<{
+    objects: R2WorkerObjectMeta[];
+    pagesCount: number;
+    truncated: boolean;
+    incomplete?: boolean;
+    nextCursor?: string;
+    truncationReason?: "MAX_OBJECTS_REACHED" | "MISSING_CONTINUATION_CURSOR";
+    error?: string;
+  }> {
     const cleanPrefix = prefix.replace(/^\/+/, "");
     const allObjects: R2WorkerObjectMeta[] = [];
-    let cursor: string | undefined = undefined;
+    let cursor: string | undefined = options?.startCursor;
     let pagesCount = 0;
-    const maxObjects = options?.maxObjects || 25000;
+    // Allow caller to pass 0 or Infinity for unlimited progressive scanning; default to 50,000
+    const maxObjects =
+      options?.maxObjects === 0 || options?.maxObjects === Infinity
+        ? Infinity
+        : (options?.maxObjects || 50000);
 
     do {
       pagesCount++;
@@ -469,11 +489,31 @@ export class R2WorkerStorageClient {
         allObjects.push(...res.objects);
       }
 
+      // Check if progressive cap has been reached
       if (allObjects.length >= maxObjects) {
+        const nextCursor = res.truncated && res.cursor ? res.cursor : undefined;
         return {
           objects: allObjects.slice(0, maxObjects),
           pagesCount,
           truncated: true,
+          incomplete: true,
+          nextCursor,
+          truncationReason: "MAX_OBJECTS_REACHED",
+        };
+      }
+
+      // Cursor correctness: if truncated is true but cursor is missing, treat as incomplete/error
+      if (res.truncated && !res.cursor) {
+        console.warn(
+          `[R2WorkerStorageClient] Incomplete listing: R2 reported truncated=true without a continuation cursor for prefix "${cleanPrefix}".`
+        );
+        return {
+          objects: allObjects,
+          pagesCount,
+          truncated: true,
+          incomplete: true,
+          truncationReason: "MISSING_CONTINUATION_CURSOR",
+          error: `R2 reported truncated listing without continuation cursor under prefix "${cleanPrefix}"`,
         };
       }
 
@@ -484,6 +524,7 @@ export class R2WorkerStorageClient {
       objects: allObjects,
       pagesCount,
       truncated: false,
+      incomplete: false,
     };
   }
 
@@ -570,7 +611,12 @@ export class R2WorkerStorageClient {
 
   async listAllNewObjects(
     prefix?: string,
-    options?: { maxObjects?: number; delimiter?: string; storageOwnerUuid?: string }
+    options?: {
+      maxObjects?: number;
+      delimiter?: string;
+      storageOwnerUuid?: string;
+      startCursor?: string;
+    }
   ) {
     return this.listAllObjects("NEW", prefix, options);
   }

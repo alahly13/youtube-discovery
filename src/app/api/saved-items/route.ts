@@ -27,6 +27,9 @@ export interface CloudCatalogStats {
   corruptedOrMissingPartsCount: number;
   historicalRecordsCount: number;
   recentRecordsCount: number;
+  isTruncated: boolean;
+  enumerationIncomplete: boolean;
+  truncationReason?: string;
 }
 
 /**
@@ -98,10 +101,13 @@ function normalizeRawCloudItem(
   const isHistorical = Boolean(
     context.isHistorical ||
     raw.isBeforeAppUpdating === true ||
+    raw.isHistorical === true ||
     (typeof raw.manifestId === "string" &&
       (raw.manifestId.includes("legacy") || raw.manifestId.includes("before-app-updating"))) ||
     (typeof raw.provenance === "string" && raw.provenance.includes("before-app-updating")) ||
-    (context.sourcePath && context.sourcePath.includes("before-app-updating"))
+    (context.sourcePath && context.sourcePath.includes("before-app-updating")) ||
+    (context.generationId &&
+      (context.generationId.includes("legacy") || context.generationId.includes("before-app-updating")))
   );
 
   return {
@@ -163,10 +169,13 @@ function normalizeRawCloudItem(
       _originDeviceId:
         raw.originDeviceId || raw.origin_device_id || undefined,
       _originDeviceLabel:
-        raw.originDeviceLabel || raw.origin_device_label || undefined,
+        raw.originDeviceLabel ||
+        raw.origin_device_label ||
+        (isHistorical ? "Legacy Data Migration (Before App Updating)" : undefined),
       _generationId: context.generationId || undefined,
       _revision: context.revision ?? 0,
       _isHistorical: isHistorical,
+      _source: isHistorical ? "R2_BEFORE_APP_UPDATING" : "R2_CLOUD",
       _sourcePath: context.sourcePath || undefined,
     } as Record<string, unknown>),
   };
@@ -330,19 +339,46 @@ export async function GET(request: Request) {
     const datasetSlug = datasetTypeToSlug("SAVED_ITEMS" as CanonicalDatasetType);
     const candidatePrefixes = [
       `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/`,
+      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/`,
+      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/`,
+      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/`,
+      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/parts/`,
       `asdy/persistence/${storageOwnerUuid}/items/`,
       `${storageOwnerUuid}/persistence/${datasetSlug}/`,
     ];
 
     const discoveredManifests = new Set<string>();
     const discoveredDirectObjects: string[] = [];
+    let isListingTruncated = false;
+    let listingIncomplete = false;
+    let listingTruncationReason: string | undefined = undefined;
+
+    // Explicitly guarantee the exact BEFORE-APP-UPDATING generation targets
+    const exactHistoricalManifestKey = `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/manifest.json`;
+    const exactHistoricalPartKey = `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/parts/part-000001.json`;
+    discoveredManifests.add(exactHistoricalManifestKey);
+    partsToFetch.set(exactHistoricalPartKey, {
+      generationId: "gen_legacy_20261112_vkyh94",
+      isHistorical: true,
+    });
 
     for (const prefix of candidatePrefixes) {
       try {
         const listRes = await r2Client.listAllObjects("NEW", prefix, {
           storageOwnerUuid,
-          maxObjects: 25000,
+          maxObjects: 50000,
         });
+
+        if (listRes.truncated || listRes.incomplete) {
+          isListingTruncated = true;
+          listingIncomplete = true;
+          listingTruncationReason = listRes.truncationReason || "LISTING_TRUNCATED";
+          console.warn(
+            `[api/saved-items] R2 listing incomplete for prefix '${prefix}':`,
+            listRes.truncationReason,
+            listRes.error
+          );
+        }
 
         const objects = listRes.objects || [];
         totalObjectsListed += objects.length;
@@ -401,7 +437,9 @@ export async function GET(request: Request) {
         };
 
         const isHist =
-          manifestKey.includes("before-app-updating") || Boolean(manifest.isHistorical);
+          manifestKey.includes("before-app-updating") ||
+          Boolean(manifest.isHistorical) ||
+          Boolean((manifest as unknown as { isBeforeAppUpdating?: boolean }).isBeforeAppUpdating);
 
         if (manifest.generationId && !primaryGenerationId) {
           primaryGenerationId = manifest.generationId;
@@ -668,6 +706,30 @@ export async function GET(request: Request) {
 
     const paginatedItems = allCloudItems.slice(offset, offset + limit);
 
+    // Explicitly partition into Active Cloud Items vs BEFORE-APP-UPDATING Historical Archive
+    const activeCloudItems: NormalizedYouTubeDiscoveryItem[] = [];
+    const historicalCloudItems: NormalizedYouTubeDiscoveryItem[] = [];
+
+    for (const item of allCloudItems) {
+      if ((item as unknown as Record<string, unknown>)._isHistorical) {
+        historicalCloudItems.push(item);
+      } else {
+        activeCloudItems.push(item);
+      }
+    }
+
+    const beforeAppUpdatingArchive = {
+      bucket: "new-youtube-discovery-private",
+      ownerNamespace: "asdy",
+      storageOwnerUuid,
+      generationId: "gen_legacy_20261112_vkyh94",
+      exactGenerationPrefix: `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/`,
+      exactPartsPrefix: `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/parts/`,
+      manifestKey: exactHistoricalManifestKey,
+      totalRecords: historicalCloudItems.length,
+      items: historicalCloudItems,
+    };
+
     const catalogStats: CloudCatalogStats = {
       totalUniqueItems: totalCountBeforeFilter,
       enumeratedObjectsCount: totalObjectsListed,
@@ -679,12 +741,18 @@ export async function GET(request: Request) {
       corruptedOrMissingPartsCount: corruptedOrMissingParts.length,
       historicalRecordsCount: historicalCount,
       recentRecordsCount: recentCount,
+      isTruncated: isListingTruncated,
+      enumerationIncomplete: listingIncomplete,
+      truncationReason: listingTruncationReason,
     };
 
     const response = NextResponse.json({
       ok: true,
       source: "R2_CLOUD",
       items: paginatedItems,
+      activeCloudItems: activeCloudItems.slice(offset, offset + limit),
+      activeTotalCount: activeCloudItems.length,
+      beforeAppUpdatingArchive,
       totalCount: totalCountBeforeFilter,
       filteredCount: allCloudItems.length,
       offset,

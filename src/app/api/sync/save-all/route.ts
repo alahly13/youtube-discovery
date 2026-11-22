@@ -390,8 +390,8 @@ async function loadCommittedSnapshot(params: {
     console.warn("[sync/save-all] PostgreSQL generations query note:", dbGenErr);
   }
 
-  // Phase 2: If no records yet, discover manifests and parts directly from R2 using full pagination
-  if (recordsMap.size === 0 && params.datasetType) {
+  // Phase 2: Ingest manifests and parts directly from R2, ALWAYS including before-app-updating historical archives
+  if (params.datasetType) {
     const datasetSlug = datasetTypeToSlug(params.datasetType as CanonicalDatasetType);
     const prefixes = [
       `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/generations/`,

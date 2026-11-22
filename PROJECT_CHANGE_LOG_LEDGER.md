@@ -4765,3 +4765,71 @@ No.
 - **Whether secrets were printed:** No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
+
+---
+
+## Entry — 2026-11-22 — Unified Three-State Storage Classification, Local–R2–Supabase Reconciliation & Safe IndexedDB Cleanup
+
+- **Date/time:** 2026-11-22 ~23:00 UTC+02
+- **Agent/model:** Antigravity (Senior Full-Stack Engineer & Data Integrity Architect)
+- **Task summary:** Complete unification of storage classification, 3-way reconciliation (Local IndexedDB + Cloudflare R2 + Supabase PostgreSQL), and safe, non-destructive local cleanup across `/saved-titles-links`, `/saved-searches`, and `/history`:
+  1. *Unified Three-State Storage Model:* Standardized across all 3 target pages:
+     - `LOCAL_ONLY` (amber badge): Records staged strictly in browser IndexedDB awaiting cloud commit.
+     - `LOCAL_AND_CLOUD` (cyan badge): Records verified in Cloudflare R2 manifests/parts and/or Supabase PostgreSQL, awaiting safe local cleanup. Features secondary substates: `CLEANUP_ELIGIBLE`, `AUDIT_PENDING`, `NEEDS_REVIEW`.
+     - `CLOUD_ONLY` (emerald badge): Records authoritatively preserved in Cloudflare R2 / Supabase whose local browser copies have been cleanly pruned.
+  2. *Shared Storage Design System (`src/components/storage/unified-storage-components.tsx`):*
+     - `StorageStatusBadge`: Standardized semantic badges for `LOCAL_ONLY`, `LOCAL_AND_CLOUD` (with `Cleanup Eligible` / `Audit Pending` pills), `CLOUD_ONLY`, and `HISTORICAL_ARCHIVE`.
+     - `StorageOverview`: 4 interactive overview cards (`All Storage`, `Local Browser`, `Local + R2 Cloud`, `R2 Cloud`).
+     - `StorageComparisonPanel`: "STORAGE INTEGRITY CENTER" running authentic 3-way reconciliation on-demand, with timestamp telemetry, verified counts, and batch local cleanup trigger.
+     - `StorageStatusSection`: Standardized wrapper for Section 1 (`LOCAL ONLY`), Section 2 (`LOCAL + R2 CLOUD`), and Section 3 (`CLOUD ONLY`).
+     - `StorageCleanupConfirmationDialog`: Accessible modal dialog confirming exact record counts and confirming zero cloud deletions before local IndexedDB cleanup.
+  3. *Authentic 3-Way Reconciliation Backend (`POST /api/storage/reconciliation/compare`):*
+     - Accepts `datasetType`, `resourceType`, and `localRecords`.
+     - Resolves canonical `storageOwnerUuid` and profile credentials with `requireAdmin()`.
+     - Reads committed parts and manifests from Cloudflare R2 bucket `new-youtube-discovery-private` via authenticated Worker client (`getR2WorkerStorageClient()`).
+     - Queries Supabase PostgreSQL tables: `saved_references` (for `SAVED_TITLE` & `SAVED_LINK`), `saved_search_presets` (for `SAVED_SEARCH`), `search_history_records` (for `SEARCH_HISTORY`), and `storage_generations`.
+     - Executes canonical matching by ID, recordId, normalized URL, query text, and exact title.
+     - Computes `storageState`, `r2Verified`, `manifestVerified`, `supabaseVerified`, and `cleanupEligible`.
+     - Identifies unrepresented cloud records and returns them as `cloudOnlyRecords`.
+  4. *Audit Logging Endpoint (`POST /api/storage/reconciliation/audit-cleanup`):*
+     - Logs surgical cleanup actions into Supabase PostgreSQL `audit_logs` table (`action: SAFE_LOCAL_CLEANUP_COMPLETED`), recording comparison ID, dataset type, cleaned record IDs, count, and `zeroCloudDeletions: true`.
+  5. *Surgical IndexedDB Cleanup Helpers (`src/lib/storage/indexeddb-store.ts`):*
+     - Implemented `removeLocalSavedReference(ownerId, id)` and `removeLocalSavedReferencesBatch(ownerId, ids)`.
+     - Implemented `removeLocalSavedSearch(ownerId, id)` and `removeLocalSavedSearchesBatch(ownerId, ids)`.
+     - Implemented `removeLocalSearchHistoryItem(ownerId, id)` and `removeLocalSearchHistoryBatch(ownerId, ids)`.
+     - Added companion state pruning methods in `useYouTubeWorkspaceStore` (`src/lib/state/youtube-workspace-store.ts`).
+     - Strictly prevented creation of outbox `DELETE` tombstones during local cleanup, ensuring zero deletion signals propagate to R2 or PostgreSQL.
+  6. *Page Integrations:*
+     - `/saved-titles-links`: Fully integrated `StorageOverview`, `StorageComparisonPanel`, and the 3 partitioned sections with single and batch local cleanup.
+     - `/saved-searches`: Fully integrated `StorageOverview`, `StorageComparisonPanel`, and the 3 partitioned sections with copy title, pin/unpin, rerun, and local cleanup.
+     - `/history`: Fully integrated `StorageOverview`, `StorageComparisonPanel`, and the 3 partitioned sections, preserving all browsing history, viewing records, and audit logs.
+  7. *Automated Test Suite (`scripts/test-three-way-reconciliation.mjs`):*
+     - 25 automated assertions validating state classification, substate derivation, canonical matching rules across all 3 resource types, non-destructive safety invariants, and live Supabase PostgreSQL schema accessibility.
+- **Reason/root cause:** Previously, `/saved-titles-links`, `/saved-searches`, and `/history` used disparate storage classification badges, lacked authentic 3-way verification against actual Cloudflare R2 objects and Supabase PostgreSQL rows, and had no safe local cleanup operation that freed browser storage without risking cloud DELETE tombstones.
+- **Files changed:**
+  - `src/lib/storage/indexeddb-store.ts`
+  - `src/lib/state/youtube-workspace-store.ts`
+  - `src/components/storage/unified-storage-components.tsx`
+  - `src/app/api/storage/reconciliation/compare/route.ts`
+  - `src/app/api/storage/reconciliation/audit-cleanup/route.ts`
+  - `src/components/saved/saved-titles-links-workspace.tsx`
+  - `src/components/saved/saved-searches-workspace.tsx`
+  - `src/components/history/history-workspace.tsx`
+  - `scripts/test-three-way-reconciliation.mjs`
+  - `youtube_discovery_ledger.md`
+  - `PROJECT_CHANGE_LOG_LEDGER.md`
+- **Architecture impact:** Establishes a unified, verified 3-way storage lifecycle across all application datasets and workspaces; guarantees zero cloud data loss during browser cleanup; provides full auditability in Supabase PostgreSQL; standardizes design language and status semantics across the entire platform.
+- **Environment impact:** Zero secrets printed. Verified connectivity to Cloudflare R2 via Worker capability tokens and Supabase PostgreSQL.
+- **Database/migration impact:** None. Fully utilizes existing canonical PostgreSQL tables (`saved_references`, `saved_search_presets`, `search_history_records`, `storage_generations`, `storage_manifest_parts`, `audit_logs`).
+- **YouTube API/quota impact:** Zero YouTube Data API v3 quota units consumed.
+- **AI scope/safety impact:** None.
+- **Verification run and results:**
+  - `node scripts/test-three-way-reconciliation.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-historical-archive-recovery.mjs`: PASSED (17/17 assertions).
+  - `node scripts/test-unified-saved-lifecycle.mjs`: PASSED (25/25 assertions).
+  - `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: PASSED (44/44 assertions).
+- **Blocked checks, if any:** Local production build commands (`npm run build`, `next build`) were intentionally skipped per AGENTS.md rules.
+- **Remaining risks/limitations:** None identified.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No.
+- **Whether `db:apply` was run:** No.

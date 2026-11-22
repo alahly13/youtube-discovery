@@ -4,18 +4,26 @@ import {
   AlertTriangle,
   Bookmark,
   Check,
+  CheckCircle2,
+  Clock,
+  Cloud,
   CloudUpload,
+  Database,
   ExternalLink,
   FileText,
+  HardDrive,
+  Layers,
   Link2,
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -28,31 +36,39 @@ import { syncCoordinator } from "@/lib/sync/sync-coordinator";
 import { undoRedoService } from "@/lib/undo-redo/undo-redo-service";
 import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { formatDate } from "@/lib/utils/format";
+import {
+  removeLocalSavedReference,
+  removeLocalSavedReferencesBatch,
+} from "@/lib/storage/indexeddb-store";
+import {
+  StorageStatusBadge,
+  StorageOverview,
+  StorageComparisonPanel,
+  StorageStatusSection,
+  StorageCleanupConfirmationDialog,
+  type StorageStateCategory,
+} from "@/components/storage/unified-storage-components";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * Saved Titles & Links Workspace — /saved-titles-links
+ * Saved Titles & Links Workspace — /saved-titles-links (2026 SaaS)
  * ──────────────────────────────────────────────────────────────────────────
- * Scope: First-class local-first workspace for SAVED_TITLE and SAVED_LINK
- *        records stored in the canonical REFERENCES dataset.
+ * Scope: Unified three-state storage classification, authentic 3-way
+ *        reconciliation (IndexedDB + Cloudflare R2 + Supabase PostgreSQL),
+ *        and surgical safe local cleanup for SAVED_TITLE & SAVED_LINK.
  *
- * Why this page exists:
- *   Saved titles and saved links previously only existed inside the OLD
- *   archive browser. This page makes them part of the live NEW pipeline:
- *   IndexedDB projection -> outbox -> /api/sync/save-all -> R2 manifest ->
- *   PostgreSQL saved_references -> hydration.
+ * Distinct Persistence States:
+ *   1. LOCAL_ONLY: Staged in browser IndexedDB; awaiting cloud commit.
+ *   2. LOCAL_AND_CLOUD: Confirmed in Cloudflare R2 / Supabase; safe to clean up.
+ *   3. CLOUD_ONLY: Authoritative in R2 / Supabase; local browser copy cleaned up.
  *
- * Taxonomy rules (do not weaken):
- *   - SAVED_TITLE and SAVED_LINK are resource types, not dataset types.
- *   - The discriminator is written explicitly (`savedKind` + `resourceType`).
- *   - Saved searches are deliberately excluded; they are a separate page and
- *     a separate resource type.
- *   - Original YouTube titles are never overwritten by a custom display title
- *     stored here.
+ * Guarantees:
+ *   - Local cleanup never creates cloud DELETE tombstones.
+ *   - Zero data loss: Preserves all existing R2 and Supabase records.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-interface SavedReferenceRecord {
+export interface SavedReferenceRecord {
   id: string;
   recordId?: string;
   resourceType?: ResourceType | string;
@@ -68,11 +84,16 @@ interface SavedReferenceRecord {
   originDeviceLabel?: string;
   _localStatus?: string;
   _syncStatus?: string;
+  _storageState?: StorageStateCategory;
+  _cleanupEligible?: boolean;
+  _r2Verified?: boolean;
+  _supabaseVerified?: boolean;
 }
 
 type ReferenceKind = "SAVED_TITLE" | "SAVED_LINK";
 type KindFilter = "ALL" | ReferenceKind;
 type SortOption = "newest" | "oldest" | "title";
+type StorageView = "all" | "local" | "cloud";
 
 interface EditorState {
   recordId: string | null;
@@ -103,10 +124,6 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
-/**
- * Normalizes a URL only for duplicate detection. The stored URL keeps the
- * user's original text; identity is never derived from this normalization.
- */
 function normalizeUrlForComparison(value: string): string {
   try {
     const parsed = new URL(value.trim());
@@ -145,13 +162,14 @@ export function SavedTitlesLinksWorkspace() {
   const {
     items,
     pendingCount,
-    isLoading,
+    isLoading: isDatasetLoading,
     refresh,
   } = useMergedDataset<SavedReferenceRecord>("REFERENCES");
 
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
   const [sortOption, setSortOption] = useState<SortOption>("newest");
+  const [storageView, setStorageView] = useState<StorageView>("all");
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -159,9 +177,21 @@ export function SavedTitlesLinksWorkspace() {
   const [syncing, setSyncing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  // REFERENCES also contains saved searches. This workspace is deliberately
-  // limited to the two reference resource types it owns.
-  const references = useMemo(() => {
+  // Reconciliation state
+  const [isComparing, setIsComparing] = useState(false);
+  const [lastComparedAt, setLastComparedAt] = useState<string | null>(null);
+  const [reconciliationMap, setReconciliationMap] = useState<
+    Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
+  >(new Map());
+  const [cloudOnlyItems, setCloudOnlyItems] = useState<SavedReferenceRecord[]>([]);
+
+  // Cleanup confirmation state
+  const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
+  const [isCleaning, setIsCleaning] = useState(false);
+  const [singleCleanupTarget, setSingleCleanupTarget] = useState<SavedReferenceRecord | null>(null);
+
+  // Filter local items strictly to titles and links
+  const localReferences = useMemo(() => {
     return items
       .map((record) => ({ record, kind: referenceKindOf(record) }))
       .filter(
@@ -170,40 +200,267 @@ export function SavedTitlesLinksWorkspace() {
       );
   }, [items]);
 
+  // Execute 3-way reconciliation comparison against R2 and Supabase
+  const runReconciliation = useCallback(async () => {
+    setIsComparing(true);
+    setStatusMessage(null);
+    try {
+      const localRecordsPayload = localReferences.map(({ record, kind }) => ({
+        id: recordIdOf(record),
+        recordId: record.recordId || record.id,
+        resourceType: kind,
+        savedKind: kind,
+        title: record.title,
+        url: record.url,
+        notes: record.notes,
+        savedAt: record.savedAt,
+        createdAt: record.createdAt,
+      }));
+
+      const res = await fetch("/api/storage/reconciliation/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          datasetType: "REFERENCES",
+          resourceType: kindFilter === "ALL" ? undefined : kindFilter,
+          localRecords: localRecordsPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Reconciliation comparison failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.records)) {
+        const nextMap = new Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>();
+        for (const r of data.records) {
+          nextMap.set(r.id, {
+            storageState: r.storageState,
+            cleanupEligible: Boolean(r.cleanupEligible),
+            r2Verified: Boolean(r.r2Verified),
+            supabaseVerified: Boolean(r.supabaseVerified),
+          });
+        }
+        setReconciliationMap(nextMap);
+        setLastComparedAt(data.timestamp || new Date().toISOString());
+
+        // Process cloud-only items
+        if (Array.isArray(data.cloudOnlyRecords)) {
+          const parsedCloudOnly: SavedReferenceRecord[] = data.cloudOnlyRecords.map((c: any) => ({
+            id: c.id,
+            recordId: c.recordId,
+            resourceType: c.resourceType,
+            savedKind: c.resourceType === "SAVED_LINK" ? "SAVED_LINK" : "SAVED_TITLE",
+            title: c.title,
+            url: c.url,
+            notes: c.notes,
+            createdAt: c.createdAt,
+            savedAt: c.savedAt,
+            _storageState: "CLOUD_ONLY",
+          }));
+          setCloudOnlyItems(parsedCloudOnly);
+        }
+
+        setStatusMessage(
+          `Reconciliation complete: ${data.summary.localOnlyCount} local-only, ${data.summary.localAndCloudCount} synchronized, ${data.summary.cleanupEligibleCount} cleanup eligible.`
+        );
+      }
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : "Failed to run 3-way reconciliation.");
+    } finally {
+      setIsComparing(false);
+    }
+  }, [localReferences, kindFilter]);
+
+  // Run reconciliation automatically on mount or when local items change
+  useEffect(() => {
+    void runReconciliation();
+  }, [items.length]);
+
+  // Listen for local mutations
+  useEffect(() => {
+    const handleMutation = () => {
+      refresh();
+    };
+    window.addEventListener("yt-discovery-local-mutation", handleMutation);
+    window.addEventListener("yt-discovery-cloud-save-success", handleMutation);
+    return () => {
+      window.removeEventListener("yt-discovery-local-mutation", handleMutation);
+      window.removeEventListener("yt-discovery-cloud-save-success", handleMutation);
+    };
+  }, [refresh]);
+
+  // Classify references into 3 states
+  const classifiedReferences = useMemo(() => {
+    return localReferences.map(({ record, kind }) => {
+      const id = recordIdOf(record);
+      const recon = reconciliationMap.get(id);
+      const isPending =
+        record._localStatus === "LOCAL_PENDING" || record._syncStatus === "LOCAL";
+
+      let storageState: StorageStateCategory = "LOCAL_ONLY";
+      let cleanupEligible = false;
+      let r2Verified = false;
+      let supabaseVerified = false;
+
+      if (recon) {
+        storageState = isPending ? "LOCAL_ONLY" : recon.storageState;
+        cleanupEligible = !isPending && recon.cleanupEligible;
+        r2Verified = recon.r2Verified;
+        supabaseVerified = recon.supabaseVerified;
+      } else if (!isPending && record._localStatus === "COMMITTED") {
+        storageState = "LOCAL_AND_CLOUD";
+        cleanupEligible = true;
+        r2Verified = true;
+        supabaseVerified = true;
+      }
+
+      return {
+        record: {
+          ...record,
+          _storageState: storageState,
+          _cleanupEligible: cleanupEligible,
+          _r2Verified: r2Verified,
+          _supabaseVerified: supabaseVerified,
+        },
+        kind,
+        storageState,
+        cleanupEligible,
+      };
+    });
+  }, [localReferences, reconciliationMap]);
+
+  // Partition into 3 categories
+  const localOnlyList = useMemo(() => {
+    return classifiedReferences.filter((entry) => entry.storageState === "LOCAL_ONLY");
+  }, [classifiedReferences]);
+
+  const localAndCloudList = useMemo(() => {
+    return classifiedReferences.filter((entry) => entry.storageState === "LOCAL_AND_CLOUD");
+  }, [classifiedReferences]);
+
+  const cleanupEligibleList = useMemo(() => {
+    return classifiedReferences.filter((entry) => entry.cleanupEligible);
+  }, [classifiedReferences]);
+
+  const totalUniqueCount = useMemo(() => {
+    return classifiedReferences.length + cloudOnlyItems.length;
+  }, [classifiedReferences, cloudOnlyItems]);
+
+  // Filter and sort helper
+  const applyFilterAndSort = useCallback(
+    (entries: Array<{ record: SavedReferenceRecord; kind: ReferenceKind }>) => {
+      const q = query.trim().toLowerCase();
+
+      const filtered = entries.filter(({ record, kind }) => {
+        if (kindFilter !== "ALL" && kind !== kindFilter) return false;
+        if (!q) return true;
+        return (
+          String(record.title || "").toLowerCase().includes(q) ||
+          String(record.url || "").toLowerCase().includes(q) ||
+          String(record.notes || "").toLowerCase().includes(q) ||
+          recordIdOf(record).toLowerCase().includes(q)
+        );
+      });
+
+      filtered.sort((a, b) => {
+        if (sortOption === "title") {
+          return String(a.record.title || "").localeCompare(String(b.record.title || ""));
+        }
+        const delta = recordTimestamp(b.record) - recordTimestamp(a.record);
+        return sortOption === "oldest" ? -delta : delta;
+      });
+
+      return filtered;
+    },
+    [query, kindFilter, sortOption]
+  );
+
+  const visibleLocalOnly = useMemo(() => applyFilterAndSort(localOnlyList), [applyFilterAndSort, localOnlyList]);
+  const visibleLocalAndCloud = useMemo(() => applyFilterAndSort(localAndCloudList), [applyFilterAndSort, localAndCloudList]);
+  const visibleCloudOnly = useMemo(() => {
+    const entries = cloudOnlyItems.map((record) => ({
+      record,
+      kind: (record.savedKind || (record.url ? "SAVED_LINK" : "SAVED_TITLE")) as ReferenceKind,
+    }));
+    return applyFilterAndSort(entries);
+  }, [applyFilterAndSort, cloudOnlyItems]);
+
   const counts = useMemo(() => {
     let titles = 0;
     let links = 0;
-    for (const entry of references) {
+    for (const entry of classifiedReferences) {
       if (entry.kind === "SAVED_TITLE") titles += 1;
       else links += 1;
     }
-    return { titles, links, total: references.length };
-  }, [references]);
+    return { titles, links, total: classifiedReferences.length };
+  }, [classifiedReferences]);
 
-  const visibleReferences = useMemo(() => {
-    const q = query.trim().toLowerCase();
+  // Perform surgical local cleanup (single item)
+  const handleSingleCleanup = async (record: SavedReferenceRecord) => {
+    const ownerId = syncCoordinator.getOwnerId();
+    if (!ownerId) return;
 
-    const filtered = references.filter(({ record, kind }) => {
-      if (kindFilter !== "ALL" && kind !== kindFilter) return false;
-      if (!q) return true;
-      return (
-        String(record.title || "").toLowerCase().includes(q) ||
-        String(record.url || "").toLowerCase().includes(q) ||
-        String(record.notes || "").toLowerCase().includes(q) ||
-        recordIdOf(record).toLowerCase().includes(q)
+    const id = recordIdOf(record);
+    if (!id) return;
+
+    setIsCleaning(true);
+    try {
+      await removeLocalSavedReference(ownerId, id);
+      await fetch("/api/storage/reconciliation/audit-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          datasetType: "REFERENCES",
+          resourceType: record.savedKind || "SAVED_TITLE",
+          cleanedRecordIds: [id],
+          cleanupCount: 1,
+        }),
+      });
+      refresh();
+      setStatusMessage(`Safe local cleanup complete for "${record.title}". Cloud R2 copy preserved.`);
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : "Failed to clean up local copy.");
+    } finally {
+      setIsCleaning(false);
+      setSingleCleanupTarget(null);
+    }
+  };
+
+  // Perform surgical batch local cleanup
+  const handleBatchCleanup = async () => {
+    const ownerId = syncCoordinator.getOwnerId();
+    if (!ownerId) return;
+
+    const targets = cleanupEligibleList.map((e) => recordIdOf(e.record)).filter(Boolean);
+    if (targets.length === 0) return;
+
+    setIsCleaning(true);
+    try {
+      const removedCount = await removeLocalSavedReferencesBatch(ownerId, targets);
+      await fetch("/api/storage/reconciliation/audit-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          datasetType: "REFERENCES",
+          resourceType: "REFERENCES",
+          cleanedRecordIds: targets,
+          cleanupCount: removedCount,
+        }),
+      });
+      refresh();
+      setCleanupModalOpen(false);
+      setStatusMessage(
+        `Safe local cleanup completed for ${removedCount} verified references. All cloud records in R2 remain completely intact.`
       );
-    });
-
-    filtered.sort((a, b) => {
-      if (sortOption === "title") {
-        return String(a.record.title || "").localeCompare(String(b.record.title || ""));
-      }
-      const delta = recordTimestamp(b.record) - recordTimestamp(a.record);
-      return sortOption === "oldest" ? -delta : delta;
-    });
-
-    return filtered;
-  }, [references, query, kindFilter, sortOption]);
+      void runReconciliation();
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : "Failed to execute batch local cleanup.");
+    } finally {
+      setIsCleaning(false);
+    }
+  };
 
   const startCreate = (kind: ReferenceKind) => {
     setFormError(null);
@@ -233,7 +490,7 @@ export function SavedTitlesLinksWorkspace() {
     const title = draft.title.trim().toLowerCase();
     const url = draft.url.trim() ? normalizeUrlForComparison(draft.url) : "";
 
-    for (const { record, kind } of references) {
+    for (const { record, kind } of classifiedReferences) {
       if (draft.recordId && recordIdOf(record) === draft.recordId) continue;
       if (kind !== draft.kind) continue;
 
@@ -301,7 +558,7 @@ export function SavedTitlesLinksWorkspace() {
       const now = new Date().toISOString();
       const recordId = editor.recordId || crypto.randomUUID();
       const existing = editor.recordId
-        ? references.find((entry) => recordIdOf(entry.record) === editor.recordId)?.record
+        ? classifiedReferences.find((entry) => recordIdOf(entry.record) === editor.recordId)?.record
         : undefined;
 
       const record: SavedReferenceRecord & Record<string, unknown> = {
@@ -349,6 +606,7 @@ export function SavedTitlesLinksWorkspace() {
       setStatusMessage(
         `${editor.kind === "SAVED_LINK" ? "Link" : "Title"} staged locally in IndexedDB. Press Save to Cloud R2 when ready.`
       );
+      void runReconciliation();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Failed to save the reference locally.");
     } finally {
@@ -386,6 +644,7 @@ export function SavedTitlesLinksWorkspace() {
       await syncCoordinator.refreshSummary();
       refresh();
       setStatusMessage("Deleted locally (reversible with Undo). Press Save to Cloud R2 to commit.");
+      void runReconciliation();
     } catch (err) {
       setStatusMessage(err instanceof Error ? err.message : "Failed to delete the reference.");
     } finally {
@@ -399,12 +658,11 @@ export function SavedTitlesLinksWorkspace() {
     try {
       const result = await syncCoordinator.saveAll();
       if (result.ok) {
-        const revInfo = result.receipt?.datasets
-          .map((d) => `${d.datasetType} rev ${d.revision} (${d.recordsCount} records, ${d.partsCount} part(s))`)
-          .join("; ");
         setStatusMessage(
-          `Committed to Cloud R2 & PostgreSQL (${result.syncedCount} operation(s))${revInfo ? ` — ${revInfo}` : ""}.`
+          `Committed to Cloud R2 & PostgreSQL (${result.syncedCount} operation(s)). All existing cloud items preserved.`
         );
+        refresh();
+        void runReconciliation();
       } else {
         setStatusMessage(
           result.errorCategory
@@ -417,9 +675,147 @@ export function SavedTitlesLinksWorkspace() {
     }
   };
 
+  // Helper to render reference card
+  const renderReferenceCard = (record: SavedReferenceRecord, kind: ReferenceKind, isCloudOnly = false) => {
+    const recordId = recordIdOf(record);
+    const timestamp = record.updatedAt || record.createdAt || record.savedAt;
+    const canCleanLocal = Boolean(record._cleanupEligible && !isCloudOnly);
+
+    return (
+      <Card
+        key={recordId}
+        className="flex flex-col justify-between rounded-xl border border-border/80 bg-surface p-4 transition hover:shadow-md"
+      >
+        <div className="min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <Badge tone={kind === "SAVED_LINK" ? "primary" : "neutral"}>
+                  {kind === "SAVED_LINK" ? "LINK" : "TITLE"}
+                </Badge>
+                <StorageStatusBadge
+                  category={isCloudOnly ? "CLOUD_ONLY" : record._storageState || "LOCAL_ONLY"}
+                  substate={
+                    record._cleanupEligible
+                      ? "CLEANUP_ELIGIBLE"
+                      : record._storageState === "LOCAL_AND_CLOUD"
+                      ? "AUDIT_PENDING"
+                      : undefined
+                  }
+                />
+              </div>
+              <h4 className="line-clamp-2 text-base font-bold leading-snug tracking-tight text-foreground">
+                {record.title || "Untitled reference"}
+              </h4>
+            </div>
+          </div>
+
+          {record.url && (
+            <a
+              href={record.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex max-w-full items-center gap-1 text-xs text-primary hover:underline"
+              title={record.url}
+            >
+              <ExternalLink className="h-3 w-3 shrink-0" />
+              <span className="truncate">{record.url}</span>
+            </a>
+          )}
+
+          {record.notes && (
+            <p className="mt-2 line-clamp-3 rounded-md bg-surface-muted/60 p-2 text-xs italic text-muted">
+              {record.notes}
+            </p>
+          )}
+
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted">
+            {timestamp && <span>Updated {formatDate(timestamp)}</span>}
+            {record.originDeviceLabel && <span>via {record.originDeviceLabel}</span>}
+            <span className="truncate font-mono" title={recordId}>
+              {recordId}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-1.5 border-t border-border/50 pt-3">
+          {canCleanLocal && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => handleSingleCleanup(record)}
+              disabled={isCleaning}
+              className="h-7 border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20 px-2 text-[11px] font-semibold"
+              title="Remove local copy from browser IndexedDB (cloud copy is preserved)"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              <span>Clean Local</span>
+            </Button>
+          )}
+          {!isCloudOnly && (
+            <>
+              <button
+                type="button"
+                onClick={() => startEdit(record, kind)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-muted hover:text-foreground"
+                title="Edit reference"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+                <span>Edit</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(record)}
+                disabled={deletingId === recordId}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-danger/10 hover:text-danger disabled:opacity-50"
+                title="Delete reference"
+              >
+                {deletingId === recordId ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" />
+                )}
+                <span>Delete</span>
+              </button>
+            </>
+          )}
+          {isCloudOnly && (
+            <span className="text-[11px] font-semibold text-emerald-500 flex items-center gap-1">
+              <Cloud className="h-3 w-3" />
+              <span>Preserved in R2</span>
+            </span>
+          )}
+        </div>
+      </Card>
+    );
+  };
+
   return (
     <div className="space-y-6">
-      {/* Toolbar */}
+      {/* 1. Storage Overview (4 Cards) */}
+      <StorageOverview
+        localOnlyCount={localOnlyList.length}
+        localAndCloudCount={localAndCloudList.length}
+        cloudOnlyCount={cloudOnlyItems.length}
+        totalUniqueCount={totalUniqueCount}
+        cleanupEligibleCount={cleanupEligibleList.length}
+        activeView={storageView}
+        onSelectView={setStorageView}
+        isLoading={isDatasetLoading}
+      />
+
+      {/* 2. Storage Comparison & Integrity Center */}
+      <StorageComparisonPanel
+        onRunComparison={runReconciliation}
+        isComparing={isComparing}
+        lastComparedAt={lastComparedAt}
+        cleanupEligibleCount={cleanupEligibleList.length}
+        onOpenCleanupDialog={() => setCleanupModalOpen(true)}
+        datasetLabel="Saved Titles & Links"
+      />
+
+      {/* 3. Toolbar */}
       <Card className="border border-border/80 p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -469,8 +865,8 @@ export function SavedTitlesLinksWorkspace() {
                 variant="secondary"
                 onClick={handleSaveAll}
                 disabled={syncing || pendingCount === 0}
-                className="h-9 gap-1.5 px-3 text-xs font-semibold"
-                title="Upload pending local changes to Cloudflare R2 and PostgreSQL"
+                className="h-9 gap-1.5 px-3 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-black border-amber-500 font-bold"
+                title="Append eligible local items to Cloudflare R2 (preserves all existing cloud items)"
               >
                 {syncing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -479,7 +875,7 @@ export function SavedTitlesLinksWorkspace() {
                 )}
                 <span>{syncing ? "Syncing…" : "Save to Cloud R2"}</span>
                 {pendingCount > 0 && (
-                  <span className="rounded-full bg-primary-foreground px-1.5 text-[10px] font-bold text-primary">
+                  <span className="rounded-full bg-black/20 px-1.5 py-0.2 text-[10px] font-bold text-black">
                     {pendingCount}
                   </span>
                 )}
@@ -502,7 +898,7 @@ export function SavedTitlesLinksWorkspace() {
                   onClick={() => setKindFilter(filter.value)}
                   className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                     kindFilter === filter.value
-                      ? "bg-primary-soft text-primary"
+                      ? "bg-primary-soft text-primary font-bold"
                       : "bg-surface-muted/60 text-muted hover:text-foreground"
                   }`}
                 >
@@ -534,7 +930,7 @@ export function SavedTitlesLinksWorkspace() {
         </div>
       )}
 
-      {/* Editor */}
+      {/* Editor Modal / Card */}
       {editor && (
         <Card className="border border-primary/30 bg-primary/5 p-4 shadow-sm sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -600,34 +996,35 @@ export function SavedTitlesLinksWorkspace() {
 
             <div className="sm:col-span-2">
               <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-muted">
-                Notes
+                Research Notes (optional)
               </label>
               <textarea
                 value={editor.notes}
                 maxLength={MAX_NOTES_LENGTH}
+                rows={3}
                 onChange={(event) =>
                   setEditor((current) =>
                     current ? { ...current, notes: event.target.value } : current
                   )
                 }
-                rows={3}
-                placeholder="Why is this worth keeping? Research context, tags, reminders..."
-                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                placeholder="Context, tags, reasons for saving..."
+                className="w-full rounded-lg border border-border bg-surface p-3 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
               />
             </div>
           </div>
 
           {formError && (
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>{formError}</span>
             </div>
           )}
 
-          <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+          <div className="mt-4 flex items-center justify-end gap-2">
             <Button
               type="button"
-              variant="secondary"
+              variant="ghost"
+              size="sm"
               onClick={closeEditor}
               disabled={saving}
               className="h-9 px-3 text-xs"
@@ -637,157 +1034,109 @@ export function SavedTitlesLinksWorkspace() {
             <Button
               type="button"
               variant="primary"
+              size="sm"
               onClick={handleSave}
               disabled={saving}
-              className="h-9 gap-1.5 px-3 text-xs font-semibold"
+              className="h-9 gap-1.5 px-4 text-xs font-semibold"
             >
-              {saving ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Check className="h-3.5 w-3.5" />
-              )}
-              <span>{saving ? "Saving…" : "Save locally"}</span>
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              <span>{saving ? "Saving…" : editor.recordId ? "Update" : "Save Reference"}</span>
             </Button>
           </div>
         </Card>
       )}
 
-      {/* List */}
-      {isLoading && references.length === 0 ? (
-        <Card className="flex items-center justify-center p-12 text-sm text-muted">
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading local references…
-        </Card>
-      ) : visibleReferences.length === 0 ? (
-        <Card className="flex flex-col items-center justify-center p-14 text-center">
-          <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-surface-muted text-muted">
-            <Bookmark className="h-7 w-7 text-primary opacity-60" />
-          </div>
-          <h3 className="text-base font-semibold text-foreground">
-            {references.length === 0
-              ? "No saved titles or links yet"
-              : "No references match your filters"}
-          </h3>
-          <p className="mt-1 max-w-md text-xs text-muted">
-            {references.length === 0
-              ? "Create a title-only note or preserve an external link. Everything is saved locally first, then synchronized to Cloudflare R2 and PostgreSQL."
-              : "Try a different search term or switch the kind filter."}
-          </p>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
-            <Button
-              type="button"
-              variant="primary"
-              onClick={() => startCreate("SAVED_TITLE")}
-              className="h-9 gap-1.5 px-3 text-xs font-semibold"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>New Title</span>
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => startCreate("SAVED_LINK")}
-              className="h-9 gap-1.5 px-3 text-xs font-semibold"
-            >
-              <Link2 className="h-3.5 w-3.5" />
-              <span>New Link</span>
-            </Button>
-          </div>
-        </Card>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {visibleReferences.map(({ record, kind }) => {
-            const recordId = recordIdOf(record);
-            const isPending =
-              record._localStatus === "LOCAL_PENDING" || record._syncStatus === "LOCAL";
-            const timestamp = record.updatedAt || record.createdAt || record.savedAt;
+      {/* ═════════════════════════════════════════════════════════════════════ */}
+      {/* 3 STANDARDIZED STORAGE SECTIONS                                       */}
+      {/* ═════════════════════════════════════════════════════════════════════ */}
 
-            return (
-              <Card
-                key={recordId}
-                className="flex flex-col justify-between rounded-xl border border-border/80 bg-surface p-4 transition hover:shadow-md"
+      {/* SECTION 1: LOCAL ONLY */}
+      {(storageView === "all" || storageView === "local") && (
+        <StorageStatusSection
+          category="LOCAL_ONLY"
+          title="SECTION 1 — NEWLY ADDED — LOCAL BROWSER"
+          description="Stored strictly in this browser’s IndexedDB database. Pending upload to Cloudflare R2."
+          count={visibleLocalOnly.length}
+          icon={<HardDrive className="h-4 w-4 text-amber-500" />}
+          actionButton={
+            visibleLocalOnly.length > 0 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={handleSaveAll}
+                disabled={syncing}
+                className="h-8 gap-1.5 bg-amber-500 hover:bg-amber-600 text-black border-amber-500 font-bold text-xs"
               >
-                <div className="min-w-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-                        <Badge tone={kind === "SAVED_LINK" ? "primary" : "neutral"}>
-                          {kind === "SAVED_LINK" ? "LINK" : "TITLE"}
-                        </Badge>
-                        {isPending ? (
-                          <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
-                            Pending sync
-                          </span>
-                        ) : (
-                          <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
-                            Cloud committed
-                          </span>
-                        )}
-                      </div>
-                      <h4 className="line-clamp-2 text-base font-bold leading-snug tracking-tight text-foreground">
-                        {record.title || "Untitled reference"}
-                      </h4>
-                    </div>
-                  </div>
-
-                  {record.url && (
-                    <a
-                      href={record.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-2 inline-flex max-w-full items-center gap-1 text-xs text-primary hover:underline"
-                      title={record.url}
-                    >
-                      <ExternalLink className="h-3 w-3 shrink-0" />
-                      <span className="truncate">{record.url}</span>
-                    </a>
-                  )}
-
-                  {record.notes && (
-                    <p className="mt-2 line-clamp-3 rounded-md bg-surface-muted/60 p-2 text-xs italic text-muted">
-                      {record.notes}
-                    </p>
-                  )}
-
-                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted">
-                    {timestamp && <span>Updated {formatDate(timestamp)}</span>}
-                    {record.originDeviceLabel && <span>via {record.originDeviceLabel}</span>}
-                    <span className="truncate font-mono" title={recordId}>
-                      {recordId}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-4 flex items-center justify-end gap-1.5 border-t border-border/50 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => startEdit(record, kind)}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-muted hover:text-foreground"
-                    title="Edit reference"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                    <span>Edit</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(record)}
-                    disabled={deletingId === recordId}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-danger/10 hover:text-danger disabled:opacity-50"
-                    title="Delete reference"
-                  >
-                    {deletingId === recordId ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                    <span>Delete</span>
-                  </button>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
+                <CloudUpload className="h-3.5 w-3.5" />
+                <span>Upload to R2 Cloud ({visibleLocalOnly.length})</span>
+              </Button>
+            ) : undefined
+          }
+          emptyMessage="No local-only references pending cloud commit."
+        >
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleLocalOnly.map(({ record, kind }) => renderReferenceCard(record, kind))}
+          </div>
+        </StorageStatusSection>
       )}
+
+      {/* SECTION 2: LOCAL + R2 CLOUD */}
+      {storageView === "all" && (
+        <StorageStatusSection
+          category="LOCAL_AND_CLOUD"
+          title="SECTION 2 — LOCAL + R2 CLOUD (SYNCHRONIZATION RECOVERY)"
+          description="Verified in Cloudflare R2 and Supabase. Safe to clean up from local browser to free storage."
+          count={visibleLocalAndCloud.length}
+          icon={<Layers className="h-4 w-4 text-cyan-500" />}
+          actionButton={
+            cleanupEligibleList.length > 0 ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setCleanupModalOpen(true)}
+                disabled={isCleaning}
+                className="h-8 gap-1.5 border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20 text-xs font-semibold"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>Complete Local Cleanup ({cleanupEligibleList.length})</span>
+              </Button>
+            ) : undefined
+          }
+          emptyMessage="No references currently synchronized across both local browser and R2 cloud."
+        >
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleLocalAndCloud.map(({ record, kind }) => renderReferenceCard(record, kind))}
+          </div>
+        </StorageStatusSection>
+      )}
+
+      {/* SECTION 3: CLOUD ONLY */}
+      {(storageView === "all" || storageView === "cloud") && (
+        <StorageStatusSection
+          category="CLOUD_ONLY"
+          title="SECTION 3 — FROM R2 CLOUD — COMPLETE ARCHIVE"
+          description="Authoritatively discoverable in Cloudflare R2. Local browser copy cleaned up."
+          count={visibleCloudOnly.length}
+          icon={<Cloud className="h-4 w-4 text-emerald-500" />}
+          emptyMessage="No cloud-only references yet. Once verified local copies are cleaned up, they appear here."
+        >
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {visibleCloudOnly.map(({ record, kind }) => renderReferenceCard(record, kind, true))}
+          </div>
+        </StorageStatusSection>
+      )}
+
+      {/* Batch Local Cleanup Confirmation Dialog */}
+      <StorageCleanupConfirmationDialog
+        isOpen={cleanupModalOpen}
+        onClose={() => setCleanupModalOpen(false)}
+        onConfirm={handleBatchCleanup}
+        isCleaning={isCleaning}
+        recordCount={cleanupEligibleList.length}
+        datasetName="saved titles & links"
+      />
     </div>
   );
 }

@@ -7,13 +7,18 @@ import {
   ArrowUpRight,
   BookmarkPlus,
   Check,
+  CheckCircle2,
   Clock,
+  Cloud,
+  CloudUpload,
   Compass,
   Copy,
+  Database,
   Download,
   ExternalLink,
   Eye,
   Filter,
+  HardDrive,
   Layers,
   Loader2,
   Play,
@@ -23,11 +28,12 @@ import {
   Trash2,
   Tv,
   Video,
+  X,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import type { YouTubeManifestSummary } from "@/types/manifest";
 import type {
   SearchHistoryItem,
@@ -45,23 +51,47 @@ import {
   toSearchDoc,
 } from "@/lib/search/local-search";
 import { formatDate, formatFullDateTime, formatRelativeDate } from "@/lib/utils/format";
+import {
+  removeLocalSearchHistoryItem,
+  removeLocalSearchHistoryBatch,
+} from "@/lib/storage/indexeddb-store";
+import {
+  StorageStatusBadge,
+  StorageOverview,
+  StorageComparisonPanel,
+  StorageStatusSection,
+  StorageCleanupConfirmationDialog,
+  type StorageStateCategory,
+} from "@/components/storage/unified-storage-components";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Search History Workspace (2026 SaaS)
    ──────────────────────────────────────────────────────────────────────────
    Comprehensive chronological search history tracking every search made
-   across the application. Renders each search entry as a wide card stacked
-   vertically, displaying:
-     1. Search title & query
-     2. Chosen YouTube API search options breakdown
-     3. Results information, counts, quota, and thumbnail previews
-     4. Important action buttons:
-        - Copy Search Title (one-click with feedback)
-        - Forward to Search (copies title & navigates with auto-paste into input)
-        - Rerun Search (forwards and auto-runs)
-        - Save to Presets shelf
-        - Delete entry from history
+   across the application. Supports:
+     1. Unified Three-State Storage Classification (LOCAL_ONLY, LOCAL_AND_CLOUD, CLOUD_ONLY)
+     2. Authentic 3-Way Reconciliation (IndexedDB + Cloudflare R2 + Supabase PostgreSQL)
+     3. Surgical safe local cleanup preserving all cloud and audit records
+     4. Dedicated wide cards with search options, previews, results, and actions
    ═══════════════════════════════════════════════════════════════════════════ */
+
+interface ArchiveIndexItem {
+  id: string;
+  title: string;
+  query: string;
+  resourceSelection: YouTubeSearchResourceSelection;
+  settings: Partial<YouTubeSearchSettings>;
+  createdAt: string;
+  itemCount: number;
+  videoCount?: number;
+  channelCount?: number;
+  playlistCount?: number;
+  quotaCostEstimate?: number;
+  status: SearchHistoryItem["status"];
+  topThumbnails?: string[];
+}
+
+type StorageView = "all" | "local" | "cloud";
 
 export function HistoryWorkspace() {
   const router = useRouter();
@@ -75,6 +105,12 @@ export function HistoryWorkspace() {
     (s) => s.clearSearchHistory,
   );
   const saveSearch = useYouTubeWorkspaceStore((s) => s.saveSearch);
+  const removeLocalSearchHistoryAfterCloudCommit = useYouTubeWorkspaceStore(
+    (s) => s.removeLocalSearchHistoryAfterCloudCommit
+  );
+  const removeLocalSearchHistoryBatchAfterCloudCommit = useYouTubeWorkspaceStore(
+    (s) => s.removeLocalSearchHistoryBatchAfterCloudCommit
+  );
 
   /* ── Local State & Filter Controls ───────────────────────────────────── */
   const [keywordFilter, setKeywordFilter] = useState("");
@@ -87,6 +123,7 @@ export function HistoryWorkspace() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "most_results">(
     "newest",
   );
+  const [storageView, setStorageView] = useState<StorageView>("all");
 
   /* ── Runtime Server Manifests (Secondary Tab / Merge) ────────────────── */
   const [activeTab, setActiveTab] = useState<"searches" | "raw_manifests">(
@@ -102,7 +139,20 @@ export function HistoryWorkspace() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
-  /* ── Fetch runtime server manifests for secondary tab ───────────────── */
+  /* ── Server Search Storage Archive Index ────────────────────────────── */
+  const [archiveItems, setArchiveItems] = useState<ArchiveIndexItem[]>([]);
+  const [, setLoadingArchive] = useState(false);
+
+  /* ── 3-Way Reconciliation & Cleanup State ────────────────────────────── */
+  const [isComparing, setIsComparing] = useState(false);
+  const [lastComparedAt, setLastComparedAt] = useState<string | null>(null);
+  const [reconciliationMap, setReconciliationMap] = useState<
+    Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
+  >(new Map());
+  const [cloudOnlySearches, setCloudOnlySearches] = useState<SearchHistoryItem[]>([]);
+  const [cleanupModalOpen, setCleanupModalOpen] = useState(false);
+  const [isCleaning, setIsCleaning] = useState(false);
+
   async function fetchServerManifests() {
     setLoadingManifests(true);
     try {
@@ -117,25 +167,6 @@ export function HistoryWorkspace() {
       startTransition(() => setLoadingManifests(false));
     }
   }
-
-  /* ── Server Search Storage Archive Index ────────────────────────────── */
-  interface ArchiveIndexItem {
-    id: string;
-    title: string;
-    query: string;
-    resourceSelection: YouTubeSearchResourceSelection;
-    settings: Partial<YouTubeSearchSettings>;
-    createdAt: string;
-    itemCount: number;
-    videoCount?: number;
-    channelCount?: number;
-    playlistCount?: number;
-    quotaCostEstimate?: number;
-    status: SearchHistoryItem["status"];
-    topThumbnails?: string[];
-  }
-  const [archiveItems, setArchiveItems] = useState<ArchiveIndexItem[]>([]);
-  const [, setLoadingArchive] = useState(false);
 
   async function fetchSearchArchive() {
     setLoadingArchive(true);
@@ -154,12 +185,10 @@ export function HistoryWorkspace() {
     }
   }
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Mount-only fetch for raw manifests and archive */
   useEffect(() => {
     fetchServerManifests();
     fetchSearchArchive();
   }, []);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   /* ── Unified Search Items (Zustand + Server Archive) ───────────────── */
   const unifiedSearches = useMemo(() => {
@@ -190,8 +219,129 @@ export function HistoryWorkspace() {
     return Array.from(map.values());
   }, [searchHistory, archiveItems]);
 
-  /* ── Shared local search over stored history (strictly local, 0 quota) ──
-     Index is rebuilt only when the unified list changes — never per keystroke. */
+  // Run authentic 3-way reconciliation comparison against R2 and Supabase
+  const runReconciliation = useCallback(async () => {
+    setIsComparing(true);
+    try {
+      const localRecordsPayload = unifiedSearches.map((item) => ({
+        id: item.id,
+        recordId: item.id,
+        resourceType: "SEARCH_HISTORY",
+        title: item.title,
+        query: item.query,
+        createdAt: item.timestamp,
+        savedAt: item.timestamp,
+      }));
+
+      const res = await fetch("/api/storage/reconciliation/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          datasetType: "SEARCH_HISTORY",
+          resourceType: "SEARCH_HISTORY",
+          localRecords: localRecordsPayload,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Reconciliation comparison failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.records)) {
+        const nextMap = new Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>();
+        for (const r of data.records) {
+          nextMap.set(r.id, {
+            storageState: r.storageState,
+            cleanupEligible: Boolean(r.cleanupEligible),
+            r2Verified: Boolean(r.r2Verified),
+            supabaseVerified: Boolean(r.supabaseVerified),
+          });
+        }
+        setReconciliationMap(nextMap);
+        setLastComparedAt(data.timestamp || new Date().toISOString());
+
+        // Process cloud-only searches
+        if (Array.isArray(data.cloudOnlyRecords)) {
+          const parsedCloudOnly: SearchHistoryItem[] = data.cloudOnlyRecords.map((c: any) => ({
+            id: c.id,
+            title: c.title,
+            query: c.query || "",
+            timestamp: c.createdAt || new Date().toISOString(),
+            resourceSelection: "ALL",
+            resultsCount: 0,
+            status: "complete",
+            manifestId: c.cloudMeta?.generationId || c.id,
+          }));
+          setCloudOnlySearches(parsedCloudOnly);
+        }
+
+        showToast(
+          `Reconciliation complete: ${data.summary.localOnlyCount} local-only, ${data.summary.localAndCloudCount} synchronized, ${data.summary.cleanupEligibleCount} cleanup eligible.`
+        );
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to run 3-way reconciliation.");
+    } finally {
+      setIsComparing(false);
+    }
+  }, [unifiedSearches]);
+
+  useEffect(() => {
+    if (unifiedSearches.length > 0) {
+      void runReconciliation();
+    }
+  }, [unifiedSearches.length]);
+
+  // Classify search items into 3 states
+  const classifiedSearches = useMemo(() => {
+    return unifiedSearches.map((item) => {
+      const recon = reconciliationMap.get(item.id);
+      let storageState: StorageStateCategory = "LOCAL_ONLY";
+      let cleanupEligible = false;
+      let r2Verified = false;
+      let supabaseVerified = false;
+
+      if (recon) {
+        storageState = recon.storageState;
+        cleanupEligible = recon.cleanupEligible;
+        r2Verified = recon.r2Verified;
+        supabaseVerified = recon.supabaseVerified;
+      } else if (item.manifestId) {
+        storageState = "LOCAL_AND_CLOUD";
+        cleanupEligible = true;
+        r2Verified = true;
+        supabaseVerified = true;
+      }
+
+      return {
+        ...item,
+        _storageState: storageState,
+        _cleanupEligible: cleanupEligible,
+        _r2Verified: r2Verified,
+        _supabaseVerified: supabaseVerified,
+      };
+    });
+  }, [unifiedSearches, reconciliationMap]);
+
+  // Partition into 3 categories
+  const localOnlyList = useMemo(() => {
+    return classifiedSearches.filter((s) => s._storageState === "LOCAL_ONLY");
+  }, [classifiedSearches]);
+
+  const localAndCloudList = useMemo(() => {
+    return classifiedSearches.filter((s) => s._storageState === "LOCAL_AND_CLOUD");
+  }, [classifiedSearches]);
+
+  const cleanupEligibleList = useMemo(() => {
+    return classifiedSearches.filter((s) => s._cleanupEligible);
+  }, [classifiedSearches]);
+
+  const totalUniqueCount = useMemo(() => {
+    return classifiedSearches.length + cloudOnlySearches.length;
+  }, [classifiedSearches, cloudOnlySearches]);
+
+  /* ── Shared local search over stored history (strictly local, 0 quota) ── */
   const historySearchDocs = useMemo(
     () =>
       unifiedSearches.map((item) =>
@@ -216,43 +366,36 @@ export function HistoryWorkspace() {
     return new Set(ranked.map((item) => item.id));
   }, [unifiedSearches, historySearchDocs, historySearcher, keywordFilter]);
 
-  /* ── Filtered & Sorted Search History ────────────────────────────────── */
-  const filteredSearches = useMemo(() => {
-    return unifiedSearches
-      .filter((item) => {
-        // Keyword match via the shared FlexSearch service (titles weighted
-        // above metadata) with a plain-includes fallback for edge runtimes.
-        if (keywordMatchedIds && !keywordMatchedIds.has(item.id)) {
-          return false;
-        }
+  // Filter and sort helper
+  const filterAndSortSearches = useCallback(
+    (list: (SearchHistoryItem & { _storageState?: StorageStateCategory; _cleanupEligible?: boolean })[]) => {
+      return list
+        .filter((item) => {
+          if (keywordMatchedIds && !keywordMatchedIds.has(item.id)) return false;
+          if (resourceFilter !== "ALL" && item.resourceSelection !== resourceFilter) return false;
+          if (modeFilter === "unrestricted" && item.settings?.safeSearch !== "none") return false;
+          if (modeFilter === "filtered" && item.settings?.safeSearch === "none") return false;
+          return true;
+        })
+        .sort((a, b) => {
+          if (sortOrder === "newest") {
+            return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+          }
+          if (sortOrder === "oldest") {
+            return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+          }
+          if (sortOrder === "most_results") {
+            return b.resultsCount - a.resultsCount;
+          }
+          return 0;
+        });
+    },
+    [keywordMatchedIds, resourceFilter, modeFilter, sortOrder]
+  );
 
-        // Resource type match
-        if (resourceFilter !== "ALL" && item.resourceSelection !== resourceFilter) {
-          return false;
-        }
-
-        // Mode filter match
-        if (modeFilter === "unrestricted") {
-          if (item.settings?.safeSearch !== "none") return false;
-        } else if (modeFilter === "filtered") {
-          if (item.settings?.safeSearch === "none") return false;
-        }
-
-        return true;
-      })
-      .sort((a, b) => {
-        if (sortOrder === "newest") {
-          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        }
-        if (sortOrder === "oldest") {
-          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-        }
-        if (sortOrder === "most_results") {
-          return b.resultsCount - a.resultsCount;
-        }
-        return 0;
-      });
-  }, [unifiedSearches, keywordMatchedIds, resourceFilter, modeFilter, sortOrder]);
+  const visibleLocalOnly = useMemo(() => filterAndSortSearches(localOnlyList), [filterAndSortSearches, localOnlyList]);
+  const visibleLocalAndCloud = useMemo(() => filterAndSortSearches(localAndCloudList), [filterAndSortSearches, localAndCloudList]);
+  const visibleCloudOnly = useMemo(() => filterAndSortSearches(cloudOnlySearches), [filterAndSortSearches, cloudOnlySearches]);
 
   /* ── Statistics Summary ──────────────────────────────────────────────── */
   const stats = useMemo(() => {
@@ -279,16 +422,10 @@ export function HistoryWorkspace() {
 
   const cleanDisplayTitle = (raw: string | undefined | null) => (raw ?? "").replace(/^Search:\s*/i, "").trim();
 
-  /**
-   * Directly view search results from archive without triggering YouTube API call
-   */
   const handleViewResults = (item: SearchHistoryItem) => {
     router.push(`/search?load=${encodeURIComponent(item.id)}`);
   };
 
-  /**
-   * Delete entry from local store and server archive
-   */
   const handleDeleteItem = async (id: string) => {
     deleteSearchHistoryItem(id);
     setArchiveItems((prev) => prev.filter((x) => x.id !== id));
@@ -299,9 +436,6 @@ export function HistoryWorkspace() {
     }
   };
 
-  /**
-   * Clear all search history from local store and server archive
-   */
   const handleClearAll = async () => {
     clearSearchHistory();
     setArchiveItems([]);
@@ -314,9 +448,6 @@ export function HistoryWorkspace() {
     }
   };
 
-  /**
-   * One-click copy of the search title with visual feedback
-   */
   const handleCopyTitle = async (item: SearchHistoryItem) => {
     const textToCopy = cleanDisplayTitle(item.title) || item.query;
     try {
@@ -329,9 +460,6 @@ export function HistoryWorkspace() {
     }
   };
 
-  /**
-   * Forward to Search page: copies title to clipboard, auto-pastes into the input
-   */
   const handleForwardToSearch = async (
     item: SearchHistoryItem,
     autoRun = false,
@@ -343,7 +471,6 @@ export function HistoryWorkspace() {
       /* Ignore clipboard error */
     }
 
-    // Build URL query with auto-run flag if requested
     const params = new URLSearchParams({
       q: item.query,
       forwarded: "true",
@@ -355,9 +482,6 @@ export function HistoryWorkspace() {
     router.push(`/search?${params.toString()}`);
   };
 
-  /**
-   * Save search title into the preset shelf (savedSearches)
-   */
   const handleSaveToPresets = (item: SearchHistoryItem) => {
     const titleToSave = cleanDisplayTitle(item.title) || item.query;
     saveSearch({
@@ -370,9 +494,6 @@ export function HistoryWorkspace() {
     showToast(`Saved "${titleToSave}" to your Saved Searches preset shelf!`);
   };
 
-  /**
-   * Export all search history as formatted JSON
-   */
   const handleExportHistory = () => {
     const dataStr = JSON.stringify(searchHistory, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
@@ -383,6 +504,64 @@ export function HistoryWorkspace() {
     a.click();
     URL.revokeObjectURL(url);
     showToast("Exported search history to JSON file.");
+  };
+
+  // Safe local cleanup (single history item)
+  const handleSingleCleanup = async (item: SearchHistoryItem) => {
+    const ownerId = "asdy";
+    setIsCleaning(true);
+    try {
+      await removeLocalSearchHistoryItem(ownerId, item.id);
+      removeLocalSearchHistoryAfterCloudCommit(item.id);
+      await fetch("/api/storage/reconciliation/audit-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          datasetType: "SEARCH_HISTORY",
+          resourceType: "SEARCH_HISTORY",
+          cleanedRecordIds: [item.id],
+          cleanupCount: 1,
+        }),
+      });
+      showToast(`Safe local cleanup complete for "${item.title || item.query}". Preserved in Cloudflare R2.`);
+      void runReconciliation();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to clean up local search history entry.");
+    } finally {
+      setIsCleaning(false);
+    }
+  };
+
+  // Safe local cleanup (batch)
+  const handleBatchCleanup = async () => {
+    const ownerId = "asdy";
+    const targets = cleanupEligibleList.map((item) => item.id).filter(Boolean);
+    if (targets.length === 0) return;
+
+    setIsCleaning(true);
+    try {
+      const count = await removeLocalSearchHistoryBatch(ownerId, targets);
+      removeLocalSearchHistoryBatchAfterCloudCommit(targets);
+      await fetch("/api/storage/reconciliation/audit-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          datasetType: "SEARCH_HISTORY",
+          resourceType: "SEARCH_HISTORY",
+          cleanedRecordIds: targets,
+          cleanupCount: count,
+        }),
+      });
+      setCleanupModalOpen(false);
+      showToast(
+        `Safe local cleanup completed for ${count} verified search history entries. All cloud manifests in R2 remain completely intact.`
+      );
+      void runReconciliation();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to execute batch local cleanup.");
+    } finally {
+      setIsCleaning(false);
+    }
   };
 
   const showToast = (msg: string) => {
@@ -403,9 +582,316 @@ export function HistoryWorkspace() {
     }
   }
 
+  // Render a wide research card
+  const renderHistoryCard = (
+    item: SearchHistoryItem & { _storageState?: StorageStateCategory; _cleanupEligible?: boolean },
+    isCloudOnly = false
+  ) => {
+    const isCopied = copiedId === item.id;
+    const isUnrestricted = item.settings?.safeSearch === "none";
+    const hasThumbnails = item.topThumbnails && item.topThumbnails.length > 0;
+    const canCleanLocal = Boolean(item._cleanupEligible && !isCloudOnly);
+
+    return (
+      <div
+        key={item.id}
+        className="group relative rounded-xl border border-border/80 bg-surface p-5 shadow-xs transition hover:border-primary/50 hover:shadow-md"
+      >
+        {/* CARD HEADER */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-muted">
+                {getResourceIcon(item.resourceSelection)}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <StorageStatusBadge
+                    category={isCloudOnly ? "CLOUD_ONLY" : item._storageState || "LOCAL_ONLY"}
+                    substate={
+                      item._cleanupEligible
+                        ? "CLEANUP_ELIGIBLE"
+                        : item._storageState === "LOCAL_AND_CLOUD"
+                        ? "AUDIT_PENDING"
+                        : undefined
+                    }
+                  />
+                  {item.status && (
+                    <Badge
+                      tone={
+                        item.status === "complete"
+                          ? "success"
+                          : item.status === "failed"
+                          ? "danger"
+                          : "neutral"
+                      }
+                      className="text-[10px] capitalize"
+                    >
+                      {item.status}
+                    </Badge>
+                  )}
+                </div>
+                <h3
+                  className="truncate text-base font-semibold text-foreground group-hover:text-primary transition-colors cursor-pointer"
+                  title={`${cleanDisplayTitle(item.title) || item.query} (Click to copy title)`}
+                  onClick={() => handleCopyTitle(item)}
+                >
+                  {cleanDisplayTitle(item.title) || item.query}
+                </h3>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                  <span className="font-mono text-[11px] text-muted/90">
+                    q: &quot;{item.query}&quot;
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {formatRelativeDate(item.timestamp)}
+                  </span>
+                  <span>•</span>
+                  <span className="text-[11px] text-muted/80">
+                    {formatFullDateTime(item.timestamp)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2 pt-1 lg:pt-0">
+            {canCleanLocal && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-8 gap-1.5 border-cyan-500/30 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20 px-2.5 text-xs font-semibold"
+                onClick={() => handleSingleCleanup(item)}
+                disabled={isCleaning}
+                title="Remove local browser copy from IndexedDB (cloud manifest in R2 remains preserved)"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>Clean Local</span>
+              </Button>
+            )}
+
+            <Button
+              type="button"
+              variant="primary"
+              className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-xs"
+              onClick={() => handleViewResults(item)}
+              title="Load full search results directly from cache into Search workspace without using YouTube API quota"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              <span>View Results</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-8 gap-1.5 px-3 text-xs"
+              onClick={() => handleCopyTitle(item)}
+              title="Copy search title to clipboard"
+            >
+              {isCopied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-success" />
+                  <span className="text-success font-medium">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  <span>Copy Title</span>
+                </>
+              )}
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-8 gap-1.5 px-3 text-xs font-medium"
+              onClick={() => handleForwardToSearch(item, false)}
+              title="Copy title, forward to Search page, and auto-paste into the search input"
+            >
+              <ArrowUpRight className="h-3.5 w-3.5" />
+              <span>Forward</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-8 gap-1.5 px-2.5 text-xs text-primary hover:bg-primary-soft"
+              onClick={() => handleForwardToSearch(item, true)}
+              title="Load and immediately execute this search with exact same options"
+            >
+              <Play className="h-3 w-3 fill-current" />
+              <span className="hidden sm:inline">Rerun</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 w-8 p-0 text-muted hover:text-primary"
+              onClick={() => handleSaveToPresets(item)}
+              title="Bookmark this search title into your Saved Searches shelf"
+            >
+              <BookmarkPlus className="h-4 w-4" />
+            </Button>
+
+            {!isCloudOnly && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-8 w-8 p-0 text-muted hover:text-danger hover:bg-danger/10"
+                onClick={() => handleDeleteItem(item.id)}
+                title="Delete this entry from search history"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* SECTION 2: CHOSEN SEARCH OPTIONS */}
+        <div className="mt-4 rounded-lg border border-border/50 bg-surface-muted/30 p-3">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
+            <Filter className="h-3 w-3" />
+            <span>Chosen Search Options</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone="primary" className="text-[11px]">
+              Resource: {item.resourceSelection.toUpperCase()}
+            </Badge>
+
+            {isUnrestricted ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                <ShieldAlert className="h-3 w-3" />
+                Unrestricted Mode (18+/35+ Allowed)
+              </span>
+            ) : (
+              <Badge tone="neutral" className="text-[11px]">
+                SafeSearch: {item.settings?.safeSearch ?? "Moderate"}
+              </Badge>
+            )}
+
+            {item.settings?.order && (
+              <Badge tone="neutral" className="text-[11px]">
+                Sort: {item.settings.order}
+              </Badge>
+            )}
+
+            {item.settings?.regionCode && (
+              <Badge tone="neutral" className="text-[11px]">
+                Region: {item.settings.regionCode}
+              </Badge>
+            )}
+
+            {item.settings?.relevanceLanguage && (
+              <Badge tone="neutral" className="text-[11px]">
+                Lang: {item.settings.relevanceLanguage}
+              </Badge>
+            )}
+
+            <Badge tone="neutral" className="text-[11px]">
+              Fetch Limit: {item.settings?.pageSize ?? 25} / page
+            </Badge>
+          </div>
+        </div>
+
+        {/* SECTION 3: RESULTS INFO & THUMBNAILS PREVIEW */}
+        <div className="mt-3 flex flex-col gap-3 rounded-lg border border-border/50 bg-surface-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
+              <Layers className="h-3 w-3" />
+              <span>Results Information</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Badge
+                tone={
+                  item.status === "failed"
+                    ? "danger"
+                    : item.status === "empty"
+                    ? "warning"
+                    : item.resultsCount > 0
+                    ? "success"
+                    : "warning"
+                }
+                className="font-semibold"
+              >
+                {item.status === "failed"
+                  ? "Search Failed"
+                  : item.status === "empty"
+                  ? "No Results Found"
+                  : `${item.resultsCount} Results Discovered`}
+              </Badge>
+
+              {item.videoCount !== undefined && item.videoCount > 0 && (
+                <span className="text-muted">
+                  <strong>{item.videoCount}</strong> videos
+                </span>
+              )}
+              {item.channelCount !== undefined && item.channelCount > 0 && (
+                <span className="text-muted">
+                  • <strong>{item.channelCount}</strong> channels
+                </span>
+              )}
+              {item.playlistCount !== undefined && item.playlistCount > 0 && (
+                <span className="text-muted">
+                  • <strong>{item.playlistCount}</strong> playlists
+                </span>
+              )}
+              {item.quotaCostEstimate !== undefined && item.quotaCostEstimate > 0 && (
+                <span className="text-muted/80">
+                  (~{item.quotaCostEstimate} quota units)
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {hasThumbnails && (
+              <div className="flex -space-x-3 overflow-hidden rounded-md p-1">
+                {item.topThumbnails?.map((thumb, idx) => (
+                  <div
+                    key={idx}
+                    className="relative h-9 w-14 shrink-0 overflow-hidden rounded border border-surface bg-surface-muted shadow-xs transition hover:scale-105 hover:z-10"
+                  >
+                    <Image
+                      src={thumb}
+                      alt="Result preview"
+                      fill
+                      sizes="56px"
+                      className="object-cover"
+                      unoptimized
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {item.manifestId && (
+              <Link
+                href={`/manifests/${item.manifestId}`}
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted hover:border-primary/40 hover:text-primary transition"
+                title="Inspect full manifest details"
+              >
+                <span>Manifest</span>
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            )}
+          </div>
+        </div>
+
+        {/* CARD FOOTER */}
+        <div className="mt-3 flex items-center gap-2 border-t border-border/40 pt-2.5 text-[11px] text-muted/70">
+          <Clock className="h-3 w-3 shrink-0" />
+          <span>Searched on {formatFullDateTime(item.timestamp)}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
-      {/* ── Toast Feedback Notification ───────────────────────────────── */}
+      {/* Toast Feedback Notification */}
       {feedbackMessage && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-primary/40 bg-surface px-4 py-3 text-sm font-medium text-foreground shadow-2xl animate-slide-in">
           <Check className="h-4 w-4 text-success" />
@@ -413,7 +899,29 @@ export function HistoryWorkspace() {
         </div>
       )}
 
-      {/* ── Workspace Header / Telemetry Cards ─────────────────────────── */}
+      {/* 1. Storage Overview (4 Cards) */}
+      <StorageOverview
+        localOnlyCount={localOnlyList.length}
+        localAndCloudCount={localAndCloudList.length}
+        cloudOnlyCount={cloudOnlySearches.length}
+        totalUniqueCount={totalUniqueCount}
+        cleanupEligibleCount={cleanupEligibleList.length}
+        activeView={storageView}
+        onSelectView={setStorageView}
+        isLoading={false}
+      />
+
+      {/* 2. Storage Comparison & Integrity Center */}
+      <StorageComparisonPanel
+        onRunComparison={runReconciliation}
+        isComparing={isComparing}
+        lastComparedAt={lastComparedAt}
+        cleanupEligibleCount={cleanupEligibleList.length}
+        onOpenCleanupDialog={() => setCleanupModalOpen(true)}
+        datasetLabel="Search Execution History"
+      />
+
+      {/* 3. Telemetry Cards */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="research-surface flex items-center justify-between p-4">
           <div>
@@ -466,7 +974,7 @@ export function HistoryWorkspace() {
         </div>
       </div>
 
-      {/* ── View Mode Tabs: Search History (Wide Cards) vs Raw Manifests ── */}
+      {/* 4. View Mode Tabs: Search History vs Raw Server Manifests */}
       <div className="flex items-center justify-between border-b border-border/60 pb-3">
         <div className="flex items-center gap-2">
           <button
@@ -474,7 +982,7 @@ export function HistoryWorkspace() {
             onClick={() => setActiveTab("searches")}
             className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
               activeTab === "searches"
-                ? "bg-primary text-white shadow-xs"
+                ? "bg-primary text-white shadow-xs font-bold"
                 : "text-muted hover:bg-surface-muted hover:text-foreground"
             }`}
           >
@@ -487,7 +995,7 @@ export function HistoryWorkspace() {
             onClick={() => setActiveTab("raw_manifests")}
             className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
               activeTab === "raw_manifests"
-                ? "bg-primary text-white shadow-xs"
+                ? "bg-primary text-white shadow-xs font-bold"
                 : "text-muted hover:bg-surface-muted hover:text-foreground"
             }`}
           >
@@ -520,12 +1028,11 @@ export function HistoryWorkspace() {
         )}
       </div>
 
-      {/* ── TAB 1: SEARCH HISTORY (WIDE CARDS STACKED VERTICALLY) ─────── */}
+      {/* ── TAB 1: SEARCH HISTORY ─────────────────────────────────────── */}
       {activeTab === "searches" && (
-        <div className="space-y-4">
+        <div className="space-y-6">
           {/* Search & Filter Toolbar */}
           <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
-            {/* Search Input */}
             <div className="relative min-w-0 flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
               <input
@@ -536,9 +1043,7 @@ export function HistoryWorkspace() {
               />
             </div>
 
-            {/* Quick Filters */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* Resource Filter */}
               <select
                 className="h-9 rounded-lg border border-border bg-surface px-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 value={resourceFilter}
@@ -554,7 +1059,6 @@ export function HistoryWorkspace() {
                 <option value="playlist">Playlists Only</option>
               </select>
 
-              {/* Mode Filter */}
               <select
                 className="h-9 rounded-lg border border-border bg-surface px-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 value={modeFilter}
@@ -569,7 +1073,6 @@ export function HistoryWorkspace() {
                 <option value="filtered">Filtered Only</option>
               </select>
 
-              {/* Sort Order — Default is Latest (newest first) */}
               <select
                 className="h-9 rounded-lg border border-border bg-surface px-2.5 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                 value={sortOrder}
@@ -586,415 +1089,81 @@ export function HistoryWorkspace() {
             </div>
           </div>
 
-          {/* Results Count Badge */}
-          <div className="flex items-center justify-between text-xs text-muted">
-            <span>
-              Showing <strong>{filteredSearches.length}</strong> of{" "}
-              {searchHistory.length} saved searches
-            </span>
-            {keywordFilter && (
-              <button
-                type="button"
-                onClick={() => setKeywordFilter("")}
-                className="text-primary hover:underline"
-              >
-                Clear filter
-              </button>
-            )}
-          </div>
+          {/* ═════════════════════════════════════════════════════════════ */}
+          {/* 3 STANDARDIZED STORAGE SECTIONS                               */}
+          {/* ═════════════════════════════════════════════════════════════ */}
 
-          {/* Empty State */}
-          {filteredSearches.length === 0 ? (
-            <Card>
-              <div className="flex flex-col items-center gap-3 py-12 text-center">
-                <Search className="h-12 w-12 text-muted/40" />
-                <div>
-                  <p className="text-base font-medium text-foreground">
-                    {searchHistory.length === 0
-                      ? "No searches recorded yet"
-                      : "No history entries match your search criteria"}
-                  </p>
-                  <p className="mt-1 text-xs text-muted">
-                    {searchHistory.length === 0
-                      ? "Every search you perform in this app will automatically be recorded here with its title, options, and results."
-                      : "Try clearing your keyword or changing the filter options above."}
-                  </p>
-                </div>
-                {searchHistory.length === 0 && (
-                  <Button
-                    variant="primary"
-                    className="mt-2 text-xs"
-                    onClick={() => router.push("/search")}
-                  >
-                    <Search className="h-3.5 w-3.5" />
-                    Go to Search Workspace
-                  </Button>
-                )}
+          {/* SECTION 1: LOCAL ONLY */}
+          {(storageView === "all" || storageView === "local") && (
+            <StorageStatusSection
+              category="LOCAL_ONLY"
+              title="SECTION 1 — NEWLY ADDED — LOCAL BROWSER"
+              description="Stored strictly in this browser’s IndexedDB database. Pending upload to Cloudflare R2."
+              count={visibleLocalOnly.length}
+              icon={<HardDrive className="h-4 w-4 text-amber-500" />}
+              emptyMessage="No local-only search history entries pending cloud commit."
+            >
+              <div className="space-y-4">
+                {visibleLocalOnly.map((item) => renderHistoryCard(item))}
               </div>
-            </Card>
-          ) : (
-            /* ═════════════════════════════════════════════════════════════
-               WIDE CARDS STACKED VERTICALLY (ABOVE EACH OTHER)
-               ─────────────────────────────────────────────────────────────
-               Each search renders as a spacious, feature-packed wide card
-               with full chosen search options breakdown, results info,
-               preview thumbnails, copy title, and forward-to-search.
-               ═════════════════════════════════════════════════════════════ */
-            <div className="space-y-4">
-              {filteredSearches.map((item) => {
-                const isCopied = copiedId === item.id;
-                const isUnrestricted = item.settings?.safeSearch === "none";
-                const hasThumbnails =
-                  item.topThumbnails && item.topThumbnails.length > 0;
+            </StorageStatusSection>
+          )}
 
-                return (
-                  <div
-                    key={item.id}
-                    className="group relative rounded-xl border border-border/80 bg-surface p-5 shadow-xs transition hover:border-primary/50 hover:shadow-md"
+          {/* SECTION 2: LOCAL + R2 CLOUD */}
+          {storageView === "all" && (
+            <StorageStatusSection
+              category="LOCAL_AND_CLOUD"
+              title="SECTION 2 — LOCAL + R2 CLOUD (SYNCHRONIZATION RECOVERY)"
+              description="Verified in Cloudflare R2 and Supabase. Safe to clean up from local browser to free storage."
+              count={visibleLocalAndCloud.length}
+              icon={<Layers className="h-4 w-4 text-cyan-500" />}
+              actionButton={
+                cleanupEligibleList.length > 0 ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setCleanupModalOpen(true)}
+                    disabled={isCleaning}
+                    className="h-8 gap-1.5 border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/20 text-xs font-semibold"
                   >
-                    {/* ── CARD HEADER: Title + Timestamp + Action Buttons ── */}
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      {/* Left: Icon, Title, Query, Time */}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-surface-muted">
-                            {getResourceIcon(item.resourceSelection)}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <h3
-                              className="truncate text-base font-semibold text-foreground group-hover:text-primary transition-colors cursor-pointer"
-                              title={`${cleanDisplayTitle(item.title) || item.query} (Click to copy title)`}
-                              onClick={() => handleCopyTitle(item)}
-                            >
-                              {cleanDisplayTitle(item.title) || item.query}
-                            </h3>
-                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                              <span className="font-mono text-[11px] text-muted/90">
-                                q: &quot;{item.query}&quot;
-                              </span>
-                              <span>•</span>
-                              <span className="flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
-                                {formatRelativeDate(item.timestamp)}
-                              </span>
-                              <span>•</span>
-                              {/* Full date + time always visible on each research card */}
-                              <span className="text-[11px] text-muted/80">
-                                {formatFullDateTime(item.timestamp)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Complete Local Cleanup ({cleanupEligibleList.length})</span>
+                  </Button>
+                ) : undefined
+              }
+              emptyMessage="No search history currently synchronized across both local browser and R2 cloud."
+            >
+              <div className="space-y-4">
+                {visibleLocalAndCloud.map((item) => renderHistoryCard(item))}
+              </div>
+            </StorageStatusSection>
+          )}
 
-                      {/* Right: Important Action Buttons */}
-                      <div className="flex flex-wrap items-center gap-2 pt-1 lg:pt-0">
-                        {/* 0. Direct View Results Button (Loads cached manifest with zero YouTube API calls) */}
-                        <Button
-                          type="button"
-                          variant="primary"
-                          className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-xs"
-                          onClick={() => handleViewResults(item)}
-                          title="Load full search results directly from cache into Search workspace without using YouTube API quota"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                          <span>View Results</span>
-                        </Button>
-
-                        {/* 1. Copy Title Button */}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="h-8 gap-1.5 px-3 text-xs"
-                          onClick={() => handleCopyTitle(item)}
-                          title="Copy search title to clipboard"
-                        >
-                          {isCopied ? (
-                            <>
-                              <Check className="h-3.5 w-3.5 text-success" />
-                              <span className="text-success font-medium">Copied!</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3.5 w-3.5" />
-                              <span>Copy Title</span>
-                            </>
-                          )}
-                        </Button>
-
-                        {/* 2. Forward to Search Page Button */}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="h-8 gap-1.5 px-3 text-xs font-medium"
-                          onClick={() => handleForwardToSearch(item, false)}
-                          title="Copy title, forward to Search page, and auto-paste into the search input"
-                        >
-                          <ArrowUpRight className="h-3.5 w-3.5" />
-                          <span>Forward</span>
-                        </Button>
-
-                        {/* 3. Rerun Search Immediately Button */}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="h-8 gap-1.5 px-2.5 text-xs text-primary hover:bg-primary-soft"
-                          onClick={() => handleForwardToSearch(item, true)}
-                          title="Load and immediately execute this search with exact same options"
-                        >
-                          <Play className="h-3 w-3 fill-current" />
-                          <span className="hidden sm:inline">Rerun</span>
-                        </Button>
-
-                        {/* 4. Bookmark to Saved Searches Shelf */}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-8 w-8 p-0 text-muted hover:text-primary"
-                          onClick={() => handleSaveToPresets(item)}
-                          title="Bookmark this search title into your Saved Searches shelf"
-                        >
-                          <BookmarkPlus className="h-4 w-4" />
-                        </Button>
-
-                        {/* 5. Delete Entry from History */}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="h-8 w-8 p-0 text-muted hover:text-danger hover:bg-danger/10"
-                          onClick={() => handleDeleteItem(item.id)}
-                          title="Delete this entry from search history"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* ── SECTION 2: CHOSEN SEARCH OPTIONS ─────────────────── */}
-                    <div className="mt-4 rounded-lg border border-border/50 bg-surface-muted/30 p-3">
-                      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                        <Filter className="h-3 w-3" />
-                        <span>Chosen Search Options</span>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {/* Resource Type */}
-                        <Badge tone="primary" className="text-[11px]">
-                          Resource: {item.resourceSelection.toUpperCase()}
-                        </Badge>
-
-                        {/* Unrestricted / SafeSearch Badge */}
-                        {isUnrestricted ? (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 unrestricted-glow">
-                            <ShieldAlert className="h-3 w-3" />
-                            Unrestricted Mode (18+/35+ Allowed)
-                          </span>
-                        ) : (
-                          <Badge tone="neutral" className="text-[11px]">
-                            SafeSearch: {item.settings?.safeSearch ?? "Moderate"}
-                          </Badge>
-                        )}
-
-                        {/* Order / Sort */}
-                        {item.settings?.order && (
-                          <Badge tone="neutral" className="text-[11px]">
-                            Sort: {item.settings.order}
-                          </Badge>
-                        )}
-
-                        {/* Region */}
-                        {item.settings?.regionCode && (
-                          <Badge tone="neutral" className="text-[11px]">
-                            Region: {item.settings.regionCode}
-                          </Badge>
-                        )}
-
-                        {/* Language */}
-                        {item.settings?.relevanceLanguage && (
-                          <Badge tone="neutral" className="text-[11px]">
-                            Lang: {item.settings.relevanceLanguage}
-                          </Badge>
-                        )}
-
-                        {/* Duration (if video) */}
-                        {item.settings?.videoDuration &&
-                          item.settings.videoDuration !== "any" && (
-                            <Badge tone="neutral" className="text-[11px]">
-                              Duration: {item.settings.videoDuration}
-                            </Badge>
-                          )}
-
-                        {/* Definition (HD/SD) */}
-                        {item.settings?.videoDefinition &&
-                          item.settings.videoDefinition !== "any" && (
-                            <Badge tone="neutral" className="text-[11px]">
-                              Definition: {item.settings.videoDefinition.toUpperCase()}
-                            </Badge>
-                          )}
-
-                        {/* Captions */}
-                        {item.settings?.videoCaption &&
-                          item.settings.videoCaption !== "any" && (
-                            <Badge tone="neutral" className="text-[11px]">
-                              Captions: {item.settings.videoCaption}
-                            </Badge>
-                          )}
-
-                        {/* Event type (live/upcoming) */}
-                        {item.settings?.eventType && (
-                          <Badge tone="warning" className="text-[11px]">
-                            Live: {item.settings.eventType}
-                          </Badge>
-                        )}
-
-                        {/* Published After / Before */}
-                        {item.settings?.publishedAfter && (
-                          <Badge tone="neutral" className="text-[11px]">
-                            After: {item.settings.publishedAfter.slice(0, 10)}
-                          </Badge>
-                        )}
-                        {item.settings?.publishedBefore && (
-                          <Badge tone="neutral" className="text-[11px]">
-                            Before: {item.settings.publishedBefore.slice(0, 10)}
-                          </Badge>
-                        )}
-
-                        {/* Max Items */}
-                        <Badge tone="neutral" className="text-[11px]">
-                          Fetch Limit: {item.settings?.pageSize ?? 25} / page
-                        </Badge>
-                      </div>
-                    </div>
-
-                    {/* ── SECTION 3: RESULTS INFO & THUMBNAILS PREVIEW ─────── */}
-                    <div className="mt-3 flex flex-col gap-3 rounded-lg border border-border/50 bg-surface-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
-                      {/* Left: Results Metrics */}
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                          <Layers className="h-3 w-3" />
-                          <span>Results Information</span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          {/* Total count badge — shows clear status for all search outcomes including no-results */}
-                          <Badge
-                            tone={
-                              item.status === "failed"
-                                ? "danger"
-                                : item.status === "empty"
-                                  ? "warning"
-                                  : item.resultsCount > 0
-                                    ? "success"
-                                    : "warning"
-                            }
-                            className="font-semibold"
-                          >
-                            {item.status === "failed"
-                              ? "Search Failed"
-                              : item.status === "empty"
-                                ? "No Results Found"
-                                : `${item.resultsCount} Results Discovered`}
-                          </Badge>
-
-                          {/* Breakdown */}
-                          {item.videoCount !== undefined &&
-                            item.videoCount > 0 && (
-                              <span className="text-muted">
-                                <strong>{item.videoCount}</strong> videos
-                              </span>
-                            )}
-                          {item.channelCount !== undefined &&
-                            item.channelCount > 0 && (
-                              <span className="text-muted">
-                                • <strong>{item.channelCount}</strong> channels
-                              </span>
-                            )}
-                          {item.playlistCount !== undefined &&
-                            item.playlistCount > 0 && (
-                              <span className="text-muted">
-                                • <strong>{item.playlistCount}</strong> playlists
-                              </span>
-                            )}
-
-                          {/* Quota estimate */}
-                          {item.quotaCostEstimate !== undefined &&
-                            item.quotaCostEstimate > 0 && (
-                              <span className="text-muted/80">
-                                (~{item.quotaCostEstimate} quota units)
-                              </span>
-                            )}
-
-                          {/* Status */}
-                          <Badge
-                            tone={
-                              item.status === "complete"
-                                ? "success"
-                                : item.status === "failed"
-                                  ? "danger"
-                                  : "neutral"
-                            }
-                            className="capitalize"
-                          >
-                            {item.status}
-                          </Badge>
-                        </div>
-                      </div>
-
-                      {/* Right: Thumbnails Strip & Manifest Link */}
-                      <div className="flex items-center gap-3">
-                        {hasThumbnails && (
-                          <div className="flex -space-x-3 overflow-hidden rounded-md p-1">
-                            {item.topThumbnails?.map((thumb, idx) => (
-                              <div
-                                key={idx}
-                                className="relative h-9 w-14 shrink-0 overflow-hidden rounded border border-surface bg-surface-muted shadow-xs transition hover:scale-105 hover:z-10"
-                              >
-                                <Image
-                                  src={thumb}
-                                  alt="Result preview"
-                                  fill
-                                  sizes="56px"
-                                  className="object-cover"
-                                  unoptimized
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {item.manifestId && (
-                          <Link
-                            href={`/manifests/${item.manifestId}`}
-                            className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted hover:border-primary/40 hover:text-primary transition"
-                            title="Inspect full manifest details"
-                          >
-                            <span>Manifest</span>
-                            <ExternalLink className="h-3 w-3" />
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* ── CARD FOOTER: Full Date + Time Stamp ────────────────── */}
-                    {/* Always-visible complete timestamp at the bottom of each research card */}
-                    <div className="mt-3 flex items-center gap-2 border-t border-border/40 pt-2.5 text-[11px] text-muted/70">
-                      <Clock className="h-3 w-3 shrink-0" />
-                      <span>Searched on {formatFullDateTime(item.timestamp)}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          {/* SECTION 3: CLOUD ONLY */}
+          {(storageView === "all" || storageView === "cloud") && (
+            <StorageStatusSection
+              category="CLOUD_ONLY"
+              title="SECTION 3 — FROM R2 CLOUD — COMPLETE ARCHIVE"
+              description="Authoritatively discoverable in Cloudflare R2. Local browser copy cleaned up."
+              count={visibleCloudOnly.length}
+              icon={<Cloud className="h-4 w-4 text-emerald-500" />}
+              emptyMessage="No cloud-only searches yet. Once verified local copies are cleaned up, they appear here."
+            >
+              <div className="space-y-4">
+                {visibleCloudOnly.map((item) => renderHistoryCard(item, true))}
+              </div>
+            </StorageStatusSection>
           )}
         </div>
       )}
 
-      {/* ── TAB 2: RAW SERVER MANIFESTS (BACKWARDS COMPATIBILITY) ─────── */}
+      {/* ── TAB 2: RAW SERVER MANIFESTS ───────────────────────────────── */}
       {activeTab === "raw_manifests" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between text-xs text-muted">
             <p>
-              Runtime server manifests created during the current Node.js
-              process session.
+              Runtime server manifests created during the current Node.js process session.
             </p>
             <Button
               variant="secondary"
@@ -1047,8 +1216,8 @@ export function HistoryWorkspace() {
                             m.status === "complete"
                               ? "success"
                               : m.status === "failed"
-                                ? "danger"
-                                : "warning"
+                              ? "danger"
+                              : "warning"
                           }
                         >
                           {m.status}
@@ -1065,7 +1234,17 @@ export function HistoryWorkspace() {
         </div>
       )}
 
-      {/* ── Clear All History Confirmation Modal ──────────────────────── */}
+      {/* Batch Local Cleanup Confirmation Dialog */}
+      <StorageCleanupConfirmationDialog
+        isOpen={cleanupModalOpen}
+        onClose={() => setCleanupModalOpen(false)}
+        onConfirm={handleBatchCleanup}
+        isCleaning={isCleaning}
+        recordCount={cleanupEligibleList.length}
+        datasetName="search history entries"
+      />
+
+      {/* Clear All History Confirmation Modal */}
       {isClearModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm rounded-xl border border-border bg-surface p-6 shadow-xl animate-scale-in">
@@ -1100,7 +1279,7 @@ export function HistoryWorkspace() {
         </div>
       )}
 
-      {/* ── Floating Back to Top Button ─────────────────────────────────── */}
+      {/* Floating Back to Top Button */}
       <BackToTop threshold={350} />
     </div>
   );

@@ -1536,6 +1536,239 @@ export async function removeLocalSavedItemsBatch(
 }
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Safe Local Saved Reference Cleanup (Titles & Links) After R2/DB Verification
+ * ──────────────────────────────────────────────────────────────────────────
+ * Scope: Surgical removal of verified local SAVED_TITLE / SAVED_LINK records
+ *        from `entities_saved_references` in IndexedDB.
+ *
+ * Guarantees:
+ *   - Never touches other references or outbox journal entries.
+ *   - Does NOT create cloud DELETE tombstones (preserves R2/DB canonical copies).
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+export async function removeLocalSavedReference(
+  ownerId: string,
+  id: string
+): Promise<boolean> {
+  const cleanOwner = ownerId?.trim();
+  const cleanId = id?.trim();
+  if (!cleanOwner || !cleanId) return false;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_REFERENCES]);
+    const store = tx.objectStore(IDB_STORES.SAVED_REFERENCES);
+
+    let deleted = false;
+    const req = store.delete(cleanId);
+    req.onsuccess = () => {
+      deleted = true;
+    };
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "REFERENCES", entityId: cleanId, action: "LOCAL_CLEANUP" },
+          })
+        );
+      }
+      resolve(deleted);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to delete local saved reference"));
+  });
+}
+
+export async function removeLocalSavedReferencesBatch(
+  ownerId: string,
+  ids: string[]
+): Promise<number> {
+  const cleanOwner = ownerId?.trim();
+  if (!cleanOwner || !Array.isArray(ids) || ids.length === 0) return 0;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_REFERENCES]);
+    const store = tx.objectStore(IDB_STORES.SAVED_REFERENCES);
+    let count = 0;
+
+    for (const rawId of ids) {
+      const cleanId = String(rawId || "").trim();
+      if (!cleanId) continue;
+      store.delete(cleanId);
+      count++;
+    }
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "REFERENCES", count, action: "LOCAL_CLEANUP_BATCH" },
+          })
+        );
+      }
+      resolve(count);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to batch delete local saved references"));
+  });
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Safe Local Saved Search Cleanup After R2/DB Verification
+ * ──────────────────────────────────────────────────────────────────────────
+ * Scope: Surgical removal of verified local SAVED_SEARCH records from
+ *        `entities_saved_searches` in IndexedDB.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+export async function removeLocalSavedSearch(
+  ownerId: string,
+  id: string
+): Promise<boolean> {
+  const cleanOwner = ownerId?.trim();
+  const cleanId = id?.trim();
+  if (!cleanOwner || !cleanId) return false;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_SEARCHES]);
+    const store = tx.objectStore(IDB_STORES.SAVED_SEARCHES);
+
+    let deleted = false;
+    const req = store.delete(cleanId);
+    req.onsuccess = () => {
+      deleted = true;
+    };
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "REFERENCES", entityId: cleanId, action: "LOCAL_CLEANUP" },
+          })
+        );
+      }
+      resolve(deleted);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to delete local saved search"));
+  });
+}
+
+export async function removeLocalSavedSearchesBatch(
+  ownerId: string,
+  ids: string[]
+): Promise<number> {
+  const cleanOwner = ownerId?.trim();
+  if (!cleanOwner || !Array.isArray(ids) || ids.length === 0) return 0;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_SEARCHES]);
+    const store = tx.objectStore(IDB_STORES.SAVED_SEARCHES);
+    let count = 0;
+
+    for (const rawId of ids) {
+      const cleanId = String(rawId || "").trim();
+      if (!cleanId) continue;
+      store.delete(cleanId);
+      count++;
+    }
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "REFERENCES", count, action: "LOCAL_CLEANUP_BATCH" },
+          })
+        );
+      }
+      resolve(count);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to batch delete local saved searches"));
+  });
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Safe Local Search History Cleanup After R2/DB Verification
+ * ──────────────────────────────────────────────────────────────────────────
+ * Scope: Surgical removal of verified local SEARCH_HISTORY records from
+ *        `entities_search_history` in IndexedDB.
+ *
+ * Guarantees:
+ *   - Strictly preserves browsing history and audit records.
+ *   - Does NOT touch active searches or outbox operations.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+export async function removeLocalSearchHistoryItem(
+  ownerId: string,
+  id: string
+): Promise<boolean> {
+  const cleanOwner = ownerId?.trim();
+  const cleanId = id?.trim();
+  if (!cleanOwner || !cleanId) return false;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SEARCH_HISTORY]);
+    const store = tx.objectStore(IDB_STORES.SEARCH_HISTORY);
+
+    let deleted = false;
+    const req = store.delete(cleanId);
+    req.onsuccess = () => {
+      deleted = true;
+    };
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "SEARCH_HISTORY", entityId: cleanId, action: "LOCAL_CLEANUP" },
+          })
+        );
+      }
+      resolve(deleted);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to delete local search history item"));
+  });
+}
+
+export async function removeLocalSearchHistoryBatch(
+  ownerId: string,
+  ids: string[]
+): Promise<number> {
+  const cleanOwner = ownerId?.trim();
+  if (!cleanOwner || !Array.isArray(ids) || ids.length === 0) return 0;
+
+  const db = await openLocalDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = createReadWriteTransaction(db, [IDB_STORES.SEARCH_HISTORY]);
+    const store = tx.objectStore(IDB_STORES.SEARCH_HISTORY);
+    let count = 0;
+
+    for (const rawId of ids) {
+      const cleanId = String(rawId || "").trim();
+      if (!cleanId) continue;
+      store.delete(cleanId);
+      count++;
+    }
+
+    tx.oncomplete = () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("yt-discovery-local-mutation", {
+            detail: { datasetType: "SEARCH_HISTORY", count, action: "LOCAL_CLEANUP_BATCH" },
+          })
+        );
+      }
+      resolve(count);
+    };
+    tx.onerror = () => reject(tx.error || new Error("Failed to batch delete local search history items"));
+  });
+}
+
+/**
  * Reconciles any interrupted sync batches or hanging IN_FLIGHT operations on startup.
  * Guarantees zero data loss if a tab closed or browser crashed during cloud sync.
  */

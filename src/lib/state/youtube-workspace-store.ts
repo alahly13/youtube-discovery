@@ -75,6 +75,10 @@ interface YouTubeWorkspaceStore {
   toggleItemSaved: (item: NormalizedYouTubeDiscoveryItem) => void;
   removeLocalItemAfterCloudCommit: (platformItemId: string) => void;
   removeLocalItemsBatchAfterCloudCommit: (platformItemIds: string[]) => void;
+  removeLocalSavedSearchAfterCloudCommit: (id: string) => void;
+  removeLocalSavedSearchesBatchAfterCloudCommit: (ids: string[]) => void;
+  removeLocalSearchHistoryAfterCloudCommit: (id: string) => void;
+  removeLocalSearchHistoryBatchAfterCloudCommit: (ids: string[]) => void;
   saveSearch: (search: Omit<SavedSearch, "id" | "createdAt">) => SavedSearch;
   updateSavedSearch: (id: string, patch: Partial<SavedSearch>) => void;
   deleteSavedSearch: (id: string) => void;
@@ -251,6 +255,30 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
           savedItems: state.savedItems.filter(
             (item) => !cleanSet.has(item.platformItemId || item.id?.replace(/^youtube:/, "") || "")
           ),
+        }));
+      },
+      removeLocalSavedSearchAfterCloudCommit: (id: string) => {
+        const cleanId = id.trim();
+        set((state) => ({
+          savedSearches: state.savedSearches.filter((s) => s.id !== cleanId),
+        }));
+      },
+      removeLocalSavedSearchesBatchAfterCloudCommit: (ids: string[]) => {
+        const cleanSet = new Set(ids.map((id) => id.trim()));
+        set((state) => ({
+          savedSearches: state.savedSearches.filter((s) => !cleanSet.has(s.id)),
+        }));
+      },
+      removeLocalSearchHistoryAfterCloudCommit: (id: string) => {
+        const cleanId = id.trim();
+        set((state) => ({
+          searchHistory: state.searchHistory.filter((h) => h.id !== cleanId),
+        }));
+      },
+      removeLocalSearchHistoryBatchAfterCloudCommit: (ids: string[]) => {
+        const cleanSet = new Set(ids.map((id) => id.trim()));
+        set((state) => ({
+          searchHistory: state.searchHistory.filter((h) => !cleanSet.has(h.id)),
         }));
       },
       saveSearch: (searchData) => {

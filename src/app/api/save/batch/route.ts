@@ -95,8 +95,27 @@ export async function POST(request: Request) {
       });
     }
 
-    // Concurrency / revision check
-    const currentRevision = datasetRevisions.get(datasetId) ?? 0;
+    // Concurrency / revision check (always scoped by storageOwnerUuid; also cross-check DB revision when available)
+    const canonicalType: CanonicalDatasetType =
+      slugToDatasetType(String(payload.datasetType || datasetId)) ?? "SAVED_ITEMS";
+    const revScopeKey = `${storageOwnerUuid}:${datasetId}`;
+    let currentRevision = datasetRevisions.get(revScopeKey) ?? 0;
+    try {
+      const { prisma } = await import("@/lib/db/prisma");
+      const dbDs = await prisma.storageDataset.findFirst({
+        where: {
+          dataset_type: canonicalType,
+          owner: { storage_owner_uuid: storageOwnerUuid },
+        },
+        select: { current_revision: true },
+      });
+      if (dbDs && Number(dbDs.current_revision) > currentRevision) {
+        currentRevision = Number(dbDs.current_revision);
+      }
+    } catch {
+      // Fall back to owner-scoped in-memory revision when DB is offline in isolated environments
+    }
+
     if (expectedRevision !== currentRevision) {
       return NextResponse.json(
         {
@@ -112,7 +131,7 @@ export async function POST(request: Request) {
 
     // Stage 4 Commit: advance revision monotonically
     const newRevision = currentRevision + 1;
-    datasetRevisions.set(datasetId, newRevision);
+    datasetRevisions.set(revScopeKey, newRevision);
 
     const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const committedBatch: CachedBatch = {
@@ -130,8 +149,6 @@ export async function POST(request: Request) {
 
     // Best-effort convenience update of derived canonical root manifest.json
     try {
-      const canonicalType: CanonicalDatasetType =
-        slugToDatasetType(String(payload.datasetType || datasetId)) ?? "SAVED_ITEMS";
       const backend = getNewStorageBackend();
       const rootPath = buildDatasetRootManifestKey(storageOwnerUuid, canonicalType);
       const rootManifest = {

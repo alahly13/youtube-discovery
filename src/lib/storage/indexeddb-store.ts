@@ -17,7 +17,7 @@ import { getOriginDeviceMeta } from "../device/device-identity";
  */
 
 export const IDB_DATABASE_NAME = "youtube_discovery_local_v1";
-export const IDB_DATABASE_VERSION = 5;
+export const IDB_DATABASE_VERSION = 6;
 
 export const CANONICAL_DATASET_TYPES = [
   "SAVED_ITEMS",
@@ -49,6 +49,7 @@ export const IDB_STORES = {
   UNDO_REDO_COMMANDS: "undo_redo_commands",
   UNDO_REDO_STATE: "undo_redo_state",
   LEGACY_MIGRATION_STAGING: "legacy_migration_staging",
+  TEMP_MANIFESTS: "temp_manifests",
 } as const;
 
 export interface PendingOperation {
@@ -339,6 +340,14 @@ export function openLocalDatabase(): Promise<IDBDatabase> {
         const stagingStore = db.createObjectStore(IDB_STORES.LEGACY_MIGRATION_STAGING, { keyPath: "stagingId" });
         stagingStore.createIndex("ownerId", "ownerId", { unique: false });
         stagingStore.createIndex("ownerId_datasetType", ["ownerId", "datasetType"], { unique: false });
+      }
+
+      // 19. temp_manifests (Local-first Class-A temporary processing manifests: search, channel uploads, playlist items)
+      if (!db.objectStoreNames.contains(IDB_STORES.TEMP_MANIFESTS)) {
+        const tempManifestStore = db.createObjectStore(IDB_STORES.TEMP_MANIFESTS, { keyPath: "manifestId" });
+        tempManifestStore.createIndex("ownerId", "ownerId", { unique: false });
+        tempManifestStore.createIndex("manifestType", "manifestType", { unique: false });
+        tempManifestStore.createIndex("updatedAt", "updatedAt", { unique: false });
       }
     };
   });

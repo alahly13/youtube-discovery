@@ -327,8 +327,29 @@ function getEntityKey(rec: Record<string, unknown>, datasetType: string): string
 /**
  * Reads all currently committed generations and parts back from R2 and Supabase PostgreSQL.
  * Every part is SHA-256 verified before it is used as a merge base.
- * Guarantees that existing committed cloud records are always loaded across all
- * generations to ensure 100% append-only preservation.
+/**
+ * Parse committed/archived part payloads into raw record objects.
+ */
+function extractPartRecords(parsed: unknown): Record<string, unknown>[] {
+  if (Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>[];
+  }
+  if (parsed && typeof parsed === "object") {
+    const obj = parsed as { records?: unknown; items?: unknown };
+    if (Array.isArray(obj.records)) return obj.records as Record<string, unknown>[];
+    if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+  }
+  return [];
+}
+
+/**
+ * Loads the canonical committed cloud snapshot fail-closed.
+ * Guarantees deterministic precedence without letting superseded generations
+ * overwrite newer edits or resurrect records removed in later generations:
+ *   1. Historical `before-app-updating/` archives (non-overlapping prefix, loaded first).
+ *   2. Latest `COMMITTED` generation from PostgreSQL (or single newest generation on R2 if DB has none),
+ *      with mandatory SHA-256 verification and fail-closed error propagation on storage/DB failures.
+ *   3. For SAVED_ITEMS, `saved_items_index` rows only when missing from R2 snapshot.
  */
 async function loadCommittedSnapshot(params: {
   ownerId: string;
@@ -338,168 +359,224 @@ async function loadCommittedSnapshot(params: {
   datasetType?: string;
 }): Promise<Record<string, unknown>[]> {
   const r2Client = getR2WorkerStorageClient();
-  const recordsMap = new Map<string, Record<string, unknown>>();
+  const historicalRecordsMap = new Map<string, Record<string, unknown>>();
+  const committedRecordsMap = new Map<string, Record<string, unknown>>();
 
-  // Phase 1: Query ALL COMMITTED generations for this dataset from PostgreSQL
-  try {
-    const allGenerations = await prisma.storageGeneration.findMany({
-      where: {
-        owner_id: params.ownerId,
-        dataset_id: params.datasetId,
-        state: "COMMITTED",
-      },
-      orderBy: { generation_number: "asc" },
-      include: { parts: { orderBy: { part_number: "asc" } } },
-    });
+  // Phase 1: Query ONLY the authoritative latest COMMITTED generation from PostgreSQL.
+  // Do NOT rethrow-swallow DB failures or loop over all superseded generations in ascending order.
+  const latestGeneration = params.currentGenerationId
+    ? await prisma.storageGeneration.findFirst({
+        where: {
+          id: params.currentGenerationId,
+          owner_id: params.ownerId,
+          dataset_id: params.datasetId,
+          state: "COMMITTED",
+        },
+        include: { parts: { orderBy: { part_number: "asc" } } },
+      })
+    : await prisma.storageGeneration.findFirst({
+        where: {
+          owner_id: params.ownerId,
+          dataset_id: params.datasetId,
+          state: "COMMITTED",
+        },
+        orderBy: { generation_number: "desc" },
+        include: { parts: { orderBy: { part_number: "asc" } } },
+      });
 
-    for (const generation of allGenerations) {
-      for (const part of generation.parts) {
-        try {
-          const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
-            storageOwnerUuid: params.storageOwnerUuid,
-          });
-
-          if (sha256.toLowerCase() !== part.sha256.toLowerCase()) {
-            console.warn(
-              `[sync/save-all] Part ${part.storage_path} sha256 check warning; attempting recovery.`
-            );
-          }
-
-          const parsed = JSON.parse(data.toString("utf8")) as {
-            items?: Record<string, unknown>[];
-            records?: Record<string, unknown>[];
-          };
-          const items = Array.isArray(parsed.records)
-            ? parsed.records
-            : Array.isArray(parsed.items)
-              ? parsed.items
-              : Array.isArray(parsed)
-                ? (parsed as unknown as Record<string, unknown>[])
-                : [];
-
-          for (const item of items) {
-            const key = getEntityKey(item, params.datasetType || "");
-            if (key) recordsMap.set(key, item);
-          }
-        } catch (partReadErr) {
-          console.warn(`[sync/save-all] Warning reading generation part ${part.storage_path}:`, partReadErr);
-        }
-      }
-    }
-  } catch (dbGenErr) {
-    console.warn("[sync/save-all] PostgreSQL generations query note:", dbGenErr);
+  if (params.currentGenerationId && !latestGeneration) {
+    throw new Error(
+      `Authoritative committed generation ${params.currentGenerationId} could not be located in PostgreSQL.`
+    );
   }
 
-  // Phase 2: Ingest manifests and parts directly from R2, ALWAYS including before-app-updating historical archives
+  if (latestGeneration) {
+    for (const part of latestGeneration.parts) {
+      const { data, sha256 } = await r2Client.getObject("NEW", part.storage_path, {
+        storageOwnerUuid: params.storageOwnerUuid,
+      });
+
+      if (part.sha256 && sha256.toLowerCase() !== part.sha256.toLowerCase()) {
+        throw new Error(
+          `Checksum mismatch reading committed part ${part.storage_path} (expected ${part.sha256}, got ${sha256}).`
+        );
+      }
+
+      const items = extractPartRecords(JSON.parse(data.toString("utf8")));
+      for (const item of items) {
+        const key = getEntityKey(item, params.datasetType || "");
+        if (key) committedRecordsMap.set(key, item);
+      }
+    }
+  }
+
+  // Phase 2: Read non-overlapping `before-app-updating/` historical archives once,
+  // plus recover newest R2 generation ONLY when PostgreSQL has no committed generation yet.
   if (params.datasetType) {
     const datasetSlug = datasetTypeToSlug(params.datasetType as CanonicalDatasetType);
-    const prefixes = [
-      `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/generations/`,
-      `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/before-app-updating/`,
-      `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/`,
-    ];
+    const historicalPrefix = `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/before-app-updating/`;
 
-    for (const prefix of prefixes) {
-      try {
-        const listRes = await r2Client.listAllObjects("NEW", prefix, {
-          storageOwnerUuid: params.storageOwnerUuid,
-        });
+    let historicalManifestKeys: string[] = [];
+    try {
+      const histList = await r2Client.listAllObjects("NEW", historicalPrefix, {
+        storageOwnerUuid: params.storageOwnerUuid,
+      });
+      if (histList.truncated || histList.incomplete) {
+        throw new Error(`Historical R2 listing truncated for ${historicalPrefix}`);
+      }
+      historicalManifestKeys = (histList?.objects || [])
+        .map((o) => o.key)
+        .filter((k) => k.endsWith("/manifest.json") || k.endsWith("manifest.json"))
+        .sort();
+    } catch (histErr) {
+      const errMsg = histErr instanceof Error ? histErr.message : String(histErr);
+      // Treat 404/empty prefix safely; fail closed on Worker auth/network/truncation errors.
+      if (!errMsg.includes("404") && !errMsg.toLowerCase().includes("not found")) {
+        throw histErr;
+      }
+    }
 
-        const manifestObjs = (listRes?.objects || []).filter((o) =>
-          o.key.endsWith("/manifest.json") || o.key.endsWith("manifest.json")
-        );
+    for (const manifestKey of historicalManifestKeys) {
+      const { data } = await r2Client.getObject("NEW", manifestKey, {
+        storageOwnerUuid: params.storageOwnerUuid,
+      });
+      const manifest = JSON.parse(data.toString("utf8")) as {
+        parts?: Array<{ storagePath?: string; sha256?: string }>;
+        items?: Record<string, unknown>[];
+        records?: Record<string, unknown>[];
+      };
 
-        for (const manifestObj of manifestObjs) {
-          try {
-            const { data } = await r2Client.getObject("NEW", manifestObj.key, {
-              storageOwnerUuid: params.storageOwnerUuid,
-            });
-            const manifest = JSON.parse(data.toString("utf8")) as {
-              parts?: Array<{ storagePath?: string; sha256?: string }>;
-              items?: Record<string, unknown>[];
-              records?: Record<string, unknown>[];
-            };
+      for (const item of extractPartRecords(manifest)) {
+        const key = getEntityKey(item, params.datasetType || "");
+        if (key) historicalRecordsMap.set(key, item);
+      }
 
-            // Check embedded items in legacy manifest schema
-            const embedded = Array.isArray(manifest.records)
-              ? manifest.records
-              : Array.isArray(manifest.items)
-                ? manifest.items
-                : [];
-            for (const item of embedded) {
-              const key = getEntityKey(item, params.datasetType || "");
-              if (key) recordsMap.set(key, item);
-            }
-
-            if (Array.isArray(manifest.parts)) {
-              for (const p of manifest.parts) {
-                if (!p.storagePath) continue;
-                try {
-                  const partRes = await r2Client.getObject("NEW", p.storagePath, {
-                    storageOwnerUuid: params.storageOwnerUuid,
-                  });
-                  const parsedPart = JSON.parse(partRes.data.toString("utf8")) as {
-                    records?: Record<string, unknown>[];
-                    items?: Record<string, unknown>[];
-                  };
-                  const items = Array.isArray(parsedPart.records)
-                    ? parsedPart.records
-                    : Array.isArray(parsedPart.items)
-                      ? parsedPart.items
-                      : [];
-                  for (const item of items) {
-                    const key = getEntityKey(item, params.datasetType || "");
-                    if (key) recordsMap.set(key, item);
-                  }
-                } catch (partFetchErr) {
-                  console.warn(`[sync/save-all] Warning reading discovered part ${p.storagePath}:`, partFetchErr);
-                }
-              }
-            }
-          } catch (manReadErr) {
-            console.warn(`[sync/save-all] Warning reading manifest ${manifestObj.key}:`, manReadErr);
+      if (Array.isArray(manifest.parts)) {
+        for (const p of manifest.parts) {
+          if (!p.storagePath) continue;
+          const partRes = await r2Client.getObject("NEW", p.storagePath, {
+            storageOwnerUuid: params.storageOwnerUuid,
+          });
+          if (p.sha256 && partRes.sha256.toLowerCase() !== p.sha256.toLowerCase()) {
+            throw new Error(`Checksum mismatch on historical part ${p.storagePath}.`);
+          }
+          for (const item of extractPartRecords(JSON.parse(partRes.data.toString("utf8")))) {
+            const key = getEntityKey(item, params.datasetType || "");
+            if (key) historicalRecordsMap.set(key, item);
           }
         }
-      } catch (r2Err) {
-        console.warn(`[sync/save-all] Direct R2 generation discovery note for ${prefix}:`, r2Err);
+      }
+    }
+
+    // Fallback recovery only if DB had NO committed generation yet: read the single newest R2 generation.
+    if (!latestGeneration) {
+      const generationsPrefix = `asdy/persistence/${params.storageOwnerUuid}/${datasetSlug}/generations/`;
+      let genManifestKeys: string[] = [];
+      try {
+        const genList = await r2Client.listAllObjects("NEW", generationsPrefix, {
+          storageOwnerUuid: params.storageOwnerUuid,
+        });
+        if (genList.truncated || genList.incomplete) {
+          throw new Error(`Active generation R2 listing truncated for ${generationsPrefix}`);
+        }
+        genManifestKeys = (genList?.objects || [])
+          .map((o) => o.key)
+          .filter((k) => k.endsWith("/manifest.json") || k.endsWith("manifest.json"));
+      } catch (genErr) {
+        const errMsg = genErr instanceof Error ? genErr.message : String(genErr);
+        if (!errMsg.includes("404") && !errMsg.toLowerCase().includes("not found")) {
+          throw genErr;
+        }
+      }
+
+      type CandidateManifest = {
+        generationNumber?: number;
+        currentRevision?: number;
+        generatedAt?: string;
+        createdAt?: string;
+        parts?: Array<{ storagePath?: string; sha256?: string; partNumber?: number }>;
+        items?: Record<string, unknown>[];
+        records?: Record<string, unknown>[];
+      };
+
+      let newest: CandidateManifest | null = null;
+      for (const manifestKey of genManifestKeys) {
+        const { data } = await r2Client.getObject("NEW", manifestKey, {
+          storageOwnerUuid: params.storageOwnerUuid,
+        });
+        const candidate = JSON.parse(data.toString("utf8")) as CandidateManifest;
+        const candRev = Number(candidate.generationNumber ?? candidate.currentRevision ?? 0);
+        const curRev = newest ? Number(newest.generationNumber ?? newest.currentRevision ?? 0) : -1;
+        const candDate = String(candidate.generatedAt || candidate.createdAt || "");
+        const curDate = newest ? String(newest.generatedAt || newest.createdAt || "") : "";
+        if (!newest || candRev > curRev || (candRev === curRev && candDate > curDate)) {
+          newest = candidate;
+        }
+      }
+
+      if (newest) {
+        for (const item of extractPartRecords(newest)) {
+          const key = getEntityKey(item, params.datasetType || "");
+          if (key) committedRecordsMap.set(key, item);
+        }
+        if (Array.isArray(newest.parts)) {
+          const sortedParts = [...newest.parts].sort(
+            (a, b) => Number(a.partNumber ?? 0) - Number(b.partNumber ?? 0)
+          );
+          for (const p of sortedParts) {
+            if (!p.storagePath) continue;
+            const partRes = await r2Client.getObject("NEW", p.storagePath, {
+              storageOwnerUuid: params.storageOwnerUuid,
+            });
+            if (p.sha256 && partRes.sha256.toLowerCase() !== p.sha256.toLowerCase()) {
+              throw new Error(`Checksum mismatch on recovered generation part ${p.storagePath}.`);
+            }
+            for (const item of extractPartRecords(JSON.parse(partRes.data.toString("utf8")))) {
+              const key = getEntityKey(item, params.datasetType || "");
+              if (key) committedRecordsMap.set(key, item);
+            }
+          }
+        }
       }
     }
   }
 
-  // Phase 3: For SAVED_ITEMS, also incorporate PostgreSQL saved_items_index
+  // Merge deterministically: historical tier first, then latest authoritative committed generation.
+  const recordsMap = new Map<string, Record<string, unknown>>(historicalRecordsMap);
+  for (const [k, v] of committedRecordsMap.entries()) {
+    recordsMap.set(k, v);
+  }
+
+  // Phase 3: For SAVED_ITEMS, fill in any committed saved_items_index rows missing from R2 snapshot.
   if (params.datasetType === "SAVED_ITEMS") {
-    try {
-      const existingDbItems = await prisma.savedItemIndex.findMany({
-        where: { owner_id: params.ownerId },
-      });
-      for (const dbItem of existingDbItems) {
-        const key = dbItem.platform_item_id;
-        if (!recordsMap.has(key)) {
-          recordsMap.set(key, {
-            platformItemId: dbItem.platform_item_id,
-            id: `youtube:${dbItem.platform_item_id}`,
-            title: dbItem.title,
-            channelTitle: dbItem.channel_title ?? undefined,
-            thumbnailUrl: dbItem.thumbnail_url ?? undefined,
-            itemType: dbItem.entity_type.toLowerCase(),
-            isShortsLike: dbItem.is_shorts_like,
-            isAgeRestricted: dbItem.is_age_restricted,
-            publishedAt: dbItem.published_at?.toISOString(),
-            viewsCount: dbItem.views_count ? Number(dbItem.views_count) : undefined,
-            likesCount: dbItem.likes_count ? Number(dbItem.likes_count) : undefined,
-            commentsCount: dbItem.comments_count ? Number(dbItem.comments_count) : undefined,
-            durationSeconds: dbItem.duration_seconds ?? undefined,
-            savedAt: dbItem.saved_at.toISOString(),
-            savedDate: dbItem.saved_date,
-            originDeviceId: dbItem.origin_device_id ?? undefined,
-            originDeviceLabel: dbItem.origin_device_label ?? undefined,
-            resourceType: dbItem.resource_type ?? undefined,
-            resourceId: dbItem.resource_id ?? dbItem.platform_item_id,
-          });
-        }
+    const existingDbItems = await prisma.savedItemIndex.findMany({
+      where: { owner_id: params.ownerId },
+    });
+    for (const dbItem of existingDbItems) {
+      const key = dbItem.platform_item_id;
+      if (!recordsMap.has(key)) {
+        recordsMap.set(key, {
+          platformItemId: dbItem.platform_item_id,
+          id: `youtube:${dbItem.platform_item_id}`,
+          title: dbItem.title,
+          channelTitle: dbItem.channel_title ?? undefined,
+          thumbnailUrl: dbItem.thumbnail_url ?? undefined,
+          itemType: dbItem.entity_type.toLowerCase(),
+          isShortsLike: dbItem.is_shorts_like,
+          isAgeRestricted: dbItem.is_age_restricted,
+          publishedAt: dbItem.published_at?.toISOString(),
+          viewsCount: dbItem.views_count ? Number(dbItem.views_count) : undefined,
+          likesCount: dbItem.likes_count ? Number(dbItem.likes_count) : undefined,
+          commentsCount: dbItem.comments_count ? Number(dbItem.comments_count) : undefined,
+          durationSeconds: dbItem.duration_seconds ?? undefined,
+          savedAt: dbItem.saved_at.toISOString(),
+          savedDate: dbItem.saved_date,
+          originDeviceId: dbItem.origin_device_id ?? undefined,
+          originDeviceLabel: dbItem.origin_device_label ?? undefined,
+          resourceType: dbItem.resource_type ?? undefined,
+          resourceId: dbItem.resource_id ?? dbItem.platform_item_id,
+        });
       }
-    } catch (idxErr) {
-      console.warn("[sync/save-all] PostgreSQL saved_items_index lookup note:", idxErr);
     }
   }
 
@@ -532,6 +609,7 @@ function mergeCloudAndIncomingRecords(
   addedRecordsCount: number;
   updatedRecordsCount: number;
   deletedPlatformItemIds: string[];
+  deletedEntityIds: string[];
 } {
   const byIdentity = new Map<string, Record<string, unknown>>();
   const existingCloudKeys = new Set<string>();
@@ -614,6 +692,7 @@ function mergeCloudAndIncomingRecords(
     addedRecordsCount,
     updatedRecordsCount,
     deletedPlatformItemIds,
+    deletedEntityIds: Array.from(new Set(deletedPlatformItemIds)),
   };
 }
 
@@ -740,6 +819,7 @@ async function indexReferences(
     records: Record<string, unknown>[];
     originDeviceId: string | null;
     originDeviceLabel: string | null;
+    deletedIds?: string[];
   }
 ): Promise<void> {
   const referenceIds: string[] = [];
@@ -819,21 +899,38 @@ async function indexReferences(
     position += 1;
   }
 
-  // Remove stale projection rows only within this dataset generation scope.
-  await tx.savedReference.deleteMany({
-    where: {
-      owner_id: params.ownerId,
-      dataset_id: params.datasetId,
-      ...(referenceIds.length > 0 ? { record_id: { notIn: referenceIds } } : {}),
-    },
-  });
+  // Preserve existing PostgreSQL projection rows unless explicitly tombstoned.
+  // Never run blanket `deleteMany({ notIn })` or wipe all rows when the incoming array is empty,
+  // because SAVED_SEARCH / SAVED_TITLE / SAVED_LINK projections share ownership with direct DB writes.
+  if (params.deletedIds && params.deletedIds.length > 0) {
+    const refUuids = params.deletedIds.map((rid) =>
+      toDatabaseUuid(`saved-reference:${params.ownerId}:${rid}`)
+    );
+    const searchUuids = params.deletedIds.map((rid) =>
+      toDatabaseUuid(`saved-search:${params.ownerId}:${rid}`)
+    );
 
-  await tx.savedSearchPreset.deleteMany({
-    where: {
-      owner_id: params.ownerId,
-      ...(searchIds.length > 0 ? { record_id: { notIn: searchIds } } : {}),
-    },
-  });
+    await tx.savedReference.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        dataset_id: params.datasetId,
+        OR: [
+          { record_id: { in: params.deletedIds } },
+          { id: { in: refUuids } },
+        ],
+      },
+    });
+
+    await tx.savedSearchPreset.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        OR: [
+          { record_id: { in: params.deletedIds } },
+          { id: { in: searchUuids } },
+        ],
+      },
+    });
+  }
 }
 
 async function indexPlaylists(
@@ -841,6 +938,7 @@ async function indexPlaylists(
   params: {
     ownerId: string;
     records: Record<string, unknown>[];
+    deletedIds?: string[];
   }
 ): Promise<void> {
   const activePlaylistUuids: string[] = [];
@@ -878,6 +976,8 @@ async function indexPlaylists(
     const createdAt = parseDate(playlistMeta.createdAt) || new Date();
     const updatedAt = parseDate(playlistMeta.updatedAt) || new Date();
 
+    const isUuidPlaylistId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawId);
+
     await tx.userPlaylist.upsert({
       where: { owner_id_id: { owner_id: params.ownerId, id: playlistUuid } },
       create: {
@@ -890,6 +990,7 @@ async function indexPlaylists(
         thumbnail_urls: thumbnails,
         created_at: createdAt,
         updated_at: updatedAt,
+        record_id: rawId.slice(0, 128),
       },
       update: {
         title,
@@ -898,6 +999,8 @@ async function indexPlaylists(
         total_items_count: items.length,
         thumbnail_urls: thumbnails,
         updated_at: updatedAt,
+        // Preserve canonical client ID (e.g. `upl_*`) when syncing across devices.
+        ...(isUuidPlaylistId ? {} : { record_id: rawId.slice(0, 128) }),
       },
     });
 
@@ -924,6 +1027,7 @@ async function indexPlaylists(
           is_collapsed: Boolean(g.isCollapsed),
           created_at: parseDate(g.createdAt) || createdAt,
           updated_at: parseDate(g.updatedAt) || updatedAt,
+          record_id: gId.slice(0, 128),
         },
         update: {
           title: gTitle,
@@ -931,6 +1035,7 @@ async function indexPlaylists(
           position: gPos,
           is_collapsed: Boolean(g.isCollapsed),
           updated_at: parseDate(g.updatedAt) || updatedAt,
+          record_id: gId.slice(0, 128),
         },
       });
     }
@@ -971,6 +1076,20 @@ async function indexPlaylists(
       const customUrl = (isYoutube && snap ? readString(snap, "url") : readString(it, "url"))?.slice(0, 1024) ?? null;
       const notes = readString(it, "customNote", "note");
       const pos = typeof it.position === "number" ? it.position : eIdx;
+      const snapshotJson = (
+        isYoutube
+          ? {
+              kind: "youtube",
+              youtubeKind: yKind || "video",
+              snapshot: snap ?? null,
+              note: readString(it, "note"),
+            }
+          : {
+              kind: "custom",
+              customNote: readString(it, "customNote"),
+              note: readString(it, "note"),
+            }
+      ) as Prisma.InputJsonValue;
 
       await tx.userPlaylistEntry.upsert({
         where: { id: entryUuid },
@@ -986,6 +1105,8 @@ async function indexPlaylists(
           notes,
           position: pos,
           added_at: parseDate(it.addedAt) || new Date(),
+          record_id: entryId.slice(0, 128),
+          snapshot_json: snapshotJson,
         },
         update: {
           group_id: validGroupUuid,
@@ -995,6 +1116,8 @@ async function indexPlaylists(
           custom_url: customUrl,
           notes,
           position: pos,
+          record_id: entryId.slice(0, 128),
+          snapshot_json: snapshotJson,
         },
       });
     }
@@ -1008,12 +1131,28 @@ async function indexPlaylists(
     });
   }
 
-  await tx.userPlaylist.deleteMany({
-    where: {
-      owner_id: params.ownerId,
-      ...(activePlaylistUuids.length > 0 ? { id: { notIn: activePlaylistUuids } } : {}),
-    },
-  });
+  // Only delete explicitly tombstoned playlists (never wipe unrepresented DB rows).
+  const deletePlaylistIds = (params.deletedIds || []).map((id) => toPlaylistUuid(id));
+  if (deletePlaylistIds.length > 0) {
+    await tx.userPlaylistEntry.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        playlist_id: { in: deletePlaylistIds },
+      },
+    });
+    await tx.userPlaylistGroup.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        playlist_id: { in: deletePlaylistIds },
+      },
+    });
+    await tx.userPlaylist.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        id: { in: deletePlaylistIds },
+      },
+    });
+  }
 }
 
 async function indexResearchQueue(
@@ -1023,9 +1162,9 @@ async function indexResearchQueue(
     datasetId: string;
     generationId: string;
     records: Record<string, unknown>[];
+    deletedIds?: string[];
   }
 ): Promise<void> {
-  const activeIds: string[] = [];
   let pos = 0;
 
   for (const record of params.records) {
@@ -1034,7 +1173,6 @@ async function indexResearchQueue(
     if (!rawId || !queryText) continue;
 
     const id = toDatabaseUuid(`research-queue:${params.ownerId}:${rawId}`);
-    activeIds.push(id);
 
     const rawStatus = (readString(record, "status") || "PENDING").toUpperCase();
     const status: "PENDING" | "REVIEWED" | "DISMISSED" =
@@ -1061,12 +1199,23 @@ async function indexResearchQueue(
     });
   }
 
-  await tx.researchQueueItem.deleteMany({
-    where: {
-      owner_id: params.ownerId,
-      ...(activeIds.length > 0 ? { id: { notIn: activeIds } } : {}),
-    },
-  });
+  // Only delete explicitly tombstoned research queue items (never wipe all rows).
+  const deletedQueueIds = params.deletedIds || [];
+  if (deletedQueueIds.length > 0) {
+    const deletedQueueUuids = deletedQueueIds.map((rawId) =>
+      toDatabaseUuid(`research-queue:${params.ownerId}:${rawId}`)
+    );
+    await tx.researchQueueItem.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        dataset_id: params.datasetId,
+        OR: [
+          { id: { in: deletedQueueUuids } },
+          { source_entity_id: { in: deletedQueueIds } },
+        ],
+      },
+    });
+  }
 }
 
 async function indexSearchHistory(
@@ -1075,17 +1224,15 @@ async function indexSearchHistory(
     ownerId: string;
     generationId: string;
     records: Record<string, unknown>[];
+    deletedIds?: string[];
   }
 ): Promise<void> {
-  const activeIds: string[] = [];
-
   for (const record of params.records) {
     const rawId = readString(record, "id", "recordId");
     const queryText = (readString(record, "query", "queryText") || "").slice(0, 512);
     if (!rawId || !queryText) continue;
 
     const id = toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`);
-    activeIds.push(id);
 
     const data = {
       owner_id: params.ownerId,
@@ -1109,12 +1256,22 @@ async function indexSearchHistory(
     });
   }
 
-  await tx.searchHistoryRecord.deleteMany({
-    where: {
-      owner_id: params.ownerId,
-      ...(activeIds.length > 0 ? { id: { notIn: activeIds } } : {}),
-    },
-  });
+  // Only delete explicitly tombstoned history records (never wipe all rows).
+  const deletedHistoryIds = params.deletedIds || [];
+  if (deletedHistoryIds.length > 0) {
+    const deletedHistoryUuids = deletedHistoryIds.map((rawId) =>
+      toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`)
+    );
+    await tx.searchHistoryRecord.deleteMany({
+      where: {
+        owner_id: params.ownerId,
+        OR: [
+          { id: { in: deletedHistoryUuids } },
+          { manifest_id: { in: deletedHistoryIds } },
+        ],
+      },
+    });
+  }
 }
 
 export async function POST(request: Request) {
@@ -1578,11 +1735,13 @@ export async function POST(request: Request) {
               records: snapshotRecords,
               originDeviceId: batchOriginDeviceId,
               originDeviceLabel: batchOriginDeviceLabel,
+              deletedIds: mergedSnapshot.deletedEntityIds,
             });
           } else if (datasetType === "PLAYLIST") {
             await indexPlaylists(tx, {
               ownerId: profile.id,
               records: snapshotRecords,
+              deletedIds: mergedSnapshot.deletedEntityIds,
             });
           } else if (datasetType === "RESEARCH_QUEUE") {
             await indexResearchQueue(tx, {
@@ -1590,12 +1749,14 @@ export async function POST(request: Request) {
               datasetId: dataset.id,
               generationId,
               records: snapshotRecords,
+              deletedIds: mergedSnapshot.deletedEntityIds,
             });
           } else if (datasetType === "SEARCH_HISTORY") {
             await indexSearchHistory(tx, {
               ownerId: profile.id,
               generationId,
               records: snapshotRecords,
+              deletedIds: mergedSnapshot.deletedEntityIds,
             });
           }
 

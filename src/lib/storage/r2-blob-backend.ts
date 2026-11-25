@@ -6,6 +6,7 @@ import {
   StorageNotFoundError,
   StorageUnavailableError,
   BlobConflictError,
+  BlobForbiddenError,
   BlobNotFoundError,
   BlobUnavailableError,
 } from "./storage-backend";
@@ -101,6 +102,10 @@ export class R2StorageBackend implements BlobBackend {
     return undefined;
   }
 
+  private requiresRemoteWorkerAuthority(bucketKind: "OLD" | "NEW", storageOwnerUuid?: string): boolean {
+    return bucketKind === "OLD" || Boolean(storageOwnerUuid);
+  }
+
   async getBytes(pathname: string): Promise<Buffer> {
     const clean = this.cleanPath(pathname);
     const bucketKind = this.resolveBucketKind(clean);
@@ -117,7 +122,13 @@ export class R2StorageBackend implements BlobBackend {
       return data;
     } catch (err) {
       if (err instanceof BlobNotFoundError) throw err;
-      // In local dev without workers, fallback
+      // Canonical owner-scoped and OLD-archive paths MUST fail closed when Workers are
+      // configured so R2 outages never silently fall back to ephemeral container disk.
+      if (this.requiresRemoteWorkerAuthority(bucketKind, storageOwnerUuid)) {
+        throw err;
+      }
+      // Legacy non-owner system/v1 paths (`youtube-discovery/v1/...`, `asdy/admin/...`)
+      // do not carry an owner claim accepted by the NEW Worker and retain disk fallback.
       try {
         return await this.diskFallback.getBytes(clean);
       } catch {
@@ -140,6 +151,9 @@ export class R2StorageBackend implements BlobBackend {
         storageOwnerUuid,
       });
       if (!meta) {
+        if (this.requiresRemoteWorkerAuthority(bucketKind, storageOwnerUuid)) {
+          return null;
+        }
         return this.diskFallback.head(clean);
       }
       return {
@@ -148,7 +162,10 @@ export class R2StorageBackend implements BlobBackend {
         etag: meta.etag,
         uploadedAt: meta.uploaded,
       };
-    } catch {
+    } catch (err) {
+      if (this.requiresRemoteWorkerAuthority(bucketKind, storageOwnerUuid)) {
+        throw err;
+      }
       return this.diskFallback.head(clean);
     }
   }
@@ -166,10 +183,22 @@ export class R2StorageBackend implements BlobBackend {
     const clean = this.cleanPath(pathname);
     const bucketKind = this.resolveBucketKind(clean);
     const storageOwnerUuid = this.resolveOwnerFromPath(clean);
-    const allowOverwrite = options?.allowOverwrite ?? true;
+    // Rule Zero defense-in-depth: immutable generation, part, pre-upgrade archive,
+    // and OLD bucket historical keys can NEVER be overwritten silently.
+    const isImmutableTarget =
+      !clean.includes("/temp/") &&
+      (bucketKind === "OLD" ||
+        clean.includes("/generations/") ||
+        clean.includes("/parts/") ||
+        clean.includes("/before-app-updating/") ||
+        clean.includes("/legacy/"));
+    const allowOverwrite = isImmutableTarget ? false : (options?.allowOverwrite ?? true);
 
     if (!this.isWorkerConfigured(bucketKind)) {
-      return this.diskFallback.putBytes(clean, data, options);
+      return this.diskFallback.putBytes(clean, data, {
+        ...options,
+        allowOverwrite,
+      });
     }
 
     if (!allowOverwrite) {
@@ -196,7 +225,11 @@ export class R2StorageBackend implements BlobBackend {
       };
     } catch (err) {
       if (err instanceof BlobConflictError) throw err;
-      // If error occurs, try writing to disk fallback as well to prevent total data loss in degraded mode
+      // Canonical owner-scoped and OLD-archive writes must never silently report success
+      // by falling back to ephemeral disk storage when the R2 Worker is configured.
+      if (this.requiresRemoteWorkerAuthority(bucketKind, storageOwnerUuid)) {
+        throw err;
+      }
       try {
         return await this.diskFallback.putBytes(clean, data, options);
       } catch {
@@ -211,21 +244,51 @@ export class R2StorageBackend implements BlobBackend {
     const storageOwnerUuid = this.resolveOwnerFromPath(clean);
 
     if (!this.isWorkerConfigured(bucketKind)) {
+      const isImmutableTarget =
+        !clean.includes("/temp/") &&
+        (bucketKind === "OLD" ||
+          clean.startsWith("asdy/persistence/") ||
+          clean.includes("/generations/") ||
+          clean.includes("/parts/") ||
+          clean.includes("/before-app-updating/") ||
+          /^[^/]+\/persistence\//.test(clean));
+      if (isImmutableTarget) {
+        throw new BlobForbiddenError(
+          `Rule Zero Violation: Refusing to delete immutable object at ${clean}`
+        );
+      }
       await this.diskFallback.delete(clean);
       return;
     }
 
     try {
-      // Historical manifests are protected and will throw or reject
+      // Historical manifests and committed generation/archive objects are immutable
       if (bucketKind === "OLD" && !clean.includes("/temp/")) {
-        // Idempotent no-op: committed old manifests cannot be deleted
-        return;
+        throw new BlobForbiddenError(
+          `Rule Zero Violation: Historical archive object at ${clean} cannot be deleted.`
+        );
+      }
+      if (
+        !clean.includes("/temp/") &&
+        (clean.startsWith("asdy/persistence/") ||
+          clean.includes("/generations/") ||
+          clean.includes("/parts/") ||
+          clean.includes("/before-app-updating/") ||
+          clean.includes("/legacy/") ||
+          /^[^/]+\/persistence\//.test(clean))
+      ) {
+        throw new BlobForbiddenError(
+          `Rule Zero Violation: Canonical persistence object at ${clean} cannot be deleted.`
+        );
       }
 
       await this.client.deleteObject(bucketKind, clean, { storageOwnerUuid });
       await this.diskFallback.delete(clean).catch(() => {});
-    } catch {
-      // Deletion of missing objects is idempotent
+    } catch (err) {
+      if (err instanceof BlobForbiddenError) {
+        throw err;
+      }
+      // Deletion of missing disposable temp objects is idempotent
     }
   }
 

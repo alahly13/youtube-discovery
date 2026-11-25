@@ -98,11 +98,11 @@ export function StorageMigrationCard() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Migration failed");
-      const fmt = (c: { imported: number; skipped: number; failed: number }) =>
-        `${c.imported} imported, ${c.skipped} skipped, ${c.failed} failed`;
+      const fmt = (c?: { imported?: number; skipped?: number; failed?: number }) =>
+        `${c?.imported ?? 0} imported, ${c?.skipped ?? 0} skipped, ${c?.failed ?? 0} failed`;
       setReport(
-        `Playlists: ${fmt(data.playlists)} · Searches: ${fmt(data.searches)} · Keys: ${fmt(data.keys)} · ` +
-          `Titles: ${data.titlesImported} imported, ${data.titlesSkipped} skipped. Disk originals left in place.`,
+        `Playlists: ${fmt(data.playlists)} · Searches: ${fmt(data.searches ?? data.savedHistory)} · Keys: ${fmt(data.keys ?? data.encryptedKeys)} · ` +
+          `Titles: ${data.titlesImported ?? 0} imported, ${data.titlesSkipped ?? 0} skipped. Originals preserved in place.`,
       );
       await fetchStatus();
     } catch (err) {

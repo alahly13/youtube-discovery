@@ -13,6 +13,7 @@
 # testing
 /coverage
 local_notes.txt
+local-notes-youtube-discovery.txt
 # next.js
 /.next/
 /out/

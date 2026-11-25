@@ -155,7 +155,16 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
       fetchSettings: DEFAULT_FETCH_SETTINGS,
       isSidebarOpen: true,
       setCurrentOwnerId: (ownerId) => set({ currentOwnerId: ownerId }),
-      setCurrentManifest: (manifest) => set({ currentManifest: manifest }),
+      setCurrentManifest: (manifest) => {
+        if (manifest && typeof window !== "undefined") {
+          // Persist Class-A temporary processing manifests locally in IndexedDB
+          // so reload/cross-route navigation never relies on single-instance server memory.
+          void import("@/lib/manifests/local-manifest-store")
+            .then(({ persistTempManifestLocally }) => persistTempManifestLocally(manifest))
+            .catch(() => {});
+        }
+        set({ currentManifest: manifest });
+      },
       markManifestSaved: (manifestId) =>
         set((state) => ({
           savedManifestIds: state.savedManifestIds.includes(manifestId)

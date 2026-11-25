@@ -23,19 +23,37 @@ export function ManifestListWorkspace() {
   async function fetchManifests() {
     setLoading(true);
     try {
-      const response = await fetch("/api/youtube/manifests");
-      if (response.ok) {
-        const payload = (await response.json()) as { manifests: YouTubeManifestSummary[] };
-        startTransition(() => setManifests(payload.manifests ?? []));
+      const { listLocalTempManifests } = await import("@/lib/manifests/local-manifest-store");
+      const localManifests = await listLocalTempManifests();
+
+      // Best-effort merge with single-instance transient server cache (optional fallback).
+      // Primary ownership of Class-A temporary manifests belongs to browser IndexedDB.
+      let remoteManifests: YouTubeManifestSummary[] = [];
+      try {
+        const response = await fetch("/api/youtube/manifests");
+        if (response.ok) {
+          const payload = (await response.json()) as { manifests?: YouTubeManifestSummary[] };
+          if (Array.isArray(payload.manifests)) {
+            remoteManifests = payload.manifests;
+          }
+        }
+      } catch {
+        // Offline or cold serverless instance: IndexedDB local list remains authoritative.
       }
+
+      const byId = new Map<string, YouTubeManifestSummary>();
+      for (const m of remoteManifests) byId.set(m.manifestId, m);
+      for (const m of localManifests) byId.set(m.manifestId, m);
+      const merged = Array.from(byId.values()).sort((a, b) =>
+        b.collectedAt.localeCompare(a.collectedAt)
+      );
+      startTransition(() => setManifests(merged));
     } finally {
       startTransition(() => setLoading(false));
     }
   }
 
-  /* eslint-disable react-hooks/set-state-in-effect -- Mount-only data fetch; setState is async-deferred via startTransition */
   useEffect(() => { fetchManifests(); }, []);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
     <div className="space-y-4">

@@ -54,10 +54,12 @@ export async function createServerSupabaseClient(request?: Request) {
       setAll(cookiesToSet) {
         if (!cookieStore) return;
         try {
+          // Preserve explicit cookie deletion/expiry from @supabase/ssr (value === "" or maxAge === 0)
+          // so sign-out and session rotation never get overridden with the persistent TTL.
           cookiesToSet.forEach(({ name, value, options }) =>
             cookieStore.set(name, value, {
               ...options,
-              maxAge: ttl,
+              maxAge: value === "" ? 0 : (options?.maxAge ?? ttl),
               path: options?.path || "/",
               sameSite: options?.sameSite || "lax",
               secure: process.env.NODE_ENV === "production",
@@ -120,9 +122,11 @@ export function createRouteHandlerSupabaseClient(
             requestCookies.push({ name, value });
           }
 
+          // Preserve explicit cookie deletion/expiry from @supabase/ssr (value === "" or maxAge === 0)
+          // so sign-out and session revocation cleanly clear auth cookies in Route Handlers.
           response.cookies.set(name, value, {
             ...options,
-            maxAge: ttl,
+            maxAge: value === "" ? 0 : (options?.maxAge ?? ttl),
             path: options?.path || "/",
             sameSite: options?.sameSite || "lax",
             secure: process.env.NODE_ENV === "production",

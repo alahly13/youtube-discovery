@@ -141,20 +141,33 @@ export function SavedSearchesWorkspace() {
     setSyncNotice(null);
     try {
       const pendingIds = savedSearches
-        .filter((s: any) => s._localStatus === "LOCAL_PENDING" || s._syncStatus === "LOCAL")
+        .filter((s) => {
+          const withMeta = s as SavedSearch & {
+            _localStatus?: string;
+            _syncStatus?: string;
+          };
+          return withMeta._localStatus === "LOCAL_PENDING" || withMeta._syncStatus === "LOCAL";
+        })
         .map((s) => s.id);
 
-      const localRecordsPayload = savedSearches.map((s) => ({
-        id: s.id,
-        recordId: (s as any).recordId || s.id,
-        resourceType: "SAVED_SEARCH",
-        title: s.title,
-        query: s.query,
-        notes: s.notes,
-        createdAt: s.createdAt,
-        _localStatus: (s as any)._localStatus,
-        _syncStatus: (s as any)._syncStatus,
-      }));
+      const localRecordsPayload = savedSearches.map((s) => {
+        const withMeta = s as SavedSearch & {
+          recordId?: string;
+          _localStatus?: string;
+          _syncStatus?: string;
+        };
+        return {
+          id: s.id,
+          recordId: withMeta.recordId || s.id,
+          resourceType: "SAVED_SEARCH",
+          title: s.title,
+          query: s.query,
+          notes: s.notes,
+          createdAt: s.createdAt,
+          _localStatus: withMeta._localStatus,
+          _syncStatus: withMeta._syncStatus,
+        };
+      });
 
       const res = await fetch("/api/storage/reconciliation/compare", {
         method: "POST",
@@ -163,7 +176,8 @@ export function SavedSearchesWorkspace() {
           datasetType: "REFERENCES",
           resourceType: "SAVED_SEARCH",
           localContext: {
-            ownerId: "asdy",
+            // Always resolve the authenticated session owner dynamically; never pin to "asdy".
+            ownerId: syncCoordinator.getOwnerId() || undefined,
             pendingEntityIds: pendingIds,
           },
           localRecords: localRecordsPayload,
@@ -200,13 +214,29 @@ export function SavedSearchesWorkspace() {
 
         // Process cloud-only searches
         if (Array.isArray(data.cloudOnlyRecords)) {
-          const parsedCloudOnly: SavedSearch[] = data.cloudOnlyRecords.map((c: any) => ({
+          const parsedCloudOnly: SavedSearch[] = (
+            data.cloudOnlyRecords as Array<{
+              id: string;
+              title?: string;
+              query?: string;
+              resourceSelection?: unknown;
+              settings?: SavedSearch["settings"];
+              notes?: string;
+              createdAt?: string;
+              isPinned?: boolean;
+            }>
+          ).map((c) => ({
             id: c.id,
-            title: c.title,
+            title: c.title || c.query || c.id,
             query: c.query || "",
-            resourceSelection: (c.resourceType as any) || "ALL",
+            resourceSelection:
+              typeof c.resourceSelection === "string"
+                ? (c.resourceSelection as SavedSearch["resourceSelection"])
+                : "ALL",
+            settings: c.settings || { query: c.query || "" },
             notes: c.notes,
             createdAt: c.createdAt || new Date().toISOString(),
+            isPinned: Boolean(c.isPinned),
             _storageState: "CLOUD_ONLY",
           }));
           setCloudOnlySearches(parsedCloudOnly);
@@ -214,24 +244,6 @@ export function SavedSearchesWorkspace() {
 
         setSyncNotice(
           `Reconciliation complete: ${data.summary?.localOnlyCount ?? 0} local-only, ${data.summary?.localAndCloudCount ?? 0} synchronized, ${data.summary?.localRecordsEligibleForCleanup ?? data.summary?.cleanupEligibleCount ?? 0} cleanup eligible.`
-        );
-      }
-    } catch (err) {
-      setSyncNotice(err instanceof Error ? err.message : "Failed to run 3-way reconciliation.");
-    } finally {
-      setIsComparing(false);
-    }
-  }, [savedSearches]);
-            notes: c.notes,
-            createdAt: c.createdAt || new Date().toISOString(),
-            isPinned: false,
-            resourceSelection: "ALL",
-          }));
-          setCloudOnlySearches(parsedCloudOnly);
-        }
-
-        setSyncNotice(
-          `Reconciliation complete: ${data.summary.localOnlyCount} local-only, ${data.summary.localAndCloudCount} synchronized, ${data.summary.cleanupEligibleCount} cleanup eligible.`
         );
       }
     } catch (err) {
@@ -264,8 +276,12 @@ export function SavedSearchesWorkspace() {
     return savedSearches.map((s) => {
       const id = s.id;
       const recon = reconciliationMap.get(id);
+      const sMeta = s as SavedSearch & {
+        _localStatus?: string;
+        _syncStatus?: string;
+      };
       const isPending =
-        (s as any)._localStatus === "LOCAL_PENDING" || (s as any)._syncStatus === "LOCAL";
+        sMeta._localStatus === "LOCAL_PENDING" || sMeta._syncStatus === "LOCAL";
 
       let storageState: StorageStateCategory = "LOCAL_ONLY";
       let cleanupEligible = false;
@@ -277,7 +293,7 @@ export function SavedSearchesWorkspace() {
         cleanupEligible = !isPending && recon.cleanupEligible;
         r2Verified = recon.r2Verified;
         supabaseVerified = recon.supabaseVerified;
-      } else if (!isPending && (s as any)._localStatus === "COMMITTED") {
+      } else if (!isPending && sMeta._localStatus === "COMMITTED") {
         storageState = "LOCAL_AND_CLOUD";
         cleanupEligible = true;
         r2Verified = true;

@@ -1,179 +1,224 @@
 import { NextResponse } from "next/server";
 import { assertSameOrigin, requireAdmin } from "@/lib/auth/require-auth";
 import { resolveStorageOwnerId } from "@/lib/auth/storage-owner";
+import { readUserPlaylist } from "@/lib/playlists/playlist-archive";
 import {
-  deleteUserPlaylist,
-  readUserPlaylist,
-  replaceUserPlaylist,
-} from "@/lib/playlists/playlist-archive";
-import {
-  syncPlaylistToDb,
   deletePlaylistFromDb,
+  getPlaylistManifestFromDb,
+  syncPlaylistToDb,
 } from "@/lib/playlists/playlist-db-service";
 import {
   updatePlaylistMetaSchema,
   userPlaylistManifestSchema,
 } from "@/lib/validation/library-schemas";
+import type { UserPlaylistManifest } from "@/types/library";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * GET /api/playlists/[id] — full self-contained manifest.
- * PUT accepts either a full manifest (validated) or a meta patch
- * ({name?, description?}).
- * DELETE removes only this playlist's record from DB and R2.
- * ═══════════════════════════════════════════════════════════════════════════
- */
-export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+type RouteContext = { params: Promise<{ id: string }> };
+
+function sanitizeId(raw: string): string | null {
+  const clean = raw.trim();
+  if (!clean || !/^[a-zA-Z0-9_-]{3,80}$/.test(clean)) return null;
+  return clean;
+}
+
+export async function GET(request: Request, context: RouteContext) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
+  const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
+  const { id: rawId } = await context.params;
+  const id = sanitizeId(rawId);
+  if (!id) {
+    return NextResponse.json({ error: "Invalid playlist id" }, { status: 400 });
+  }
+
   try {
-    const { id } = await params;
-    const found = await readUserPlaylist(id);
-    if (!found) {
-      return NextResponse.json(
-        { error: "Playlist not found or unreadable", id, recoverable: true },
-        { status: 404 },
-      );
+    const dbManifest = await getPlaylistManifestFromDb(storageOwnerUuid, id);
+    if (dbManifest) {
+      return NextResponse.json({ manifest: dbManifest });
     }
-    return NextResponse.json({ manifest: found.manifest });
+
+    // Read-only fallback to legacy disk/v1 archive if not yet migrated into Postgres.
+    const legacyRecord = await readUserPlaylist(id);
+    if (!legacyRecord?.manifest) {
+      return NextResponse.json({ error: "Playlist not found" }, { status: 404 });
+    }
+    return NextResponse.json({ manifest: legacyRecord.manifest });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to read playlist";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
-export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function PUT(request: Request, context: RouteContext) {
   const csrf = assertSameOrigin(request);
   if (csrf) return csrf;
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
+  const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
+  const { id: rawId } = await context.params;
+  const id = sanitizeId(rawId);
+  if (!id) {
+    return NextResponse.json({ error: "Invalid playlist id" }, { status: 400 });
+  }
+
+  let body: unknown;
   try {
-    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
-    if (!storageOwnerUuid) {
-      return NextResponse.json(
-        { error: "Unable to resolve a canonical storage owner for this session." },
-        { status: 500 }
-      );
-    }
-    const { id } = await params;
-    const body: unknown = await request.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
 
-    // Meta patch path: { name?, description? }
-    const metaPatch = updatePlaylistMetaSchema.safeParse(body);
-    const looksLikeMetaPatch =
-      typeof body === "object" &&
-      body !== null &&
-      !("manifestVersion" in body) &&
-      !("items" in body);
+  const parsed = userPlaylistManifestSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid playlist manifest" },
+      { status: 400 }
+    );
+  }
 
-    if (looksLikeMetaPatch) {
-      if (
-        !metaPatch.success ||
-        (metaPatch.data.name === undefined && metaPatch.data.description === undefined)
-      ) {
-        return NextResponse.json(
-          { error: "Invalid playlist update: expected {name?, description?} or a full manifest" },
-          { status: 400 },
-        );
-      }
-      const found = await readUserPlaylist(id);
-      if (!found) {
-        return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
-      }
+  if (parsed.data.playlist.id !== id) {
+    return NextResponse.json({ error: "Playlist id mismatch" }, { status: 400 });
+  }
 
-      const next = {
-        ...found.manifest,
-        playlist: {
-          ...found.manifest.playlist,
-          name: metaPatch.data.name ?? found.manifest.playlist.name,
-          description:
-            metaPatch.data.description !== undefined
-              ? (metaPatch.data.description?.trim() || null)
-              : found.manifest.playlist.description,
-          updatedAt: new Date().toISOString(),
-        },
-      };
-
-      const saved = await replaceUserPlaylist(id, next);
-      if (!saved) {
-        return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
-      }
-
-      // Synchronize to PostgreSQL
-      await syncPlaylistToDb(storageOwnerUuid, saved.manifest);
-
-      return NextResponse.json({ success: true, manifest: saved.manifest });
-    }
-
-    // Full-manifest replace path (validated, atomic).
-    const parsed = userPlaylistManifestSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid playlist manifest", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-    if (parsed.data.playlist.id !== id) {
-      return NextResponse.json(
-        { error: "Manifest id does not match route id" },
-        { status: 400 },
-      );
-    }
-
-    const saved = await replaceUserPlaylist(id, {
+  try {
+    const manifest: UserPlaylistManifest = {
       ...parsed.data,
       playlist: {
         ...parsed.data.playlist,
         updatedAt: new Date().toISOString(),
       },
-    });
-
-    if (!saved) {
-      return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
+    };
+    const synced = await syncPlaylistToDb(storageOwnerUuid, manifest);
+    if (!synced) {
+      return NextResponse.json(
+        { error: "Failed to save playlist to PostgreSQL database" },
+        { status: 500 }
+      );
     }
+    return NextResponse.json({ manifest });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Failed to write playlist";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
 
-    // Synchronize to PostgreSQL
-    await syncPlaylistToDb(storageOwnerUuid, saved.manifest);
+export async function PATCH(request: Request, context: RouteContext) {
+  const csrf = assertSameOrigin(request);
+  if (csrf) return csrf;
+  const guard = await requireAdmin(request);
+  if (!guard.ok) return guard.response;
 
-    return NextResponse.json({ success: true, manifest: saved.manifest });
+  const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
+  const { id: rawId } = await context.params;
+  const id = sanitizeId(rawId);
+  if (!id) {
+    return NextResponse.json({ error: "Invalid playlist id" }, { status: 400 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = updatePlaylistMetaSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid update" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const existing =
+      (await getPlaylistManifestFromDb(storageOwnerUuid, id)) ??
+      (await readUserPlaylist(id))?.manifest ??
+      null;
+    if (!existing) {
+      return NextResponse.json({ error: "Playlist not found" }, { status: 404 });
+    }
+    const next: UserPlaylistManifest = {
+      ...existing,
+      playlist: {
+        ...existing.playlist,
+        name: parsed.data.name ?? existing.playlist.name,
+        description:
+          parsed.data.description === undefined
+            ? existing.playlist.description
+            : parsed.data.description,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    const synced = await syncPlaylistToDb(storageOwnerUuid, next);
+    if (!synced) {
+      return NextResponse.json(
+        { error: "Failed to update playlist in PostgreSQL database" },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ manifest: next });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to update playlist";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: RouteContext) {
   const csrf = assertSameOrigin(request);
   if (csrf) return csrf;
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
+  const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
+  const { id: rawId } = await context.params;
+  const id = sanitizeId(rawId);
+  if (!id) {
+    return NextResponse.json({ error: "Invalid playlist id" }, { status: 400 });
+  }
+
   try {
-    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
-    if (!storageOwnerUuid) {
-      return NextResponse.json(
-        { error: "Unable to resolve a canonical storage owner for this session." },
-        { status: 500 }
-      );
+    const deletedFromDb = await deletePlaylistFromDb(storageOwnerUuid, id);
+    if (!deletedFromDb) {
+      const legacy = await readUserPlaylist(id).catch(() => null);
+      if (!legacy) {
+        return NextResponse.json({ error: "Playlist not found" }, { status: 404 });
+      }
     }
-    const { id } = await params;
-
-    // 1. Delete from R2 / storage backend
-    const ok = await deleteUserPlaylist(id);
-    if (!ok) {
-      return NextResponse.json({ error: "Playlist not found", id }, { status: 404 });
-    }
-
-    // 2. Delete from PostgreSQL
-    await deletePlaylistFromDb(storageOwnerUuid, id);
-
-    // Deleting a playlist never deletes global saved entities or searches.
-    return NextResponse.json({ success: true, id });
+    return NextResponse.json({ deleted: true, id });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to delete playlist";
     return NextResponse.json({ error: msg }, { status: 500 });

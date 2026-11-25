@@ -30,10 +30,49 @@ async function main() {
   );
   const Module = projectRequire("node:module");
   const originalLoad = Module._load;
+  /**
+   * Prisma mock — the search pipeline suites don't use the database at all,
+   * but several modules now transitively import `@/lib/db/prisma`.  Rather
+   * than spinning up a real PrismaClient (which needs DATABASE_URL + pg
+   * adapter), intercept the compiled prisma module and return an inert proxy
+   * that never crashes but also never queries.
+   */
+  const prismaProxy = new Proxy({}, {
+    get(_t, prop) {
+      if (prop === "then") return undefined;             // not a thenable
+      if (prop === "$connect" || prop === "$disconnect")
+        return async () => {};
+      // Model-level access → return an object whose methods return empty results
+      return new Proxy({}, {
+        get(_t2, method) {
+          if (method === "then") return undefined;
+          return async () => null;
+        },
+      });
+    },
+  });
+  const prismaStub = { prisma: prismaProxy, default: prismaProxy };
+
   Module._load = function (request, parent, isMain) {
     if (request === "server-only") return {};
     if (typeof request === "string" && request.startsWith("@/")) {
+      /* Intercept prisma module with our inert stub */
+      const normalised = request.slice(2).replace(/\\/g, "/");
+      if (normalised === "lib/db/prisma" || normalised === "lib/db/prisma.js") {
+        return prismaStub;
+      }
       return originalLoad.call(this, path.join(tmp, "src", request.slice(2)), parent, isMain);
+    }
+    /* Also catch the compiled relative require that tsc emits for @/ paths */
+    if (typeof request === "string" && parent?.filename) {
+      const resolved = path.resolve(path.dirname(parent.filename), request);
+      const relToTmp = path.relative(tmp, resolved).replace(/\\/g, "/");
+      if (
+        relToTmp === "src/lib/db/prisma" ||
+        relToTmp === "src/lib/db/prisma.js"
+      ) {
+        return prismaStub;
+      }
     }
     try {
       return originalLoad.call(this, request, parent, isMain);

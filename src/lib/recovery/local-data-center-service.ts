@@ -536,7 +536,8 @@ export async function scanAllLocalData(authenticatedUserId = "unknown"): Promise
             category = "PLAYLIST";
           } else if (
             storeName === IDB_STORES.SEARCH_HISTORY ||
-            storeName === IDB_STORES.SAVED_SEARCHES
+            storeName === IDB_STORES.SAVED_SEARCHES ||
+            storeName === IDB_STORES.TEMP_MANIFESTS
           ) {
             category = "SEARCH_HISTORY";
           } else if (
@@ -985,7 +986,8 @@ export async function collectFullBackupData(
             category = "PLAYLIST";
           } else if (
             storeName === IDB_STORES.SEARCH_HISTORY ||
-            storeName === IDB_STORES.SAVED_SEARCHES
+            storeName === IDB_STORES.SAVED_SEARCHES ||
+            storeName === IDB_STORES.TEMP_MANIFESTS
           ) {
             category = "SEARCH_HISTORY";
           } else if (

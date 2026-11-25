@@ -34,10 +34,27 @@ interface ManifestItem {
   [key: string]: unknown;
 }
 
+interface ManifestEnvelopeData {
+  schema_version?: string;
+  manifest_metadata?: {
+    manifest_id?: string;
+    category?: string;
+    source_format?: string;
+    storage_path?: string;
+    byte_count?: number;
+    record_count?: number;
+    content_sha256?: string;
+    source_created_at?: string | null;
+  };
+  payload?: {
+    items?: ManifestItem[];
+  };
+}
+
 export function ManifestViewerWorkspace() {
   const [manifests, setManifests] = useState<ArchivedManifestRecord[]>([]);
   const [selectedManifestId, setSelectedManifestId] = useState<string>("");
-  const [manifestData, setManifestData] = useState<any>(null);
+  const [manifestData, setManifestData] = useState<ManifestEnvelopeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -223,26 +240,26 @@ export function ManifestViewerWorkspace() {
             </select>
           </div>
 
-          {Boolean(manifestData?.manifest_metadata) && (
+          {manifestData?.manifest_metadata && (
             <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
               <Badge tone="neutral">
-                {String(manifestData.manifest_metadata.record_count)} records
+                {String(manifestData.manifest_metadata.record_count ?? 0)} records
               </Badge>
               <Badge tone="neutral">
-                {formatBytes(manifestData.manifest_metadata.byte_count)}
+                {formatBytes(manifestData.manifest_metadata.byte_count ?? 0)}
               </Badge>
               <Badge tone="ai">
-                {String(manifestData.manifest_metadata.category)}
+                {String(manifestData.manifest_metadata.category ?? "")}
               </Badge>
             </div>
           )}
         </div>
 
         {/* Provenance Metadata Drawer */}
-        {Boolean(manifestData?.manifest_metadata) && (
+        {manifestData?.manifest_metadata && (
           <div className="rounded-xl border border-border/70 bg-surface-muted/30 p-3.5 text-xs space-y-1 font-mono text-muted">
             <p><strong>Storage Path:</strong> <span className="text-primary">{String(manifestData.manifest_metadata.storage_path || `asdy/old/${manifestData.manifest_metadata.category}/${manifestData.manifest_metadata.manifest_id}/manifest.json`)}</span></p>
-            <p className="truncate"><strong>SHA-256:</strong> {String(manifestData.manifest_metadata.content_sha256)}</p>
+            <p className="truncate"><strong>SHA-256:</strong> {String(manifestData.manifest_metadata.content_sha256 ?? "")}</p>
             {manifestData.manifest_metadata.source_created_at ? (
               <p><strong>Historical Created At:</strong> {String(manifestData.manifest_metadata.source_created_at)}</p>
             ) : null}

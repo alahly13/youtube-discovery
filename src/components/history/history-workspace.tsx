@@ -51,6 +51,7 @@ import {
   toSearchDoc,
 } from "@/lib/search/local-search";
 import { formatDate, formatFullDateTime, formatRelativeDate } from "@/lib/utils/format";
+import { syncCoordinator } from "@/lib/sync/sync-coordinator";
 import {
   removeLocalSearchHistoryItem,
   removeLocalSearchHistoryBatch,
@@ -162,13 +163,32 @@ export function HistoryWorkspace() {
   async function fetchServerManifests() {
     setLoadingManifests(true);
     try {
-      const res = await authFetch("/api/youtube/manifests");
-      if (res.ok) {
-        const data = (await res.json()) as {
-          manifests: YouTubeManifestSummary[];
-        };
-        startTransition(() => setServerManifests(data.manifests ?? []));
+      const { listLocalTempManifests } = await import("@/lib/manifests/local-manifest-store");
+      const localManifests = await listLocalTempManifests();
+
+      let remoteManifests: YouTubeManifestSummary[] = [];
+      try {
+        const res = await authFetch("/api/youtube/manifests");
+        if (res.ok) {
+          const data = (await res.json()) as {
+            manifests: YouTubeManifestSummary[];
+          };
+          remoteManifests = data.manifests ?? [];
+        }
+      } catch {
+        // Local IndexedDB temporary manifests stay readable without server round-trip
       }
+
+      const byId = new Map<string, YouTubeManifestSummary>();
+      for (const m of remoteManifests) byId.set(m.manifestId, m);
+      for (const m of localManifests) byId.set(m.manifestId, m);
+      startTransition(() =>
+        setServerManifests(
+          Array.from(byId.values()).sort((a, b) =>
+            b.collectedAt.localeCompare(a.collectedAt)
+          )
+        )
+      );
     } finally {
       startTransition(() => setLoadingManifests(false));
     }
@@ -230,20 +250,32 @@ export function HistoryWorkspace() {
     setIsComparing(true);
     try {
       const pendingIds = searchHistory
-        .filter((s: any) => s._localStatus === "LOCAL_PENDING" || s._syncStatus === "LOCAL")
+        .filter((s) => {
+          const itemWithSync = s as SearchHistoryItem & {
+            _localStatus?: string;
+            _syncStatus?: string;
+          };
+          return itemWithSync._localStatus === "LOCAL_PENDING" || itemWithSync._syncStatus === "LOCAL";
+        })
         .map((s) => s.id);
 
-      const localRecordsPayload = unifiedSearches.map((item) => ({
-        id: item.id,
-        recordId: item.id,
-        resourceType: "SEARCH_HISTORY",
-        title: item.title,
-        query: item.query,
-        createdAt: item.timestamp,
-        savedAt: item.timestamp,
-        _localStatus: (item as any)._localStatus,
-        _syncStatus: (item as any)._syncStatus,
-      }));
+      const localRecordsPayload = unifiedSearches.map((item) => {
+        const itemWithSync = item as SearchHistoryItem & {
+          _localStatus?: string;
+          _syncStatus?: string;
+        };
+        return {
+          id: item.id,
+          recordId: item.id,
+          resourceType: "SEARCH_HISTORY",
+          title: item.title,
+          query: item.query,
+          createdAt: item.timestamp,
+          savedAt: item.timestamp,
+          _localStatus: itemWithSync._localStatus,
+          _syncStatus: itemWithSync._syncStatus,
+        };
+      });
 
       const res = await fetch("/api/storage/reconciliation/compare", {
         method: "POST",
@@ -252,7 +284,8 @@ export function HistoryWorkspace() {
           datasetType: "SEARCH_HISTORY",
           resourceType: "SEARCH_HISTORY",
           localContext: {
-            ownerId: "asdy",
+            // Pass the active session owner when resolved instead of hardcoding "asdy".
+            ownerId: syncCoordinator.getOwnerId() || undefined,
             pendingEntityIds: pendingIds,
           },
           localRecords: localRecordsPayload,
@@ -289,12 +322,22 @@ export function HistoryWorkspace() {
 
         // Process cloud-only searches
         if (Array.isArray(data.cloudOnlyRecords)) {
-          const parsedCloudOnly: SearchHistoryItem[] = data.cloudOnlyRecords.map((c: any) => ({
+          const parsedCloudOnly: SearchHistoryItem[] = (
+            data.cloudOnlyRecords as Array<{
+              id: string;
+              title?: string;
+              query?: string;
+              settings?: SearchHistoryItem["settings"];
+              createdAt?: string;
+              cloudMeta?: { generationId?: string };
+            }>
+          ).map((c) => ({
             id: c.id,
-            title: c.title,
+            title: c.title || c.query || c.id,
             query: c.query || "",
             timestamp: c.createdAt || new Date().toISOString(),
             resourceSelection: "ALL",
+            settings: c.settings || { query: c.query || "" },
             resultsCount: 0,
             status: "complete",
             manifestId: c.cloudMeta?.generationId || c.id,

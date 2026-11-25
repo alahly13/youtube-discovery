@@ -11,6 +11,18 @@ export default function manifest(): MetadataRoute.Manifest {
     display: "standalone",
     background_color: "#09090d",
     theme_color: "#09090d",
+    // Mirror public/manifest.webmanifest so App Router /manifest.webmanifest never strips
+    // the Web Share Target registration on Android Chrome.
+    share_target: {
+      action: "/share-target",
+      method: "POST",
+      enctype: "multipart/form-data",
+      params: {
+        title: "title",
+        text: "text",
+        url: "url",
+      },
+    },
     icons: [
       {
         src: "/icons/icon-192x192.png",

@@ -1,118 +1,133 @@
-import "server-only";
+import crypto from "node:crypto";
+import { prisma } from "@/lib/db/prisma";
+import type { BlobBackend } from "../storage/storage-backend";
 
-import { createHash } from "node:crypto";
-import type { StorageBackend, BlobBackend } from "../storage/storage-backend";
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Distributed Login Rate Limiter — PostgreSQL Primary (Multi-Instance Safe)
+ * ──────────────────────────────────────────────────────────────────────────
+ * Stores brute-force login throttle buckets in `login_rate_limits` inside
+ * Supabase PostgreSQL instead of legacy `asdy/admin/ratelimit/*.json` blobs
+ * (which failed Worker owner checks and fell back to ephemeral Vercel disk).
+ * Keeps an in-process fallback ONLY if PostgreSQL is unreachable/unconfigured
+ * in isolated unit tests.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 
 export function rateLimitPathname(ipHash: string): string {
   return `asdy/admin/ratelimit/${ipHash}.json`;
 }
 
-/**
- * ═══════════════════════════════════════════════════════════════════════════
- * Login Rate Limiting — Blob-backed sliding window (shared across instances).
- * ──────────────────────────────────────────────────────────────────────────
- * Serverless instances do not share memory, so attempt counters live in Blob
- * (`admin/ratelimit/<ipHash>.json`). An in-memory mirror absorbs Blob
- * outages WITHOUT becoming the sole mechanism: when Blob is unreachable the
- * limiter still throttles per-instance (fail-safe), and every login attempt
- * still requires full password verification.
- *
- * Policy: max 10 attempts per 15-minute window per IP hash. IPs are hashed
- * (SHA-256 + server salt) so the store never holds raw client IPs.
- * ═══════════════════════════════════════════════════════════════════════════
- */
-
 export const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 export const RATE_LIMIT_MAX_ATTEMPTS = 10;
 
-interface RateLimitState {
+interface RateEntry {
+  count: number;
   windowStart: number;
-  attempts: number[];
+  blockedUntil?: number;
 }
 
-const memoryMirror = new Map<string, RateLimitState>();
-
-function serverSalt(): string {
-  // Stable per-process salt is enough: the hash only needs to be
-  // non-reversible in the store, not globally consistent.
-  return (
-    process.env.API_KEYS_ENCRYPTION_KEY?.slice(0, 16) ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(0, 16) ||
-    "youtube-discovery"
-  );
-}
+const memoryMirror = new Map<string, RateEntry>();
 
 export function hashIp(ip: string): string {
-  return createHash("sha256").update(`${serverSalt()}|${ip}`).digest("hex").slice(0, 32);
+  return crypto.createHash("sha256").update(`yd:ratelimit:${ip}`).digest("hex").slice(0, 24);
 }
 
 export function clientIpFromHeaders(headers: Headers): string {
-  const forwarded = headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
+  const fwd = headers.get("x-forwarded-for");
+  if (fwd) {
+    const first = fwd.split(",")[0]?.trim();
+    if (first) return first;
+  }
   return headers.get("x-real-ip")?.trim() || "unknown";
 }
 
-function prune(state: RateLimitState, now: number): RateLimitState {
-  const cutoff = now - RATE_LIMIT_WINDOW_MS;
-  const attempts = state.attempts.filter((t) => t > cutoff);
-  const windowStart = attempts.length > 0 ? Math.min(...attempts) : now;
-  return { windowStart, attempts };
+function toResult(entry: RateEntry | undefined, now: number): { allowed: boolean; retryAfterSeconds?: number } {
+  if (!entry) return { allowed: true };
+  if (entry.blockedUntil && entry.blockedUntil > now) {
+    return { allowed: false, retryAfterSeconds: Math.ceil((entry.blockedUntil - now) / 1000) };
+  }
+  if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    return { allowed: true };
+  }
+  if (entry.count >= RATE_LIMIT_MAX_ATTEMPTS) {
+    return { allowed: false, retryAfterSeconds: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW_MS - now) / 1000) };
+  }
+  return { allowed: true };
 }
 
 export async function checkLoginRateLimit(
-  backend: BlobBackend,
-  ipHash: string,
-): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  _backend: BlobBackend,
+  ipHash: string
+): Promise<{ allowed: boolean; retryAfterSeconds?: number }> {
   const now = Date.now();
-  let state: RateLimitState = { windowStart: now, attempts: [] };
   try {
-    const raw = await backend.getBytes(rateLimitPathname(ipHash));
-    const parsed = JSON.parse(raw.toString("utf8")) as Partial<RateLimitState>;
-    if (parsed && Array.isArray(parsed.attempts)) {
-      state = prune({ windowStart: typeof parsed.windowStart === "number" ? parsed.windowStart : now, attempts: parsed.attempts.filter((t) => typeof t === "number") }, now);
-    }
+    const row = await prisma.loginRateLimit.findUnique({
+      where: { ip_hash: ipHash },
+    });
+    if (!row) return { allowed: true };
+    const entry: RateEntry = {
+      count: row.attempt_count,
+      windowStart: row.window_start.getTime(),
+      blockedUntil: row.blocked_until ? row.blocked_until.getTime() : undefined,
+    };
+    memoryMirror.set(ipHash, entry);
+    return toResult(entry, now);
   } catch {
-    const mirrored = memoryMirror.get(ipHash);
-    if (mirrored) state = prune(mirrored, now);
+    return toResult(memoryMirror.get(ipHash), now);
   }
-  if (state.attempts.length >= RATE_LIMIT_MAX_ATTEMPTS) {
-    const oldest = Math.min(...state.attempts);
-    const retryAfterSeconds = Math.max(1, Math.ceil((oldest + RATE_LIMIT_WINDOW_MS - now) / 1000));
-    return { allowed: false, retryAfterSeconds };
-  }
-  return { allowed: true, retryAfterSeconds: 0 };
 }
 
-export async function recordLoginAttempt(backend: BlobBackend, ipHash: string): Promise<void> {
+export async function recordLoginAttempt(_backend: BlobBackend, ipHash: string): Promise<void> {
   const now = Date.now();
-  let state: RateLimitState = { windowStart: now, attempts: [] };
   try {
-    const raw = await backend.getBytes(rateLimitPathname(ipHash));
-    const parsed = JSON.parse(raw.toString("utf8")) as Partial<RateLimitState>;
-    if (parsed && Array.isArray(parsed.attempts)) {
-      state = prune({ windowStart: now, attempts: parsed.attempts.filter((t) => typeof t === "number") }, now);
-    }
-  } catch {
-    const mirrored = memoryMirror.get(ipHash);
-    if (mirrored) state = prune(mirrored, now);
-  }
-  state.attempts.push(now);
-  memoryMirror.set(ipHash, state);
-  try {
-    await backend.putBytes(rateLimitPathname(ipHash), Buffer.from(JSON.stringify(state), "utf8"), {
-      contentType: "application/json",
-      cacheSeconds: 0,
+    const existing = await prisma.loginRateLimit.findUnique({
+      where: { ip_hash: ipHash },
+    });
+    const inWindow = existing && now - existing.window_start.getTime() <= RATE_LIMIT_WINDOW_MS;
+    const nextCount = inWindow ? existing.attempt_count + 1 : 1;
+    const windowStart = inWindow ? existing.window_start : new Date(now);
+    const blockedUntil =
+      nextCount >= RATE_LIMIT_MAX_ATTEMPTS ? new Date(now + RATE_LIMIT_WINDOW_MS) : null;
+
+    await prisma.loginRateLimit.upsert({
+      where: { ip_hash: ipHash },
+      create: {
+        ip_hash: ipHash,
+        attempt_count: nextCount,
+        window_start: windowStart,
+        blocked_until: blockedUntil,
+      },
+      update: {
+        attempt_count: nextCount,
+        window_start: windowStart,
+        blocked_until: blockedUntil,
+      },
+    });
+    memoryMirror.set(ipHash, {
+      count: nextCount,
+      windowStart: windowStart.getTime(),
+      blockedUntil: blockedUntil?.getTime(),
     });
   } catch {
-    // Mirror already updated; Blob outage must not break login availability.
+    const cur = memoryMirror.get(ipHash);
+    const inWindow = cur && now - cur.windowStart <= RATE_LIMIT_WINDOW_MS;
+    const nextCount = inWindow ? cur.count + 1 : 1;
+    memoryMirror.set(ipHash, {
+      count: nextCount,
+      windowStart: inWindow ? cur.windowStart : now,
+      blockedUntil: nextCount >= RATE_LIMIT_MAX_ATTEMPTS ? now + RATE_LIMIT_WINDOW_MS : undefined,
+    });
   }
 }
 
-export async function clearLoginAttempts(backend: BlobBackend, ipHash: string): Promise<void> {
+export async function clearLoginAttempts(_backend: BlobBackend, ipHash: string): Promise<void> {
   memoryMirror.delete(ipHash);
   try {
-    await backend.delete(rateLimitPathname(ipHash));
+    await prisma.loginRateLimit.deleteMany({
+      where: { ip_hash: ipHash },
+    });
   } catch {
-    // Best effort.
+    // Non-fatal cleanup
   }
 }

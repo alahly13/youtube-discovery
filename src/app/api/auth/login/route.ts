@@ -94,12 +94,33 @@ export async function POST(request: Request) {
     );
   }
 
-  // Server-side canonical username-to-email mapping
+  // Server-side canonical username-to-email mapping (also checks updated user_profiles.username)
   const configuredAdminUsername = (process.env.ADMIN_DEFAULT_USERNAME || "asdy").trim().toLowerCase();
   const configuredAdminEmail = (process.env.ADMIN_EMAIL || "asdy@youtube.discov.com").trim().toLowerCase();
   const normalizedInput = username.trim().toLowerCase();
 
+  let matchedDbAdminUsername: string | null = null;
+  try {
+    const dbProfile = await import("@/lib/db/prisma").then(({ prisma }) =>
+      prisma.userProfile.findFirst({
+        where: {
+          username: normalizedInput,
+          role: "admin",
+          is_deleted: false,
+          is_suspended: false,
+        },
+        select: { username: true },
+      })
+    );
+    if (dbProfile?.username) {
+      matchedDbAdminUsername = dbProfile.username;
+    }
+  } catch {
+    // Database optional during bootstrap; fall back to configured env mapping
+  }
+
   const isConfiguredAdmin =
+    Boolean(matchedDbAdminUsername) ||
     normalizedInput === configuredAdminUsername ||
     normalizedInput === configuredAdminEmail;
 
@@ -114,7 +135,7 @@ export async function POST(request: Request) {
   // Prepare response object where @supabase/ssr binds auth cookies
   const response = NextResponse.json({
     success: true,
-    username: configuredAdminUsername,
+    username: matchedDbAdminUsername || configuredAdminUsername,
   });
 
   const supabase = createRouteHandlerSupabaseClient(request, response);

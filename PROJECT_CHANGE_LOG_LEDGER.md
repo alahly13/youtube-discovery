@@ -4900,3 +4900,160 @@ No.
 - **Whether secrets were printed:** No.
 - **Whether migrations were created/applied:** No.
 - **Whether `db:apply` was run:** No.
+
+
+## 2026-11-25 14:28 — Principal Software Architect Full-Stack Audit, Integration Hardening & Regression Verification
+- **Agent/model:** Antigravity (Principal Software Architect / Next.js Full-Stack Audit)
+- **Task summary:** Conducted a deep codebase-wide audit across Next.js 16.4.2 App Router/Proxy, React 19.2.4, TypeScript, Prisma 7 / Supabase PostgreSQL, Supabase Auth (`@supabase/ssr`), Cloudflare Workers + R2, browser storage (`IndexedDB`/`localStorage`/Cache Storage), and PWA Web Share Target; fixed critical build-breaking syntax errors, R2 reconciliation bugs, snapshot overwrite/resurrection bugs, cookie-deletion clobbering, proxy redirect loops, cross-owner fallbacks, and contract mismatches; added compiled TypeScript regression suite `scripts/test-audit-hardening.mjs`.
+- **Reason/root cause:** Codebase audit uncovered two committed TypeScript syntax errors blocking compilation (`TS1128` in `saved-searches-workspace.tsx` and `unified-storage-components.tsx`), a `TS2322` error in `reconciliation/compare/route.ts`, broken R2 object lookup (`obj.pathname` instead of `obj.key` and omitted `storageOwnerUuid`) in `reconciliation/compare`, fail-open snapshot collapse and arbitrary generation overwrite/resurrection in `sync/save-all` and `saved-items`, `maxAge: ttl` overriding `@supabase/ssr` cookie deletion (`maxAge: 0`), unverified `/login <-> /search` proxy loop risk on stale cookies, hardcoded `"asdy"` fallbacks breaking multi-user isolation/renamed admin usernames, mismatched response contracts between `/api/admin/migrate` and `StorageMigrationCard`, duplicate `src/app/manifest.ts` missing `share_target`, and silent ephemeral disk masking on canonical R2 Worker errors in `R2StorageBackend`.
+- **Files changed:**
+  - `src/components/storage/unified-storage-components.tsx` (removed duplicate closing JSX/function lines causing `TS1128`)
+  - `src/components/saved/saved-searches-workspace.tsx` (removed orphaned duplicate catch block causing `TS1128`, preserved `isPinned`/`resourceSelection`, replaced hardcoded `ownerId: "asdy"` with `syncCoordinator.getOwnerId() || undefined`)
+  - `src/components/history/history-workspace.tsx` (imported `syncCoordinator` and replaced hardcoded `ownerId: "asdy"` with `syncCoordinator.getOwnerId() || undefined`)
+  - `src/app/api/storage/reconciliation/compare/route.ts` (fixed `TS2322` boolean narrowing, switched from `obj.pathname` to `obj.key`, passed `{ storageOwnerUuid }` to `listAllObjects`/`getObject`, parsed `.records` alongside `.items` in historical parts, and failed closed with `503 CLOUDFLARE_R2_LISTING_FAILED` when all R2 prefix listings fail)
+  - `src/app/api/sync/save-all/route.ts` (repaired `loadCommittedSnapshot` to fail closed on DB/R2 read errors instead of returning `[]`, query only the single latest `COMMITTED` generation instead of merging superseded historical generations, enforce SHA-256 verification on committed/recovered parts, and ingest non-overlapping `before-app-updating/` before active records)
+  - `src/app/api/saved-items/route.ts` (eliminated overlapping R2 prefix scans, selected only the single authoritative active generation via `storage_datasets.current_generation_id` or newest revision/timestamp rather than merging superseded generations out of order, merged `before-app-updating/` deterministically before active records, fixed `discoveredDirectObjects.size` & null `profile` guard, and surfaced checksum mismatches in `corruptedOrMissingParts`)
+  - `src/lib/supabase/server.ts` (preserved `options?.maxAge` / `0` for empty cookie values in `createServerSupabaseClient` and `createRouteHandlerSupabaseClient` so `signOut()`/`Max-Age=0` is never overridden by 7-day `ttl`)
+  - `src/app/api/auth/logout/route.ts` (set `httpOnly: name === SESSION_COOKIE_NAME` instead of forcing `httpOnly: true` on non-session cookies during clearing)
+  - `src/proxy.ts` (added `?reauth=1` / `?expired=1` bypass on `/login` and verified Supabase session validity via `supabase.auth.getUser()`, clearing invalid/expired auth cookies instead of bouncing `/login <-> /search`)
+  - `src/app/api/auth/login/route.ts` & `src/lib/auth/user-profile.ts` (supported updated `user_profiles.username` values during admin sign-in and relaxed profile bootstrap fallback away from `{ username: "asdy" }` to `{ role: "admin", storage_namespace: "asdy" }` with `"admin" as const`)
+  - `src/lib/playlists/playlist-db-service.ts` (removed cross-owner `{ username: "asdy" }` fallback from `resolveUserProfileId`)
+  - `src/app/api/admin/migrate/route.ts` & `src/components/settings/storage-migration.tsx` (aligned response shape `{ playlists, searches, keys }` with numeric `failed` counts and wired idempotent `savedSearchPreset` import using existing schema fields)
+  - `src/app/api/save/batch/route.ts` (scoped `datasetRevisions` by `${storageOwnerUuid}:${datasetId}` and cross-checked PostgreSQL `storage_datasets.current_revision` when DB is reachable)
+  - `src/lib/storage/use-merged-dataset.ts` (removed duplicate initial load and suppressed background spinner flashes on non-commit sync state changes)
+  - `src/app/manifest.ts` (added `share_target` parity matching `public/manifest.webmanifest` using Next 16 `MetadataRoute.Manifest`)
+  - `src/lib/storage/r2-blob-backend.ts` (enforced fail-closed behavior for `getBytes`, `head`, and `putBytes` on canonical owner-scoped and `OLD`-bucket paths when Cloudflare Workers are configured, isolating legacy disk fallback strictly to un-scoped compatibility paths)
+  - `scripts/test-audit-hardening.mjs` (added 7-test regression suite compiling production TypeScript routes/libraries directly)
+  - `youtube_discovery_ledger.md` & `PROJECT_CHANGE_LOG_LEDGER.md` (updated architecture state, known risks, and verification logs)
+- **Technical details:** Reconciled active generation authority across `sync/save-all`, `saved-items`, and `storage/reconciliation/compare`; eliminated silent catch-and-wipe failure modes; repaired auth cookie deletion and proxy validation; aligned runtime contracts verified by direct `tsc` compilation of production files inside `scripts/test-audit-hardening.mjs`.
+- **Architecture impact:** Strictly backward-compatible hardening across existing Next.js 16 App Router, PostgreSQL, and Cloudflare R2 Worker boundaries. No Cloudflare Worker source changes were required (`new-youtube-discovery-api` and `old-youtube-discovery-api` already implement strict owner-scoped capabilities matching the repaired client calls).
+- **Environment impact:** `scripts/env-check.mjs` and `scripts/app-validate-env.mjs` passed with zero secret printing. Security flag recorded: `notes.txt` remains tracked in Git with a legacy plaintext credential entry and requires explicit user remediation (`git rm --cached`, history purge, and credential rotation).
+- **Database/migration impact:** No new migrations created or needed — `node scripts/db-migrations/cli.mjs --mode=check` verified all 6 existing migrations (`20261102000000` through `20261104230000`) are `SYNCHRONIZED` on Supabase PostgreSQL, and all modified endpoints operate cleanly on existing canonical columns. (Documented remaining future cutover opportunity to move legacy `youtube-discovery/v1/*` and `asdy/admin/*` helpers — `youtube-api-keys.ts`, `quota-pools.ts`, `rate-limit.ts` — onto existing `managed_api_keys` / `quota_usage_events` tables or new rate-limit storage.)
+- **YouTube API/quota impact:** Zero YouTube Data API v3 calls made or altered.
+- **AI scope/safety impact:** Audited `gemini-client.ts` and scoped assistant routes (`youtube-manifest-context.ts`); no changes needed and zero secrets exposed.
+- **Verification run and results:**
+  - `node ./node_modules/typescript/bin/tsc --noEmit --incremental false`: **PASSED (`TSC=0`)** after all code edits.
+  - `node scripts/test-audit-hardening.mjs`: **PASSED (7/7)** after all code edits.
+  - `node scripts/test-pwa-share-target.mjs`: **PASSED (68/68)**, plus offline suites `run-search-tests.mjs` (77), `test-resource-taxonomy-and-contracts.mjs` (40), `test-manifest-naming-standard.mjs` (62), `test-supabase-auth.mjs` (20), `db-migrations/test-migrations-cli.mjs` (43), `test-phase1-5-database-security.mjs` (15), `test-complete-playlist-system.mjs` (30), `test-unified-saved-lifecycle.mjs` (25), `test-complete-storage-pipeline.mjs` (10), `test-local-first-sync-pipeline.mjs` (8), `test-cloud-hydration-and-canonical-sync.mjs` (44), `test-manifest-serializer.mjs`, `test-phase-a-g-features.mjs`, `test-phase1-5-old-archive.mjs`, `test-legacy-migration-and-item-cards.mjs` (14), `test-phase1-6-recovery-and-download.mjs` (107), `test-three-way-reconciliation.mjs` (33), `test-historical-archive-recovery.mjs` (17), `test-local-backup-export.mjs`, and `test-cloudflare-r2-workers.mjs` (11, noting live NEW Worker GET probe hit 6s timeout).
+  - `node scripts/env-check.mjs` & `node scripts/app-validate-env.mjs`: **PASSED**.
+  - `node scripts/db-migrations/cli.mjs --mode=check`: **PASSED (`SYNCHRONIZED`, 6/6 applied)**.
+- **Blocked checks, if any:**
+  - Project ESLint (`eslint` / `npm run lint`) hung inside `import('eslint-config-next/core-web-vitals')` in this Windows environment.
+  - `prisma validate` CLI and `next build` / `next typegen` stalled/hung in this Windows sandbox environment (production build check deferred to CI/Vercel/clean environment).
+  - Live NEW Cloudflare Worker HTTP probe timed out after 6s in `test-cloudflare-r2-workers.mjs` (Worker HMAC signing and auth separation tests passed locally).
+- **Remaining risks/limitations:**
+  - `notes.txt` tracked in Git (needs secret rotation + removal/history rewrite).
+  - Legacy helpers (`youtube-api-keys.ts`, `quota-pools.ts`, `rate-limit.ts`, `playlist-archive.ts`, `search-storage-archive.ts`, `account-store.ts`) still emit `youtube-discovery/v1/*` or `asdy/admin/*` keys that fall back to local disk on Vercel until migrated to PostgreSQL.
+  - ESLint and `next build` were not completed locally due to environment tooling stalls documented above.
+  - Git push not executed: `ReleaseVerify` does not exist as a branch or remote (`origin/main` + `origin/codex/*` only); awaiting confirmation of the exact target branch/push command.
+- **Whether secrets were printed:** No.
+- **Whether migrations were created/applied:** No (all 6 existing migrations are applied and synchronized).
+- **Whether `db:apply` was run:** No.
+
+
+---
+
+## 2026-11-25 16:48 — Canonical PostgreSQL Persistence V2 Hardening
+
+### Date/time
+2026-11-25 ~14:00–16:48 UTC+2
+
+### Agent/model
+Antigravity (Storage Hardening V2 — PostgreSQL Persistence Cutover)
+
+### Task summary
+Migrated 5 legacy ephemeral Blob/disk-based storage services to canonical Supabase PostgreSQL, hardened Cloudflare R2 Workers with write-once immutability, preserved `upl_*` ↔ UUID bidirectional playlist identity mapping, added `record_id`/`snapshot_json` to playlist models, fixed multiple TypeScript errors from prior audit, and added comprehensive test suites.
+
+### Reason/root cause
+Legacy services (`rate-limit.ts`, `search-storage-archive.ts`, `youtube-api-keys.ts`, `quota-pools.ts`, `playlist-db-service.ts`) used ephemeral Vercel Blob disk storage (`youtube-discovery/v1/*`, `asdy/admin/*` keys) that does not survive serverless instance restarts. This created silent data loss on Vercel. The fix migrates all persistence to canonical PostgreSQL tables via Prisma 7, with in-memory or read-only legacy fallbacks. Additionally, Cloudflare Workers lacked explicit write-once enforcement and had an undefined `isTempKeyForOwner` function.
+
+### Files changed
+
+**New files:**
+- `prisma/migrations/20261125000000_canonical_persistence_v2_hardening/migration.sql` — adds 5 tables + 2 columns
+- `src/lib/auth/canonical-admin-owner.ts` — resolves admin profile from `userProfile` table
+- `src/lib/manifests/local-manifest-store.ts` — IndexedDB-first manifest persistence with lifecycle states
+- `scripts/test-storage-hardening-v2.mjs` — 8-test regression suite for PostgreSQL persistence
+- `scripts/test-audit-hardening.mjs` — 7-test regression suite for audit hardening (pre-existing, now tracked)
+
+**Modified backend services (PostgreSQL cutover):**
+- `src/lib/auth/rate-limit.ts` — PostgreSQL `loginRateLimit` model primary, in-memory fallback
+- `src/lib/search-storage/search-storage-archive.ts` — PostgreSQL `searchHistoryRecord` primary, read-only legacy merge
+- `src/lib/platforms/youtube/youtube-api-keys.ts` — PostgreSQL `managedApiKey` primary, one-time Blob backfill
+- `src/lib/keys/quota-pools.ts` — PostgreSQL `quotaPoolState`/`quotaUsageEvent` primary, test-seam legacy fallback
+- `src/lib/playlists/playlist-db-service.ts` — full rewrite preserving `record_id` for `upl_*` ↔ UUID mapping, `snapshot_json` for lossless YouTube metadata
+
+**Modified API routes:**
+- `src/app/api/playlists/route.ts` — PostgreSQL primary via `listPlaylistsFromDb()`/`syncPlaylistToDb()`
+- `src/app/api/playlists/[id]/route.ts` — GET/PUT/PATCH/DELETE all PostgreSQL primary
+- `src/app/api/admin/storage-status/route.ts` — `guard.admin.username` over legacy blob lookup
+- `src/app/api/migration/upload/route.ts` — `workerConfigured` declaration fix
+- `src/app/api/search-storage/latest/route.ts` — passes `guard.admin.profileId` to archive
+- `src/app/api/sync/save-all/route.ts` — `record_id`/`snapshot_json` on playlist/group/entry upserts
+
+**Modified components (TypeScript fixes):**
+- `src/components/history/history-workspace.tsx` — `settings` field on cloud-only mapper, typed interfaces
+- `src/components/saved/saved-searches-workspace.tsx` — `settings` field on cloud-only mapper, typed interfaces
+- `src/components/saved/saved-titles-links-workspace.tsx` — typed interfaces replacing `any`
+- `src/components/manifests/manifest-viewer-workspace.tsx` — typed interfaces replacing `any`
+- `src/components/manifests/manifest-list-workspace.tsx` — removed stale eslint-disable directive
+
+**Modified infrastructure:**
+- `prisma/schema.prisma` — added 5 new models: `LoginRateLimit`, `SearchHistoryRecord`, `ManagedApiKey`, `QuotaPoolState`, `QuotaUsageEvent`; added `record_id`/`snapshot_json` to playlist models
+- `cloudflare/workers/new-youtube-discovery-api/src/index.ts` — write-once hardening, `isCanonicalTempKey()` inline function
+- `cloudflare/workers/old-youtube-discovery-api/src/index.ts` — write-once hardening for OLD bucket
+- `scripts/run-search-tests.mjs` — prisma stub proxy to prevent PrismaClient instantiation in test runner
+- `src/lib/state/user-playlists-store.ts` — server endpoint fetch, UUID→`upl_*` alias deduplication
+- `src/lib/manifests/manifest-memory-store.ts` — minor type/interface updates
+
+**Other:**
+- `.gitignore` — `notes.txt` removed from tracking
+- `notes.txt` — deleted from working tree
+- `youtube_discovery_ledger.md` / `PROJECT_CHANGE_LOG_LEDGER.md` — updated
+
+### Technical details
+- **Migration `20261125000000`:** Creates `login_rate_limits` (key+window compound unique), `search_history_records` (owner+record compound unique), `managed_api_keys` (key_hash unique), `quota_pool_states` (pool_id unique), `quota_usage_events` (timestamped, indexed), plus `record_id`/`snapshot_json` optional columns on `user_playlist`, `playlist_group`, `playlist_entry`.
+- **Write pattern:** All 5 services follow PostgreSQL-primary + in-memory/legacy-read fallback. `youtube-api-keys.ts` includes one-time Blob→PostgreSQL backfill via `fingerprintKeyBundle()` and transaction-based `writeState()`.
+- **Playlist identity:** `record_id` column preserves `upl_*` external IDs; `getPlaylistManifestFromDb()`/`listPlaylistsFromDb()` perform reverse UUID→`upl_*` mapping.
+- **Worker write-once:** Both Workers enforce conditional create for canonical paths, reject overwrites on committed objects, and use inline `isCanonicalTempKey()` for temp-only deletion scope.
+- **Search test prisma stub:** `run-search-tests.mjs` now intercepts `@/lib/db/prisma` with an inert Proxy mock, preventing PrismaClient instantiation in environments without DATABASE_URL.
+- **ESLint `any` elimination:** 10 `@typescript-eslint/no-explicit-any` errors fixed across 4 component files with proper typed interfaces.
+
+### Architecture impact
+Strictly backward-compatible. No changes to routing, auth, or storage boundaries. PostgreSQL tables are additive — no existing tables were modified or dropped. Cloudflare Worker source changes are code-only (not yet deployed).
+
+### Environment impact
+`notes.txt` removed from tracking and working tree. No new env vars required.
+
+### Database/migration impact
+- Migration `20261125000000_canonical_persistence_v2_hardening` created and applied via `prisma migrate deploy`.
+- 5 new tables, 2 new columns on 3 existing tables.
+- All 7 migrations now synchronized on Supabase PostgreSQL.
+- No data loss or destructive changes.
+
+### YouTube API/quota impact
+Zero YouTube Data API v3 calls made or altered.
+
+### AI scope/safety impact
+None — no AI code changed.
+
+### Verification run and results
+- `npx tsc --noEmit --incremental false`: **PASSED (0 errors)**
+- `npx eslint . --max-warnings 999`: **PASSED (0 errors, 138 pre-existing warnings)**
+- `test-storage-hardening-v2.mjs`: **8/8 PASSED**
+- `test-audit-hardening.mjs`: **7/7 PASSED**
+- `run-search-tests.mjs`: **77 assertions PASSED**
+- All 19 test suites: **ALL PASSED** (naming:62, share-target:68, security:15, old:15, pipeline:10, r2:11, taxonomy:40, manifest:97, canonical-sync:44, saved-lifecycle:25, playlists:30, legacy-migration:14, recovery:107, auth:20, migrations:43, features:13, three-way-reconciliation:33)
+
+### Blocked checks
+- Cloudflare Worker deployment: Wrangler OAuth session on wrong account (`1ed4278f71b95d7ff3c61a3cff2940f7`); Workers are on account `15cefbbb4dd98db0a0f85ad4f3134e82`. Needs re-auth or `CLOUDFLARE_API_TOKEN`.
+- `npm run build` / `next build`: not run locally — deferred to CI/Vercel.
+
+### Remaining risks/limitations
+- Cloudflare Worker code changes not deployed (write-once hardening, `isCanonicalTempKey` fix) — code is ready, auth blocker remains.
+- Legacy Blob storage paths still exist as read-only fallbacks; will be fully deprecated once PostgreSQL persistence is verified in production.
+- `Prisma validate` shows warnings about `SetNull` on required fields — non-blocking, existing behavior.
+
+### Whether secrets were printed: No
+### Whether migrations were created/applied: Yes — `20261125000000_canonical_persistence_v2_hardening` created and applied
+### Whether `db:apply` was run: No (using `prisma migrate deploy`)

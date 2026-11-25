@@ -22,14 +22,19 @@ export async function getAuthoritativeAdminProfile(
   userEmail?: string | null
 ): Promise<AuthoritativeProfile | null> {
   const configuredAdminEmail = (process.env.ADMIN_EMAIL || "asdy@youtube.discov.com").trim().toLowerCase();
+  const configuredAdminUsername = (process.env.ADMIN_DEFAULT_USERNAME || "asdy").trim().toLowerCase();
   const isAdminEmail = Boolean(userEmail && userEmail.trim().toLowerCase() === configuredAdminEmail);
 
   try {
+    // Always prioritize exact `auth_user_id` match; only fall back to admin role/namespace
+    // when relinking a bootstrap admin account whose username may have changed.
     let profile = await prisma.userProfile.findFirst({
       where: {
         OR: [
           { auth_user_id: authUserId },
-          ...(isAdminEmail ? [{ username: "asdy" }] : []),
+          ...(isAdminEmail
+            ? [{ role: "admin" as const, storage_namespace: "asdy" }]
+            : []),
         ],
       },
       include: { preferences: true },
@@ -40,7 +45,7 @@ export async function getAuthoritativeAdminProfile(
       profile = await prisma.userProfile.create({
         data: {
           auth_user_id: authUserId,
-          username: "asdy",
+          username: configuredAdminUsername,
           storage_namespace: "asdy",
           role: "admin",
           preferences: {

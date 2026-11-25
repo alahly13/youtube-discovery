@@ -392,13 +392,24 @@ export const useUserPlaylistsStore = create<UserPlaylistsState>()(
 
           const mergedManifests = { ...localSnap.manifests };
           const byId = new Map<string, UserPlaylistIndexEntry>();
+          const aliasKeyToLocalId = new Map<string, string>();
           for (const e of localSnap.index) {
             byId.set(e.id, e);
+            aliasKeyToLocalId.set(
+              `${e.name.trim().toLowerCase()}::${e.createdAt.slice(0, 19)}`,
+              e.id
+            );
           }
           for (const remote of remoteEntries) {
             if (localSnap.deletedIds.has(remote.id)) continue;
-            if (!byId.has(remote.id)) {
-              byId.set(remote.id, remote);
+            const isLegacyUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              remote.id
+            );
+            const aliasKey = `${remote.name.trim().toLowerCase()}::${remote.createdAt.slice(0, 19)}`;
+            const canonicalId = (isLegacyUuid && aliasKeyToLocalId.get(aliasKey)) || remote.id;
+            if (localSnap.deletedIds.has(canonicalId)) continue;
+            if (!byId.has(canonicalId)) {
+              byId.set(canonicalId, { ...remote, id: canonicalId });
             }
           }
 

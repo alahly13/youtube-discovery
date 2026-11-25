@@ -334,26 +334,22 @@ export async function GET(request: Request) {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Phase 2: Complete R2 Object Listing across Canonical & Historical Prefixes
+    // Phase 2: Complete R2 Object Listing (Non-overlapping prefixes)
     // ─────────────────────────────────────────────────────────────────────────
     const datasetSlug = datasetTypeToSlug("SAVED_ITEMS" as CanonicalDatasetType);
     const candidatePrefixes = [
       `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/`,
-      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/`,
-      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/`,
-      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/`,
-      `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/parts/`,
       `asdy/persistence/${storageOwnerUuid}/items/`,
       `${storageOwnerUuid}/persistence/${datasetSlug}/`,
     ];
 
     const discoveredManifests = new Set<string>();
-    const discoveredDirectObjects: string[] = [];
+    const discoveredDirectObjects = new Set<string>();
     let isListingTruncated = false;
     let listingIncomplete = false;
     let listingTruncationReason: string | undefined = undefined;
 
-    // Explicitly guarantee the exact BEFORE-APP-UPDATING generation targets
+    // Explicitly guarantee the exact BEFORE-APP-UPDATING legacy generation target is checked even if truncated
     const exactHistoricalManifestKey = `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/manifest.json`;
     const exactHistoricalPartKey = `asdy/persistence/${storageOwnerUuid}/${datasetSlug}/before-app-updating/generations/gen_legacy_20261112_vkyh94/parts/part-000001.json`;
     discoveredManifests.add(exactHistoricalManifestKey);
@@ -397,18 +393,18 @@ export async function GET(request: Request) {
             key.endsWith(".json") &&
             !key.includes("/parts/")
           ) {
-            discoveredDirectObjects.push(key);
+            discoveredDirectObjects.add(key);
             continue;
           }
 
-          // Standalone part file (part-XXXXXX.json or part.json)
+          // Historical standalone parts only (active generation parts come strictly from the latest active manifest)
           if (
+            key.includes("before-app-updating") &&
             (key.includes("/parts/part-") || key.endsWith("/part.json") || key.includes("/parts/part.")) &&
             key.endsWith(".json")
           ) {
             if (!partsToFetch.has(key)) {
-              const isHist = key.includes("before-app-updating");
-              partsToFetch.set(key, { isHistorical: isHist });
+              partsToFetch.set(key, { isHistorical: true });
             }
           }
         }
@@ -417,10 +413,37 @@ export async function GET(request: Request) {
       }
     }
 
+    // Check PostgreSQL for the authoritative committed generation pointer so superseded
+    // active generations never overwrite newer edits or resurrect deleted items.
+    let authoritativeGenId: string | null = null;
+    if (profile?.id) {
+      try {
+        const dsRow = await prisma.storageDataset.findFirst({
+          where: { owner_id: profile.id, dataset_type: "SAVED_ITEMS" },
+          select: { current_generation_id: true },
+        });
+        authoritativeGenId = dsRow?.current_generation_id ?? null;
+      } catch {
+        // Non-fatal fallback: select newest active manifest by revision/timestamp below
+      }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
-    // Phase 3: Manifest Traversal & Referenced Part Resolution
+    // Phase 3: Manifest Traversal & Deterministic Active-vs-Historical Selection
     // ─────────────────────────────────────────────────────────────────────────
-    const manifestKeys = Array.from(discoveredManifests);
+    const manifestKeys = Array.from(discoveredManifests).sort();
+    interface ParsedManifestEntry {
+      manifestKey: string;
+      isHistorical: boolean;
+      generationId?: string;
+      currentRevision?: number;
+      generationNumber?: number;
+      generatedAt?: string;
+      embedded: Record<string, unknown>[];
+      parts: Array<{ storagePath?: string; sha256?: string; partNumber?: number }>;
+    }
+    const historicalManifests: ParsedManifestEntry[] = [];
+    const activeManifests: ParsedManifestEntry[] = [];
 
     await mapConcurrent(manifestKeys, 6, async (manifestKey) => {
       try {
@@ -429,7 +452,10 @@ export async function GET(request: Request) {
         });
         const manifest = JSON.parse(data.toString("utf8")) as {
           generationId?: string;
+          generationNumber?: number;
           currentRevision?: number;
+          generatedAt?: string;
+          createdAt?: string;
           isHistorical?: boolean;
           parts?: Array<{ storagePath?: string; sha256?: string; partNumber?: number }>;
           records?: Record<string, unknown>[];
@@ -441,57 +467,122 @@ export async function GET(request: Request) {
           Boolean(manifest.isHistorical) ||
           Boolean((manifest as unknown as { isBeforeAppUpdating?: boolean }).isBeforeAppUpdating);
 
-        if (manifest.generationId && !primaryGenerationId) {
-          primaryGenerationId = manifest.generationId;
-        }
-
-        // If manifest contains embedded records (legacy v1 schema), ingest directly
         const embedded = Array.isArray(manifest.records)
           ? manifest.records
           : Array.isArray(manifest.items)
           ? manifest.items
           : [];
 
-        for (const raw of embedded) {
-          const norm = normalizeRawCloudItem(raw, {
-            generationId: manifest.generationId,
-            revision: manifest.currentRevision,
-            isHistorical: isHist,
-            sourcePath: manifestKey,
-          });
-          if (norm) {
-            const key = `${norm.itemType}:${norm.platformItemId}`;
-            if (!itemMap.has(key)) {
-              itemMap.set(key, norm);
-            }
-          }
-        }
+        const entry: ParsedManifestEntry = {
+          manifestKey,
+          isHistorical: isHist,
+          generationId: manifest.generationId,
+          currentRevision: manifest.currentRevision,
+          generationNumber: manifest.generationNumber,
+          generatedAt: manifest.generatedAt || manifest.createdAt,
+          embedded,
+          parts: Array.isArray(manifest.parts) ? manifest.parts : [],
+        };
 
-        // Collect all referenced parts
-        if (Array.isArray(manifest.parts)) {
-          for (const p of manifest.parts) {
-            if (!p.storagePath) continue;
-            if (!partsToFetch.has(p.storagePath)) {
-              partsToFetch.set(p.storagePath, {
-                sha256: p.sha256,
-                generationId: manifest.generationId,
-                revision: manifest.currentRevision,
-                isHistorical: isHist,
-              });
-            }
-          }
+        if (isHist) {
+          historicalManifests.push(entry);
+        } else {
+          activeManifests.push(entry);
         }
       } catch (manifestErr) {
         console.warn(`[api/saved-items] Error reading manifest '${manifestKey}':`, manifestErr);
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Phase 4: Concurrent Part Downloading & SHA-256 Verification
-    // ─────────────────────────────────────────────────────────────────────────
-    const partEntries = Array.from(partsToFetch.entries());
+    // Pick ONLY the single authoritative active generation (prefer matching current_generation_id,
+    // else highest revision/generationNumber/timestamp). Never merge superseded active generations.
+    const selectedActiveManifests: ParsedManifestEntry[] = [];
+    if (activeManifests.length > 0) {
+      const matched = authoritativeGenId
+        ? activeManifests.find(
+            (m) =>
+              m.generationId === authoritativeGenId ||
+              m.manifestKey.includes(`/generations/${authoritativeGenId}/`)
+          )
+        : undefined;
+      if (matched) {
+        selectedActiveManifests.push(matched);
+      } else {
+        activeManifests.sort((a, b) => {
+          const revDiff =
+            Number(b.generationNumber ?? b.currentRevision ?? 0) -
+            Number(a.generationNumber ?? a.currentRevision ?? 0);
+          if (revDiff !== 0) return revDiff;
+          return String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? ""));
+        });
+        selectedActiveManifests.push(activeManifests[0]);
+      }
+    }
 
-    await mapConcurrent(partEntries, 8, async ([partPath, meta]) => {
+    // Apply ordered tier ingestion: historical archives first, authoritative active generation last.
+    historicalManifests.sort((a, b) => a.manifestKey.localeCompare(b.manifestKey));
+    const orderedManifests = [...historicalManifests, ...selectedActiveManifests];
+    const orderedPartEntries: Array<[string, { sha256?: string; generationId?: string; revision?: number; isHistorical: boolean; partNumber?: number }]> = [];
+
+    for (const m of orderedManifests) {
+      if (m.generationId && (!m.isHistorical || !primaryGenerationId)) {
+        primaryGenerationId = m.generationId;
+      }
+
+      for (const raw of m.embedded) {
+        const norm = normalizeRawCloudItem(raw, {
+          generationId: m.generationId,
+          revision: m.currentRevision,
+          isHistorical: m.isHistorical,
+          sourcePath: m.manifestKey,
+        });
+        if (norm) {
+          const key = `${norm.itemType}:${norm.platformItemId}`;
+          const existing = itemMap.get(key);
+          if (!existing || !m.isHistorical) {
+            itemMap.set(key, existing ? { ...existing, ...norm } : norm);
+          }
+        }
+      }
+
+      const sortedParts = [...m.parts].sort((a, b) => Number(a.partNumber ?? 0) - Number(b.partNumber ?? 0));
+      for (const p of sortedParts) {
+        if (!p.storagePath) continue;
+        partsToFetch.set(p.storagePath, {
+          sha256: p.sha256,
+          generationId: m.generationId,
+          revision: m.currentRevision,
+          isHistorical: m.isHistorical,
+        });
+        orderedPartEntries.push([
+          p.storagePath,
+          {
+            sha256: p.sha256,
+            generationId: m.generationId,
+            revision: m.currentRevision,
+            isHistorical: m.isHistorical,
+            partNumber: p.partNumber,
+          },
+        ]);
+      }
+    }
+
+    // Include any standalone historical parts not referenced by a manifest
+    for (const [partPath, meta] of partsToFetch.entries()) {
+      if (!orderedPartEntries.some(([k]) => k === partPath)) {
+        orderedPartEntries.push([partPath, { ...meta, isHistorical: Boolean(meta.isHistorical) }]);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 4: Ordered Part Downloading & Mandatory SHA-256 Verification
+    // ─────────────────────────────────────────────────────────────────────────
+    const downloadedParts = new Map<
+      string,
+      { records: Record<string, unknown>[]; meta: (typeof orderedPartEntries)[number][1] }
+    >();
+
+    await mapConcurrent(orderedPartEntries, 8, async ([partPath, meta]) => {
       try {
         const { data, sha256 } = await r2Client.getObject("NEW", partPath, {
           storageOwnerUuid,
@@ -499,8 +590,9 @@ export async function GET(request: Request) {
 
         if (meta.sha256 && sha256.toLowerCase() !== meta.sha256.toLowerCase()) {
           console.warn(
-            `[api/saved-items] Part checksum mismatch for '${partPath}' (expected ${meta.sha256.slice(0, 16)}..., got ${sha256.slice(0, 16)}...). Parsing cautiously.`
+            `[api/saved-items] Part checksum mismatch for '${partPath}' (expected ${meta.sha256.slice(0, 16)}..., got ${sha256.slice(0, 16)}...).`
           );
+          corruptedOrMissingParts.push(`${partPath} (CHECKSUM_MISMATCH)`);
         }
 
         const rawJson = data.toString("utf8");
@@ -517,42 +609,57 @@ export async function GET(request: Request) {
           ? (parsed as unknown as Record<string, unknown>[])
           : [];
 
-        for (const raw of records) {
-          const norm = normalizeRawCloudItem(raw, {
-            generationId: meta.generationId,
-            revision: meta.revision,
-            isHistorical: meta.isHistorical,
-            sourcePath: partPath,
-          });
-          if (norm) {
-            const key = `${norm.itemType}:${norm.platformItemId}`;
-            const existing = itemMap.get(key);
-            if (!existing) {
-              itemMap.set(key, norm);
-            } else {
-              // Merge: keep richer metadata while preserving authentic provenance
-              itemMap.set(key, {
-                ...existing,
-                ...norm,
-                description: norm.description || existing.description,
-                thumbnailUrl: norm.thumbnailUrl || existing.thumbnailUrl,
-                viewsCount: norm.viewsCount ?? existing.viewsCount,
-                likesCount: norm.likesCount ?? existing.likesCount,
-                savedAt: existing.savedAt || norm.savedAt,
-              });
-            }
-          }
-        }
+        downloadedParts.set(partPath, { records, meta });
       } catch (partErr) {
         console.warn(`[api/saved-items] Could not read part '${partPath}':`, partErr);
         corruptedOrMissingParts.push(partPath);
       }
     });
 
+    // Apply normalized items synchronously in deterministic historical-before-active order
+    // so the newest authoritative active generation ALWAYS wins on conflicts.
+    const sortedAppliedParts = [...orderedPartEntries].sort((a, b) => {
+      if (a[1].isHistorical !== b[1].isHistorical) {
+        return a[1].isHistorical ? -1 : 1;
+      }
+      return Number(a[1].partNumber ?? 0) - Number(b[1].partNumber ?? 0);
+    });
+
+    for (const [partPath] of sortedAppliedParts) {
+      const fetched = downloadedParts.get(partPath);
+      if (!fetched) continue;
+      const { records, meta } = fetched;
+      for (const raw of records) {
+        const norm = normalizeRawCloudItem(raw, {
+          generationId: meta.generationId,
+          revision: meta.revision,
+          isHistorical: meta.isHistorical,
+          sourcePath: partPath,
+        });
+        if (norm) {
+          const key = `${norm.itemType}:${norm.platformItemId}`;
+          const existing = itemMap.get(key);
+          if (!existing) {
+            itemMap.set(key, norm);
+          } else {
+            itemMap.set(key, {
+              ...existing,
+              ...norm,
+              description: norm.description || existing.description,
+              thumbnailUrl: norm.thumbnailUrl || existing.thumbnailUrl,
+              viewsCount: norm.viewsCount ?? existing.viewsCount,
+              likesCount: norm.likesCount ?? existing.likesCount,
+              savedAt: norm.savedAt || existing.savedAt,
+            });
+          }
+        }
+      }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 5: Direct Item Objects Parsing (if any)
     // ─────────────────────────────────────────────────────────────────────────
-    await mapConcurrent(discoveredDirectObjects, 8, async (itemKey) => {
+    await mapConcurrent(Array.from(discoveredDirectObjects), 8, async (itemKey) => {
       try {
         const { data } = await r2Client.getObject("NEW", itemKey, {
           storageOwnerUuid,
@@ -736,7 +843,7 @@ export async function GET(request: Request) {
       enumeratedGenerationsCount: knownGenerations.length,
       enumeratedManifestsCount: manifestKeys.length,
       enumeratedPartsCount: partsToFetch.size,
-      enumeratedDirectObjectsCount: discoveredDirectObjects.length,
+      enumeratedDirectObjectsCount: discoveredDirectObjects.size,
       dbIndexedCount,
       corruptedOrMissingPartsCount: corruptedOrMissingParts.length,
       historicalRecordsCount: historicalCount,

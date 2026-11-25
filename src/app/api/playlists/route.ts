@@ -1,8 +1,5 @@
 import { NextResponse } from "next/server";
-import {
-  createUserPlaylist,
-  listUserPlaylists,
-} from "@/lib/playlists/playlist-archive";
+import { listUserPlaylists } from "@/lib/playlists/playlist-archive";
 import {
   listPlaylistsFromDb,
   syncPlaylistToDb,
@@ -17,34 +14,42 @@ export const dynamic = "force-dynamic";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * GET /api/playlists — lightweight index only (never full contents).
- * POST /api/playlists — creates a new playlist with validated name and description.
- * Synchronizes with both PostgreSQL and Cloudflare R2 / storage backend.
+ * /api/playlists — Canonical PostgreSQL Primary (Legacy Read-Only Fallback)
+ * ──────────────────────────────────────────────────────────────────────────
+ * Writes ONLY to canonical Supabase PostgreSQL (`user_playlists`).
+ * Reads from PostgreSQL first and merges any legacy `youtube-discovery/v1/`
+ * playlists on read-only fallback so older backups remain visible without
+ * writing new legacy disk/v1 objects on Vercel.
  * ═══════════════════════════════════════════════════════════════════════════
  */
+
 export async function GET(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
+  const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
   try {
-    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
-    if (!storageOwnerUuid) {
-      return NextResponse.json(
-        { error: "Unable to resolve a canonical storage owner for this session." },
-        { status: 500 }
-      );
+    const dbPlaylists = await listPlaylistsFromDb(storageOwnerUuid);
+    if (dbPlaylists !== null) {
+      if (dbPlaylists.length > 0) {
+        return NextResponse.json({ playlists: dbPlaylists });
+      }
+      // If DB has 0 rows, safely check read-only legacy archive without mutating it.
+      const legacyPlaylists = await listUserPlaylists().catch(() => []);
+      return NextResponse.json({
+        playlists: legacyPlaylists.length > 0 ? legacyPlaylists : dbPlaylists,
+      });
     }
 
-    // 1. Try PostgreSQL first
-    const dbPlaylists = await listPlaylistsFromDb(storageOwnerUuid);
-
-    // 2. Read from Cloudflare R2 / storage archive
-    const r2Playlists = await listUserPlaylists();
-
-    // Prefer DB if available; otherwise use R2 / storage backend
-    const playlists = dbPlaylists && dbPlaylists.length > 0 ? dbPlaylists : r2Playlists;
-
-    return NextResponse.json({ playlists, totalCount: playlists.length });
+    const fallbackPlaylists = await listUserPlaylists();
+    return NextResponse.json({ playlists: fallbackPlaylists });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to list playlists";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -57,36 +62,45 @@ export async function POST(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
 
+  const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
+  if (!storageOwnerUuid) {
+    return NextResponse.json(
+      { error: "Unable to resolve a canonical storage owner for this session." },
+      { status: 500 }
+    );
+  }
+
+  let body: unknown;
   try {
-    const storageOwnerUuid = resolveStorageOwnerId(guard.admin);
-    if (!storageOwnerUuid) {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const parsed = createPlaylistSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Invalid playlist input" },
+      { status: 400 }
+    );
+  }
+
+  const description =
+    typeof parsed.data.description === "string" && parsed.data.description.trim()
+      ? parsed.data.description.trim()
+      : null;
+
+  const manifest = emptyPlaylistManifest(parsed.data.name, description);
+
+  try {
+    const synced = await syncPlaylistToDb(storageOwnerUuid, manifest);
+    if (!synced) {
       return NextResponse.json(
-        { error: "Unable to resolve a canonical storage owner for this session." },
+        { error: "Failed to persist playlist to PostgreSQL database" },
         { status: 500 }
       );
     }
-    const body: unknown = await request.json();
-    const parsed = createPlaylistSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid playlist payload", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const description = parsed.data.description?.trim() ? parsed.data.description.trim() : null;
-    const manifest = emptyPlaylistManifest(parsed.data.name, description);
-
-    // 1. Authoritative storage persistence (Cloudflare R2 / Disk)
-    const saved = await createUserPlaylist(manifest);
-
-    // 2. Relational database persistence (PostgreSQL / Prisma 7)
-    await syncPlaylistToDb(storageOwnerUuid, saved.manifest);
-
-    return NextResponse.json(
-      { success: true, manifest: saved.manifest },
-      { status: 201 },
-    );
+    return NextResponse.json({ manifest }, { status: 201 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to create playlist";
     return NextResponse.json({ error: msg }, { status: 500 });

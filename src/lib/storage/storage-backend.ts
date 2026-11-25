@@ -69,12 +69,20 @@ export class StorageUnavailableError extends Error {
   }
 }
 
+export class StorageForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StorageForbiddenError";
+  }
+}
+
 // Backward-compatibility aliases for legacy code
 export type BlobBackend = StorageBackend;
 export type BlobObjectMeta = StorageObjectMeta;
 export const BlobNotFoundError = StorageNotFoundError;
 export const BlobConflictError = StorageConflictError;
 export const BlobUnavailableError = StorageUnavailableError;
+export const BlobForbiddenError = StorageForbiddenError;
 
 /**
  * Deterministic JSON stringifier with recursively sorted object keys.

@@ -273,12 +273,23 @@ export function SavedTitlesLinksWorkspace() {
 
         // Process cloud-only items
         if (Array.isArray(data.cloudOnlyRecords)) {
-          const parsedCloudOnly: SavedReferenceRecord[] = data.cloudOnlyRecords.map((c: any) => ({
+          const parsedCloudOnly: SavedReferenceRecord[] = (
+            data.cloudOnlyRecords as Array<{
+              id: string;
+              recordId?: string;
+              resourceType?: string;
+              title?: string;
+              url?: string;
+              notes?: string;
+              createdAt?: string;
+              savedAt?: string;
+            }>
+          ).map((c) => ({
             id: c.id,
             recordId: c.recordId,
             resourceType: c.resourceType,
             savedKind: c.resourceType === "SAVED_LINK" ? "SAVED_LINK" : "SAVED_TITLE",
-            title: c.title,
+            title: c.title || "Untitled",
             url: c.url,
             notes: c.notes,
             createdAt: c.createdAt,

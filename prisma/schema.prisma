@@ -98,6 +98,7 @@ model UserProfile {
   search_history       SearchHistoryRecord[]
   quota_usage_events   QuotaUsageEvent[]
   save_sync_batches    SaveSyncBatch[]
+  quota_pool_states    QuotaPoolState[]
   archived_manifests   ArchivedManifest[]
   acted_audit_logs     AuditLog[]           @relation("AuditActor")
   subject_audit_logs   AuditLog[]           @relation("AuditSubject")
@@ -133,9 +134,15 @@ model ManagedApiKey {
   associated_account_email String?    @db.VarChar(255)
   is_active               Boolean     @default(true)
   daily_quota_limit       Int         @default(10000)
-  created_at              DateTime    @default(now()) @db.Timestamptz(6)
-  updated_at              DateTime    @updatedAt @db.Timestamptz(6)
-  revoked_at              DateTime?   @db.Timestamptz(6)
+  created_at               DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime    @updatedAt @db.Timestamptz(6)
+  revoked_at               DateTime?   @db.Timestamptz(6)
+  record_id                String?     @db.VarChar(128)
+  project_display_name     String?     @db.VarChar(120)
+  masked_key               String?     @db.VarChar(32)
+  priority_order           Int         @default(0)
+  is_selected              Boolean     @default(false)
+  metadata_json            Json?
 
   owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
   quota_events QuotaUsageEvent[]
@@ -143,6 +150,7 @@ model ManagedApiKey {
   @@unique([owner_id, id])
   @@unique([owner_id, key_fingerprint])
   @@index([owner_id, is_active])
+  @@index([owner_id, record_id])
   @@map("managed_api_keys")
 }
 
@@ -299,12 +307,14 @@ model UserPlaylist {
   thumbnail_urls    Json        @default("[]")
   created_at        DateTime    @default(now()) @db.Timestamptz(6)
   updated_at        DateTime    @updatedAt @db.Timestamptz(6)
+  record_id         String?     @db.VarChar(128)
 
   owner   UserProfile         @relation(fields: [owner_id], references: [id], onDelete: Cascade)
   groups  UserPlaylistGroup[]
   entries UserPlaylistEntry[]
 
   @@unique([owner_id, id])
+  @@index([owner_id, record_id])
   @@index([owner_id, display_order])
   @@map("user_playlists")
 }
@@ -319,12 +329,14 @@ model UserPlaylistGroup {
   is_collapsed Boolean     @default(false)
   created_at   DateTime    @default(now()) @db.Timestamptz(6)
   updated_at   DateTime    @updatedAt @db.Timestamptz(6)
+  record_id    String?     @db.VarChar(128)
 
   owner    UserProfile       @relation(fields: [owner_id], references: [id], onDelete: Cascade)
   playlist UserPlaylist      @relation(fields: [owner_id, playlist_id], references: [owner_id, id], onDelete: Cascade)
   entries  UserPlaylistEntry[]
 
   @@unique([playlist_id, id])
+  @@index([owner_id, record_id])
   @@index([owner_id, playlist_id, position])
   @@map("user_playlist_groups")
 }
@@ -341,11 +353,14 @@ model UserPlaylistEntry {
   notes            String?
   position         Int                     @default(0)
   added_at         DateTime                @default(now()) @db.Timestamptz(6)
+  record_id        String?                 @db.VarChar(128)
+  snapshot_json    Json?
 
   owner    UserProfile        @relation(fields: [owner_id], references: [id], onDelete: Cascade)
   playlist UserPlaylist       @relation(fields: [owner_id, playlist_id], references: [owner_id, id], onDelete: Cascade)
   group    UserPlaylistGroup? @relation(fields: [playlist_id, group_id], references: [playlist_id, id], onDelete: SetNull)
 
+  @@index([owner_id, record_id])
   @@index([owner_id, playlist_id, position])
   @@index([owner_id, playlist_id, group_id])
   @@map("user_playlist_entries")
@@ -441,9 +456,16 @@ model SearchHistoryRecord {
   manifest_id          String      @db.VarChar(64)
   generation_id        String?     @db.Uuid
   executed_at          DateTime    @default(now()) @db.Timestamptz(6)
+  record_id            String?     @db.VarChar(128)
+  resource_selection   Json?
+  filter_snapshot      Json?
+  raw_payload_json     Json?
+  expires_at           DateTime?   @db.Timestamptz(6)
+  updated_at           DateTime    @default(now()) @updatedAt @db.Timestamptz(6)
 
   owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Cascade)
 
+  @@index([owner_id, record_id])
   @@index([owner_id, executed_at])
   @@map("search_history_records")
 }
@@ -548,4 +570,35 @@ model ArchivedManifest {
   @@unique([owner_id, manifest_id])
   @@index([owner_id, category, imported_at])
   @@map("archived_manifests")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 6. Durable Serverless Security & Quota State (Replaces Ephemeral Disk/v1 Blobs)
+// ───────────────────────────────────────────────────────────────────────────
+
+model LoginRateLimit {
+  ip_hash       String    @id @db.VarChar(128)
+  attempt_count Int       @default(0)
+  window_start  DateTime  @default(now()) @db.Timestamptz(6)
+  blocked_until DateTime? @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("login_rate_limits")
+}
+
+model QuotaPoolState {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  owner_id           String   @db.Uuid
+  pool_key           String   @default("default") @db.VarChar(64)
+  active_key_id      String   @default("env") @db.VarChar(128)
+  last_rotated_index Int      @default(-1)
+  pools_json         Json     @default("[]")
+  usage_by_day_json  Json     @default("{}")
+  updated_at         DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  owner UserProfile @relation(fields: [owner_id], references: [id], onDelete: Restrict)
+
+  @@unique([owner_id, pool_key])
+  @@index([owner_id])
+  @@map("quota_pool_states")
 }

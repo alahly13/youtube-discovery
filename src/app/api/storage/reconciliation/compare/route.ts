@@ -270,22 +270,45 @@ export async function POST(request: Request) {
       `asdy/persistence/${storageOwnerUuid}/${slug}/before-app-updating/`,
     ];
 
-    // Enumerate R2 objects under dataset prefix following all cursors
+    // Enumerate R2 objects under dataset prefix following all cursors.
+    // Always supply storageOwnerUuid so HMAC capability tokens for the NEW Worker sign cleanly,
+    // and read `obj.key` (the R2WorkerObjectMeta field) rather than nonexistent `obj.pathname`.
     const discoveredR2Objects = new Map<string, { size: number; etag: string }>();
     let r2ListingTruncated = false;
+    const r2ListingErrors: string[] = [];
 
     for (const prefix of candidatePrefixes) {
       try {
-        const listResult = await r2Client.listAllObjects("NEW", prefix, { maxObjects: 10000 });
+        const listResult = await r2Client.listAllObjects("NEW", prefix, {
+          maxObjects: 10000,
+          storageOwnerUuid,
+        });
         for (const obj of listResult.objects) {
-          discoveredR2Objects.set(obj.pathname, { size: obj.size, etag: obj.etag });
+          const objectKey = obj.key || (obj as unknown as { pathname?: string }).pathname || "";
+          if (objectKey) {
+            discoveredR2Objects.set(objectKey, { size: obj.size, etag: obj.etag });
+          }
         }
         if (listResult.truncated || listResult.incomplete) {
           r2ListingTruncated = true;
         }
-      } catch {
-        // Continue if prefix doesn't exist
+      } catch (listErr) {
+        const msg = listErr instanceof Error ? listErr.message : String(listErr);
+        // Treat prefix errors (auth/worker/network) explicitly rather than silently masquerading
+        // as an empty R2 bucket if all prefixes fail.
+        r2ListingErrors.push(`${prefix}: ${msg}`);
       }
+    }
+
+    if (r2ListingErrors.length === candidatePrefixes.length && discoveredR2Objects.size === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "CLOUDFLARE_R2_LISTING_FAILED",
+          details: r2ListingErrors.join("; "),
+        },
+        { status: 503 }
+      );
     }
 
     // Index local records by canonical identifiers for fast matching
@@ -335,7 +358,7 @@ export async function POST(request: Request) {
 
       if (manifestExists) {
         try {
-          const mRes = await r2Client.getObject("NEW", manifestPath);
+          const mRes = await r2Client.getObject("NEW", manifestPath, { storageOwnerUuid });
           manifestData = JSON.parse(mRes.data.toString("utf8"));
         } catch {
           manifestExists = false;
@@ -364,7 +387,7 @@ export async function POST(request: Request) {
 
         if (partExists) {
           try {
-            const pRes = await r2Client.getObject("NEW", partKey);
+            const pRes = await r2Client.getObject("NEW", partKey, { storageOwnerUuid });
             partReadable = true;
             actualByteCount = pRes.data.length;
             actualSha256 = pRes.sha256;
@@ -583,7 +606,7 @@ export async function POST(request: Request) {
       if (objPath.startsWith(historicalPrefix) && objPath.endsWith("manifest.json")) {
         manifestsInspected++;
         try {
-          const hRes = await r2Client.getObject("NEW", objPath);
+          const hRes = await r2Client.getObject("NEW", objPath, { storageOwnerUuid });
           const hManifest = JSON.parse(hRes.data.toString("utf8"));
           const hGenId = String(hManifest.generationId || "gen_legacy").trim();
 
@@ -600,11 +623,15 @@ export async function POST(request: Request) {
 
               if (pExists) {
                 try {
-                  const pDownload = await r2Client.getObject("NEW", pKey);
+                  const pDownload = await r2Client.getObject("NEW", pKey, { storageOwnerUuid });
                   pReadable = true;
                   pSha = pDownload.sha256;
                   const pJson = JSON.parse(pDownload.data.toString("utf8"));
-                  pItems = Array.isArray(pJson.items) ? pJson.items : [];
+                  pItems = Array.isArray(pJson.items)
+                    ? pJson.items
+                    : Array.isArray(pJson.records)
+                    ? pJson.records
+                    : [];
                 } catch {
                   missingOrInvalidR2Objects++;
                 }
@@ -709,13 +736,17 @@ export async function POST(request: Request) {
       const recId = String(loc.recordId || loc.id || "").trim();
       const cleanPlatId = id.replace(/^youtube:/, "");
 
-      const isEligible = eligibleLocalRecordIdsSet.has(id) ||
-                         (recId && eligibleLocalRecordIdsSet.has(recId)) ||
-                         (cleanPlatId && eligibleLocalRecordIdsSet.has(cleanPlatId));
+      const isEligible = Boolean(
+        eligibleLocalRecordIdsSet.has(id) ||
+          (recId && eligibleLocalRecordIdsSet.has(recId)) ||
+          (cleanPlatId && eligibleLocalRecordIdsSet.has(cleanPlatId))
+      );
 
-      const isVerifiedInPart = allVerifiedPartItemIdentities.has(id) ||
-                               (recId && allVerifiedPartItemIdentities.has(recId)) ||
-                               (cleanPlatId && allVerifiedPartItemIdentities.has(cleanPlatId));
+      const isVerifiedInPart = Boolean(
+        allVerifiedPartItemIdentities.has(id) ||
+          (recId && allVerifiedPartItemIdentities.has(recId)) ||
+          (cleanPlatId && allVerifiedPartItemIdentities.has(cleanPlatId))
+      );
 
       const isPending = pendingEntityIds.has(id) || loc._localStatus === "LOCAL_PENDING";
 

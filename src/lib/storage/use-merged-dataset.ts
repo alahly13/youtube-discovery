@@ -96,8 +96,9 @@ export function useMergedDataset<T extends object>(
   // Load local IndexedDB state
   useEffect(() => {
     let cancelled = false;
+    let initialLoaded = false;
 
-    async function load() {
+    async function load(showSpinner: boolean) {
       if (!activeOwnerId) {
         // No canonical owner yet. Never read or display another partition's
         // data; the owner-changed event will trigger a real load.
@@ -105,11 +106,14 @@ export function useMergedDataset<T extends object>(
           setLocalItems([]);
           setPendingOps([]);
           setIsLoading(false);
+          initialLoaded = true;
         }
         return;
       }
 
-      setIsLoading(true);
+      if (showSpinner) {
+        setIsLoading(true);
+      }
       try {
         const [entities, ops] = await Promise.all([
           getLocalEntities<T>(activeOwnerId, datasetType),
@@ -120,6 +124,7 @@ export function useMergedDataset<T extends object>(
           setLocalItems(entities);
           setPendingOps(ops.filter((o) => o.datasetType === datasetType));
           setIsLoading(false);
+          initialLoaded = true;
         }
       } catch {
         if (!cancelled) {
@@ -128,14 +133,29 @@ export function useMergedDataset<T extends object>(
       }
     }
 
-    load();
+    void load(true);
 
-    const unsubscribe = syncCoordinator.subscribe(() => {
-      load();
+    // Trigger background refresh only when sync finishes or dataset pending counts change;
+    // ignore intermediate status transitions and the synchronous initial subscription callback.
+    let lastSyncAt: string | null = null;
+    let lastPendingForDataset = -1;
+    const unsubscribe = syncCoordinator.subscribe((evt) => {
+      if (!initialLoaded) return;
+      const dsPending = evt.summary?.byDataset?.[datasetType] ?? 0;
+      const syncCompleted = Boolean(
+        evt.lastSuccessfulSyncAt && evt.lastSuccessfulSyncAt !== lastSyncAt
+      );
+      const pendingChanged =
+        lastPendingForDataset !== -1 && dsPending !== lastPendingForDataset;
+      lastSyncAt = evt.lastSuccessfulSyncAt ?? null;
+      lastPendingForDataset = dsPending;
+      if (syncCompleted || pendingChanged) {
+        void load(false);
+      }
     });
 
     const handleDataEvent = () => {
-      load();
+      void load(false);
     };
 
     if (typeof window !== "undefined") {

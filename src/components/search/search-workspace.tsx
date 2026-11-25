@@ -403,7 +403,7 @@ export function SearchWorkspace() {
     [fetchSettings, filters, recordSearchHistory, resourceSelection, setCurrentManifest, setLastSearch, settings],
   );
 
-  /* ── Clear All Search Results and Persisted Cache ──────────────────── */
+  /* ── Clear Current Search View (Preserves Saved Search Archive) ──────── */
   const handleClearSearch = useCallback(() => {
     startTransition(() => {
       setManifest(null);
@@ -414,7 +414,8 @@ export function SearchWorkspace() {
     setCurrentManifest(null);
     clearLastSearch();
     hasRestoredRef.current = true;
-    authFetch("/api/search-storage", { method: "DELETE" }).catch(() => {});
+    // NOTE: Do NOT call DELETE /api/search-storage here — clearing active UI
+    // results must never destroy persisted search history records in Postgres/R2.
   }, [clearLastSearch, setCurrentManifest]);
 
   /* ── Direct Load from Archived Search Record (?load=...) ───────────── */

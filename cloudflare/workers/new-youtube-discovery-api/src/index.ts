@@ -297,12 +297,30 @@ function isCanonicalTempKey(key: string, owner: string): boolean {
 }
 
 /**
- * Version pointers and derived root manifests are mutable read indexes.
- * Generation manifests and parts are immutable and must never be rewritten.
+ * Canonical mutable-pointer classifier for new-youtube-discovery-api.
+ * Controls which object keys may be overwritten on update (dataset-root
+ * `version.json` / `manifest.json` pointers ONLY).
+ * Rule Zero guard: NEVER treat `/generations/`, `/parts/`, `/legacy/`,
+ * `/before-app-updating/`, or `asdy/old/` manifests as mutable.
  */
 function isMutableIndexKey(key: string): boolean {
-  if (key.includes("/generations/")) return false;
-  return key.endsWith("/version.json") || key.endsWith("/manifest.json");
+  const clean = key.replace(/^\/+/, "");
+  if (
+    clean.includes("/generations/") ||
+    clean.includes("/parts/") ||
+    clean.includes("/before-app-updating/") ||
+    clean.includes("/legacy/") ||
+    clean.startsWith("asdy/old/")
+  ) {
+    return false;
+  }
+  if (!clean.endsWith("/version.json") && !clean.endsWith("/manifest.json")) {
+    return false;
+  }
+  return (
+    /^asdy\/persistence\/[^/]+\/[^/]+\/(?:version|manifest)\.json$/.test(clean) ||
+    /^[^/]+\/persistence\/(?:datasets\/[^/]+\/|[^/]+\/)(?:version|manifest)\.json$/.test(clean)
+  );
 }
 
 const worker = {
@@ -622,6 +640,10 @@ const worker = {
             continue;
           }
 
+          const isImmutable =
+            !isMutableIndexKey(w.key) &&
+            !isCanonicalTempKey(w.key, owner) &&
+            !(owner && w.key.startsWith(`${owner}/temp/`));
           const uploadedObj = await env.NEW_BUCKET.put(w.key, w.bytes, {
             httpMetadata: { contentType: w.contentType },
             customMetadata: {
@@ -631,7 +653,41 @@ const worker = {
               sha256: w.computedHex,
               uploaded_at: uploadedAt,
             },
+            ...(isImmutable ? { onlyIf: { etagDoesNotMatch: "*" } } : {}),
           });
+
+          if (uploadedObj === null && isImmutable) {
+            const raced = await env.NEW_BUCKET.head(w.key);
+            if (raced && raced.customMetadata?.sha256?.toLowerCase() === w.computedHex) {
+              receipts.push({
+                key: raced.key,
+                size: raced.size,
+                etag: raced.httpEtag,
+                sha256: w.computedHex,
+                uploaded: raced.uploaded.toISOString(),
+              });
+              continue;
+            }
+            return jsonResponse(
+              {
+                code: "WORKER_IMMUTABLE_CONFLICT",
+                error: `Concurrent write conflict: immutable object '${w.key}' already exists with different content.`,
+              },
+              409,
+              cors
+            );
+          }
+
+          if (!uploadedObj) {
+            return jsonResponse(
+              {
+                code: "WORKER_UPLOAD_FAILED",
+                error: `Failed to store object '${w.key}'.`,
+              },
+              500,
+              cors
+            );
+          }
 
           receipts.push({
             key: uploadedObj.key,
@@ -915,6 +971,12 @@ const worker = {
           );
         }
 
+        const ownerUuid = authCheck.claims.storage_owner_uuid;
+        const isImmutable =
+          !isMutableIndexKey(key) &&
+          !isCanonicalTempKey(key, ownerUuid) &&
+          !(ownerUuid && key.startsWith(`${ownerUuid}/temp/`));
+
         const customMetadata: Record<string, string> = {
           storage_owner_uuid: authCheck.claims.storage_owner_uuid,
           sha256: computedHex,
@@ -924,7 +986,46 @@ const worker = {
         const uploadedObj = await env.NEW_BUCKET.put(key, requestBytes, {
           httpMetadata: { contentType },
           customMetadata,
+          ...(isImmutable ? { onlyIf: { etagDoesNotMatch: "*" } } : {}),
         });
+
+        if (uploadedObj === null && isImmutable) {
+          const raced = await env.NEW_BUCKET.head(key);
+          if (raced && raced.customMetadata?.sha256?.toLowerCase() === computedHex) {
+            return jsonResponse(
+              {
+                ok: true,
+                key,
+                size: raced.size,
+                etag: raced.httpEtag,
+                uploaded: raced.uploaded.toISOString(),
+                sha256: computedHex,
+                idempotent: true,
+              },
+              200,
+              cors
+            );
+          }
+          return jsonResponse(
+            {
+              code: "WORKER_IMMUTABLE_CONFLICT",
+              error: `Concurrent write conflict: immutable object '${key}' already exists with different content.`,
+            },
+            409,
+            cors
+          );
+        }
+
+        if (!uploadedObj) {
+          return jsonResponse(
+            {
+              code: "WORKER_UPLOAD_FAILED",
+              error: `Failed to store object '${key}'.`,
+            },
+            500,
+            cors
+          );
+        }
 
         return jsonResponse(
           {

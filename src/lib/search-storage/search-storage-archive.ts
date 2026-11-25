@@ -1,5 +1,9 @@
 import "server-only";
 
+import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/db/prisma";
+import { resolveCanonicalAdminProfile } from "@/lib/auth/canonical-admin-owner";
 import type { StorageBackend as BlobBackend } from "../storage/storage-backend";
 import { getBlobBackend } from "../storage/r2-blob-backend";
 import type { YouTubeManifest } from "@/types/manifest";
@@ -8,26 +12,20 @@ import type {
   YouTubeSearchResourceSelection,
   YouTubeSearchSettings,
 } from "@/types/youtube";
-import {
-  deleteRecord,
-  loadRecord,
-  readIndex,
-  saveRecord,
-  type IndexEntry,
-} from "../storage/record-store";
+import { loadRecord, readIndex, type IndexEntry } from "../storage/record-store";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * Saved Search History Archive — Private Vercel Blob authoritative store.
+ * Saved Search History Archive — Authoritative PostgreSQL Persistence
  * ──────────────────────────────────────────────────────────────────────────
- * Same exported contract as the previous disk implementation, now backed by
- * `youtube-discovery/v1/saved-history/`:
- *   - every saved search keeps its COMPLETE record (full manifest + rawJson),
- *     auto-chunked with manifest + SHA-256 when larger than 4 MiB,
- *   - one lightweight index for fast History listing (metadata only),
- *   - NO automatic expiration: records persist until the user explicitly
- *     deletes them. `expiresAt` is retained on the type as `number | null`
- *     for compatibility and is ALWAYS null for Blob records (permanent).
+ * Stores complete search records (`raw_payload_json`, settings, filters,
+ * full `YouTubeManifest`) inside canonical `search_history_records` in
+ * Supabase PostgreSQL, replacing ephemeral `youtube-discovery/v1/saved-history/`
+ * disk fallback writes on Vercel.
+ *
+ * Legacy Read-Only Compatibility:
+ *   - Read operations merge any remaining legacy `record-store` entries
+ *     read-only without mutating or deleting them.
  *   - `clearSearchArchive` / per-record delete remain EXPLICIT user actions.
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -39,10 +37,9 @@ export interface StoredSearchRecord {
   resourceSelection: YouTubeSearchResourceSelection;
   settings: YouTubeSearchSettings;
   filters?: YouTubeResultFilters;
-  manifest: YouTubeManifest; // COMPLETE manifest with all items & rawJson preserved!
-  createdAt: string; // ISO string
-  searchedAt: number; // Unix timestamp in ms
-  /** Always null for Blob records: permanent until explicit user deletion. */
+  manifest: YouTubeManifest;
+  createdAt: string;
+  searchedAt: number;
   expiresAt: number | null;
 }
 
@@ -60,7 +57,6 @@ export interface StoredSearchMetadata {
   status: "complete" | "failed" | "partial" | "empty";
   createdAt: string;
   searchedAt: number;
-  /** Always null for Blob records: permanent until explicit user deletion. */
   expiresAt: number | null;
   topThumbnails?: string[];
 }
@@ -69,6 +65,14 @@ const NAMESPACE = "savedHistory" as const;
 
 function backend(): BlobBackend {
   return getBlobBackend();
+}
+
+function toHistoryUuid(ownerId: string, recordId: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(`search-history:${ownerId}:${recordId}`)
+    .digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 function entryToMetadata(entry: IndexEntry): StoredSearchMetadata | null {
@@ -123,28 +127,112 @@ function buildMetadata(input: {
   };
 }
 
-/** Lists saved searches, newest first. No expiry sweep — records are permanent. */
-export async function listSearchArchiveIndex(): Promise<StoredSearchMetadata[]> {
-  const index = await readIndex(backend(), NAMESPACE);
-  return index.entries
-    .map(entryToMetadata)
-    .filter((e): e is StoredSearchMetadata => e !== null)
-    .sort((a, b) => b.searchedAt - a.searchedAt);
+function dbRowToRecord(row: {
+  id: string;
+  record_id: string | null;
+  manifest_id: string;
+  query_text: string;
+  search_settings: unknown;
+  resource_selection: unknown;
+  filter_snapshot: unknown;
+  raw_payload_json: unknown;
+  executed_at: Date;
+}): StoredSearchRecord | null {
+  const raw =
+    row.raw_payload_json && typeof row.raw_payload_json === "object"
+      ? (row.raw_payload_json as Partial<StoredSearchRecord>)
+      : null;
+  if (!raw?.manifest) return null;
+  const id = raw.id || row.record_id || row.manifest_id || row.id;
+  return {
+    id,
+    title: raw.title || row.query_text,
+    query: raw.query || row.query_text,
+    resourceSelection:
+      raw.resourceSelection ??
+      ((row.resource_selection as YouTubeSearchResourceSelection | null) ?? "ALL"),
+    settings: raw.settings ?? (row.search_settings as unknown as YouTubeSearchSettings),
+    filters: raw.filters ?? (row.filter_snapshot as YouTubeResultFilters | undefined),
+    manifest: raw.manifest,
+    createdAt: raw.createdAt || row.executed_at.toISOString(),
+    searchedAt:
+      typeof raw.searchedAt === "number" ? raw.searchedAt : row.executed_at.getTime(),
+    expiresAt: null,
+  };
+}
+
+/** Lists saved searches, newest first (PostgreSQL primary + legacy read-only merge). */
+export async function listSearchArchiveIndex(
+  ownerProfileId?: string
+): Promise<StoredSearchMetadata[]> {
+  const byId = new Map<string, StoredSearchMetadata>();
+
+  try {
+    const admin = await resolveCanonicalAdminProfile(ownerProfileId);
+    if (admin) {
+      const rows = await prisma.searchHistoryRecord.findMany({
+        where: { owner_id: admin.profileId },
+        orderBy: { executed_at: "desc" },
+        take: 250,
+      });
+
+      for (const row of rows) {
+        const rec = dbRowToRecord(row);
+        if (rec) {
+          byId.set(rec.id, buildMetadata(rec));
+          continue;
+        }
+        const canonicalId = row.record_id || row.manifest_id || row.id;
+        byId.set(canonicalId, {
+          id: canonicalId,
+          title: row.query_text,
+          query: row.query_text,
+          resourceSelection:
+            (row.resource_selection as unknown as YouTubeSearchResourceSelection) ?? "ALL",
+          settings: (row.search_settings as Partial<YouTubeSearchSettings>) ?? {},
+          itemCount: row.result_count,
+          quotaCostEstimate: row.quota_units_consumed,
+          status: row.result_count === 0 ? "empty" : "complete",
+          createdAt: row.executed_at.toISOString(),
+          searchedAt: row.executed_at.getTime(),
+          expiresAt: null,
+        });
+      }
+    }
+  } catch {
+    // Fall through to legacy read-only merge
+  }
+
+  try {
+    const index = await readIndex(backend(), NAMESPACE);
+    for (const entry of index.entries) {
+      const meta = entryToMetadata(entry);
+      if (meta && !byId.has(meta.id)) {
+        byId.set(meta.id, meta);
+      }
+    }
+  } catch {
+    // Legacy archive absent or unconfigured
+  }
+
+  return Array.from(byId.values()).sort((a, b) => b.searchedAt - a.searchedAt);
 }
 
 /**
- * Saves a COMPLETE search record (idempotent by id: retries with the same id
- * update rather than duplicate). Reports success only after read-back.
+ * Saves a COMPLETE search record directly into Supabase PostgreSQL (`search_history_records`).
  */
-export async function saveSearchToArchive(payload: {
-  id?: string;
-  query: string;
-  resourceSelection: YouTubeSearchResourceSelection;
-  settings: YouTubeSearchSettings;
-  filters?: YouTubeResultFilters;
-  manifest: YouTubeManifest;
-  title?: string;
-}): Promise<StoredSearchRecord> {
+export async function saveSearchToArchive(
+  payload: {
+    id?: string;
+    query: string;
+    resourceSelection: YouTubeSearchResourceSelection;
+    settings: YouTubeSearchSettings;
+    filters?: YouTubeResultFilters;
+    manifest: YouTubeManifest;
+    title?: string;
+  },
+  ownerProfileId?: string
+): Promise<StoredSearchRecord> {
   const now = Date.now();
   const id = payload.id || `search-${now}-${Math.random().toString(36).slice(2, 8)}`;
   const record: StoredSearchRecord = {
@@ -159,15 +247,75 @@ export async function saveSearchToArchive(payload: {
     searchedAt: now,
     expiresAt: null,
   };
-  const metadata = buildMetadata({ ...record });
-  await saveRecord(backend(), NAMESPACE, id, record, {
-    ...(metadata as unknown as Record<string, unknown>),
+
+  const admin = await resolveCanonicalAdminProfile(ownerProfileId);
+  if (!admin) {
+    throw new Error("Unable to resolve administrator profile for search archive.");
+  }
+
+  const dbId = toHistoryUuid(admin.profileId, id);
+  const itemsCount = payload.manifest.itemCount ?? payload.manifest.normalizedItems?.length ?? 0;
+  const quotaUnits = Math.max(0, Math.floor(payload.manifest.quotaCostEstimate ?? 100));
+
+  await prisma.searchHistoryRecord.upsert({
+    where: { id: dbId },
+    create: {
+      id: dbId,
+      owner_id: admin.profileId,
+      query_text: record.query.slice(0, 512),
+      search_settings: record.settings as unknown as Prisma.InputJsonValue,
+      result_count: itemsCount,
+      quota_units_consumed: quotaUnits,
+      manifest_id: (payload.manifest.manifestId || id).slice(0, 64),
+      executed_at: new Date(now),
+      record_id: id.slice(0, 128),
+      resource_selection: record.resourceSelection as unknown as Prisma.InputJsonValue,
+      filter_snapshot: (record.filters ?? null) as unknown as Prisma.InputJsonValue,
+      raw_payload_json: record as unknown as Prisma.InputJsonValue,
+      expires_at: null,
+    },
+    update: {
+      query_text: record.query.slice(0, 512),
+      search_settings: record.settings as unknown as Prisma.InputJsonValue,
+      result_count: itemsCount,
+      quota_units_consumed: quotaUnits,
+      manifest_id: (payload.manifest.manifestId || id).slice(0, 64),
+      executed_at: new Date(now),
+      record_id: id.slice(0, 128),
+      resource_selection: record.resourceSelection as unknown as Prisma.InputJsonValue,
+      filter_snapshot: (record.filters ?? null) as unknown as Prisma.InputJsonValue,
+      raw_payload_json: record as unknown as Prisma.InputJsonValue,
+      expires_at: null,
+    },
   });
+
   return record;
 }
 
-/** Retrieves the full record by ID. Null when missing or unreadable. */
-export async function getSearchFromArchive(id: string): Promise<StoredSearchRecord | null> {
+/** Retrieves the full record by ID (PostgreSQL primary + read-only legacy fallback). */
+export async function getSearchFromArchive(
+  id: string,
+  ownerProfileId?: string
+): Promise<StoredSearchRecord | null> {
+  try {
+    const admin = await resolveCanonicalAdminProfile(ownerProfileId);
+    if (admin) {
+      const dbUuid = toHistoryUuid(admin.profileId, id);
+      const row = await prisma.searchHistoryRecord.findFirst({
+        where: {
+          owner_id: admin.profileId,
+          OR: [{ id: dbUuid }, { record_id: id }, { manifest_id: id }],
+        },
+      });
+      if (row) {
+        const mapped = dbRowToRecord(row);
+        if (mapped) return mapped;
+      }
+    }
+  } catch {
+    // Fall through to legacy read
+  }
+
   try {
     const record = await loadRecord<StoredSearchRecord>(backend(), NAMESPACE, id);
     if (!record || record.id !== id || !record.manifest) return null;
@@ -177,41 +325,53 @@ export async function getSearchFromArchive(id: string): Promise<StoredSearchReco
   }
 }
 
-/** Most recently saved record (index-ordered; no latest.json pointer needed). */
-export async function getLatestSearchFromArchive(): Promise<StoredSearchRecord | null> {
-  const items = await listSearchArchiveIndex();
-  if (items.length === 0) return null;
-  // Walk newest-first; skip any entry whose payload is unreadable.
+/** Most recently saved complete record. */
+export async function getLatestSearchFromArchive(
+  ownerProfileId?: string
+): Promise<StoredSearchRecord | null> {
+  const items = await listSearchArchiveIndex(ownerProfileId);
   for (const meta of items) {
-    const full = await getSearchFromArchive(meta.id);
+    const full = await getSearchFromArchive(meta.id, ownerProfileId);
     if (full) return full;
   }
   return null;
 }
 
-/** Explicit user deletion: removes the record and all its chunks. */
-export async function deleteSearchFromArchive(id: string): Promise<boolean> {
-  return deleteRecord(backend(), NAMESPACE, id);
-}
-
-/** Explicit user action: removes EVERYTHING in saved-history (verified). */
-export async function clearSearchArchive(): Promise<void> {
-  const index = await readIndex(backend(), NAMESPACE);
-  for (const entry of index.entries) {
-    await deleteRecord(backend(), NAMESPACE, entry.id).catch(() => {});
+/** Explicit user deletion: removes the specified search record from PostgreSQL. */
+export async function deleteSearchFromArchive(
+  id: string,
+  ownerProfileId?: string
+): Promise<boolean> {
+  try {
+    const admin = await resolveCanonicalAdminProfile(ownerProfileId);
+    if (!admin) return false;
+    const dbUuid = toHistoryUuid(admin.profileId, id);
+    const res = await prisma.searchHistoryRecord.deleteMany({
+      where: {
+        owner_id: admin.profileId,
+        OR: [{ id: dbUuid }, { record_id: id }, { manifest_id: id }],
+      },
+    });
+    return res.count > 0;
+  } catch {
+    return false;
   }
 }
 
-/**
- * Retention compatibility shim: Blob records never expire, so there is
- * nothing to prune. Kept so existing callers need no changes.
- */
-export async function cleanupExpiredSearches(): Promise<number> {
-  const index = await readIndex(backend(), NAMESPACE);
-  return index.entries.length;
+/** Explicit user action: clears search archive records in PostgreSQL for caller owner. */
+export async function clearSearchArchive(ownerProfileId?: string): Promise<void> {
+  const admin = await resolveCanonicalAdminProfile(ownerProfileId);
+  if (!admin) return;
+  await prisma.searchHistoryRecord.deleteMany({
+    where: { owner_id: admin.profileId },
+  });
 }
 
-/** TTL metadata for client telemetry: Blob history is permanent. */
+export async function cleanupExpiredSearches(): Promise<number> {
+  const items = await listSearchArchiveIndex();
+  return items.length;
+}
+
 export function getArchiveTtlInfo() {
   return {
     ttlHours: null as number | null,

@@ -1,3 +1,0 @@
-password >> NV5fjzgJjy7pid6u
- $env:CONFIRM_DB_APPLY="true"; npm run db:apply
-

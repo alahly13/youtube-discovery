@@ -69,11 +69,22 @@ export function ManifestDetailWorkspace({
     setLoading(true);
     setError(null);
     try {
+      const { getLocalTempManifest, persistTempManifestLocally } = await import(
+        "@/lib/manifests/local-manifest-store"
+      );
+      const localManifest = await getLocalTempManifest(manifestId);
+      if (localManifest) {
+        startTransition(() => setManifest(localManifest));
+        return;
+      }
+
+      // Fallback to transient single-instance server store only if not already persisted locally.
       const response = await fetch(`/api/youtube/manifests/${manifestId}`);
       if (!response.ok) {
         throw new Error(`Manifest not found (${response.status})`);
       }
       const payload = (await response.json()) as YouTubeManifest;
+      await persistTempManifestLocally(payload).catch(() => {});
       startTransition(() => setManifest(payload));
     } catch (err) {
       startTransition(() => setError(err instanceof Error ? err.message : "Unknown error"));

@@ -364,7 +364,12 @@ const worker = {
         const computedHex = bufToHex(digest);
 
         // Permanent historical manifests are write-once (idempotent if SHA matches).
-        if (!key.includes("/temp/")) {
+        // Only keys explicitly under the disposable temp prefix may be overwritten or deleted.
+        const isTempKey =
+          key.startsWith("asdy/old/temp/") ||
+          key.startsWith("asdy/temp/");
+
+        if (!isTempKey) {
           const existing = await env.OLD_BUCKET.head(key);
           if (existing) {
             const existingSha = existing.customMetadata?.sha256?.toLowerCase();
@@ -403,7 +408,46 @@ const worker = {
         const uploadedObj = await env.OLD_BUCKET.put(key, requestBytes, {
           httpMetadata: { contentType },
           customMetadata,
+          ...(isTempKey ? {} : { onlyIf: { etagDoesNotMatch: "*" } }),
         });
+
+        if (uploadedObj === null && !isTempKey) {
+          const raced = await env.OLD_BUCKET.head(key);
+          if (raced && raced.customMetadata?.sha256?.toLowerCase() === computedHex) {
+            return jsonResponse(
+              {
+                ok: true,
+                key,
+                size: raced.size,
+                etag: raced.httpEtag,
+                uploaded: raced.uploaded.toISOString(),
+                sha256: computedHex,
+                idempotent: true,
+              },
+              200,
+              cors
+            );
+          }
+          return jsonResponse(
+            {
+              code: "WORKER_IMMUTABLE_CONFLICT",
+              error: `Concurrent write conflict: historical archive object '${key}' already exists.`,
+            },
+            409,
+            cors
+          );
+        }
+
+        if (!uploadedObj) {
+          return jsonResponse(
+            {
+              code: "WORKER_UPLOAD_FAILED",
+              error: `Failed to store object '${key}'.`,
+            },
+            500,
+            cors
+          );
+        }
 
         return jsonResponse(
           {
@@ -495,8 +539,12 @@ const worker = {
           return jsonResponse({ error: authCheck.error }, authCheck.status, cors);
         }
 
-        // Safety enforcement: Historical committed manifests can NEVER be deleted via REST
-        if (!key.includes("/temp/")) {
+        // Safety enforcement: Historical committed manifests can NEVER be deleted via REST.
+        // Only keys explicitly rooted under a dedicated temp prefix are deletable.
+        const isTempDeleteKey =
+          key.startsWith("asdy/old/temp/") ||
+          key.startsWith("asdy/temp/");
+        if (!isTempDeleteKey) {
           return jsonResponse(
             {
               code: "WORKER_FORBIDDEN",

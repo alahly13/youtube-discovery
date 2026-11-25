@@ -1,7 +1,11 @@
 import "server-only";
 
+import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import type { StorageBackend as BlobBackend } from "../../storage/storage-backend";
 import { getBlobBackend } from "../../storage/r2-blob-backend";
+import { prisma } from "@/lib/db/prisma";
+import { resolveCanonicalAdminProfile } from "@/lib/auth/canonical-admin-owner";
 export const API_KEYS_STATE_PATHNAME = "youtube-discovery/v1/api-keys/state.json";
 import { decryptApiKey, encryptApiKey, isKeyEncryptionAvailable, maskStoredKey } from "../../keys/key-crypto";
 import type { EncryptedBundle } from "../../keys/key-crypto";
@@ -112,11 +116,75 @@ function emptyState(): ManagedKeysState {
   return { version: API_KEYS_STATE_VERSION, activeKeyId: "env", updatedAt: new Date().toISOString(), customKeys: [] };
 }
 
-async function readState(): Promise<ManagedKeysState> {
+function fingerprintKeyBundle(id: string, bundle: EncryptedBundle): string {
+  return crypto
+    .createHash("sha256")
+    .update(`${id}:${bundle.v}:${bundle.iv}:${bundle.data}`)
+    .digest("hex");
+}
+
+function rowToStoredManagedKey(row: {
+  id: string;
+  record_id: string | null;
+  key_nickname: string;
+  encrypted_key_bundle: unknown;
+  google_cloud_project_id: string | null;
+  associated_account_email: string | null;
+  project_display_name: string | null;
+  is_active: boolean;
+  priority_order: number;
+  metadata_json: unknown;
+  created_at: Date;
+}): StoredManagedKey | null {
+  const bundle = row.encrypted_key_bundle as EncryptedBundle | null;
+  if (!bundle || typeof bundle !== "object" || typeof bundle.data !== "string" || typeof bundle.iv !== "string") {
+    return null;
+  }
+  const meta =
+    row.metadata_json && typeof row.metadata_json === "object"
+      ? (row.metadata_json as Record<string, unknown>)
+      : {};
+  return normalizeKeyRecord({
+    id: row.record_id || row.id,
+    label: row.key_nickname,
+    bundle,
+    addedAt: typeof meta.addedAt === "string" ? meta.addedAt : row.created_at.toISOString(),
+    lastUsed: typeof meta.lastUsed === "string" ? meta.lastUsed : undefined,
+    enabled: row.is_active,
+    order: row.priority_order,
+    quotaExhaustedAt:
+      typeof meta.quotaExhaustedAt === "string" || meta.quotaExhaustedAt === null
+        ? (meta.quotaExhaustedAt as string | null)
+        : null,
+    cooldownUntil:
+      typeof meta.cooldownUntil === "number" || meta.cooldownUntil === null
+        ? (meta.cooldownUntil as number | null)
+        : null,
+    lastError:
+      typeof meta.lastError === "string" || meta.lastError === null
+        ? (meta.lastError as string | null)
+        : null,
+    accountLabel: row.associated_account_email ?? null,
+    projectId: row.google_cloud_project_id ?? null,
+    projectDisplayName: row.project_display_name ?? null,
+    projectAssociation:
+      meta.projectAssociation === "verified" || meta.projectAssociation === "declared"
+        ? meta.projectAssociation
+        : "unknown",
+    projectEvidence:
+      typeof meta.projectEvidence === "string" || meta.projectEvidence === null
+        ? (meta.projectEvidence as string | null)
+        : null,
+    totalRequests: typeof meta.totalRequests === "number" ? meta.totalRequests : undefined,
+    totalUnits: typeof meta.totalUnits === "number" ? meta.totalUnits : undefined,
+  });
+}
+
+async function readLegacyBlobState(): Promise<ManagedKeysState | null> {
   try {
     const raw = await backend().getBytes(API_KEYS_STATE_PATHNAME);
     const parsed = JSON.parse(raw.toString("utf8")) as Partial<ManagedKeysState>;
-    if (!parsed || !Array.isArray(parsed.customKeys)) return emptyState();
+    if (!parsed || !Array.isArray(parsed.customKeys)) return null;
     return {
       version: API_KEYS_STATE_VERSION,
       activeKeyId: typeof parsed.activeKeyId === "string" ? parsed.activeKeyId : "env",
@@ -129,17 +197,176 @@ async function readState(): Promise<ManagedKeysState> {
         .map((k) => normalizeKeyRecord(k)),
     };
   } catch {
-    return emptyState();
+    return null;
   }
 }
 
+async function readState(): Promise<ManagedKeysState> {
+  if (keysBackendOverride !== null) {
+    return (await readLegacyBlobState()) ?? emptyState();
+  }
+
+  try {
+    const admin = await resolveCanonicalAdminProfile();
+    if (!admin) return emptyState();
+
+    const [rows, poolState] = await Promise.all([
+      prisma.managedApiKey.findMany({
+        where: { owner_id: admin.profileId, revoked_at: null },
+        orderBy: [{ priority_order: "asc" }, { created_at: "asc" }],
+      }),
+      prisma.quotaPoolState.findUnique({
+        where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+        select: { active_key_id: true, updated_at: true },
+      }),
+    ]);
+
+    if (rows.length > 0 || poolState) {
+      const customKeys = rows
+        .map(rowToStoredManagedKey)
+        .filter((k): k is StoredManagedKey => k !== null);
+      const selectedRow = rows.find((r) => r.is_selected);
+      const activeKeyId =
+        poolState?.active_key_id ??
+        (selectedRow ? selectedRow.record_id || selectedRow.id : "env");
+      return {
+        version: API_KEYS_STATE_VERSION,
+        activeKeyId,
+        updatedAt: (poolState?.updated_at ?? new Date()).toISOString(),
+        customKeys,
+      };
+    }
+
+    // One-time non-destructive legacy backfill if DB has no keys yet
+    const legacy = await readLegacyBlobState();
+    if (legacy && legacy.customKeys.length > 0) {
+      await writeState(legacy).catch(() => {});
+      return legacy;
+    }
+  } catch {
+    // Fallback below if DB unreachable
+  }
+
+  return emptyState();
+}
+
 async function writeState(state: ManagedKeysState): Promise<ManagedKeysState> {
-  const next: ManagedKeysState = { ...state, version: API_KEYS_STATE_VERSION, updatedAt: new Date().toISOString() };
-  await backend().putBytes(API_KEYS_STATE_PATHNAME, Buffer.from(JSON.stringify(next), "utf8"), {
-    contentType: "application/json",
-    cacheSeconds: 0,
+  const next: ManagedKeysState = {
+    ...state,
+    version: API_KEYS_STATE_VERSION,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (keysBackendOverride !== null) {
+    await backend().putBytes(API_KEYS_STATE_PATHNAME, Buffer.from(JSON.stringify(next), "utf8"), {
+      contentType: "application/json",
+      cacheSeconds: 0,
+    });
+    const verify = await readState();
+    if (verify.customKeys.length !== next.customKeys.length || verify.activeKeyId !== next.activeKeyId) {
+      throw new Error("Key store write could not be verified");
+    }
+    return verify;
+  }
+
+  const admin = await resolveCanonicalAdminProfile();
+  if (!admin) {
+    throw new Error("Cannot persist managed API keys: no active administrator profile found in PostgreSQL.");
+  }
+
+  const activeRecordIds = next.customKeys.map((k) => k.id);
+
+  await prisma.$transaction(async (tx) => {
+    const existingRows = await tx.managedApiKey.findMany({
+      where: { owner_id: admin.profileId },
+      select: { id: true, record_id: true, key_fingerprint: true },
+    });
+    const byRecordId = new Map(
+      existingRows.filter((r) => r.record_id).map((r) => [r.record_id as string, r.id])
+    );
+
+    for (const k of next.customKeys) {
+      const normalized = normalizeKeyRecord(k);
+      const isSelected = next.activeKeyId === normalized.id;
+      const metadataJson = {
+        addedAt: normalized.addedAt,
+        lastUsed: normalized.lastUsed ?? null,
+        quotaExhaustedAt: normalized.quotaExhaustedAt ?? null,
+        cooldownUntil: normalized.cooldownUntil ?? null,
+        lastError: normalized.lastError ?? null,
+        projectAssociation: normalized.projectAssociation,
+        projectEvidence: normalized.projectEvidence ?? null,
+        totalRequests: normalized.totalRequests ?? 0,
+        totalUnits: normalized.totalUnits ?? 0,
+      } as unknown as Prisma.InputJsonValue;
+
+      const existingId = byRecordId.get(normalized.id);
+      const fingerprint = fingerprintKeyBundle(normalized.id, normalized.bundle);
+      const commonData = {
+        key_nickname: normalized.label.slice(0, 64),
+        encrypted_key_bundle: normalized.bundle as unknown as Prisma.InputJsonValue,
+        key_fingerprint: fingerprint,
+        google_cloud_project_id: normalized.projectId?.slice(0, 64) ?? null,
+        associated_account_email: normalized.accountLabel?.slice(0, 255) ?? null,
+        project_display_name: normalized.projectDisplayName?.slice(0, 120) ?? null,
+        masked_key: `••••`,
+        is_active: normalized.enabled,
+        priority_order: normalized.order,
+        is_selected: isSelected,
+        metadata_json: metadataJson,
+        revoked_at: null,
+        record_id: normalized.id.slice(0, 128),
+      };
+
+      if (existingId) {
+        await tx.managedApiKey.update({
+          where: { id: existingId },
+          data: commonData,
+        });
+      } else {
+        await tx.managedApiKey.upsert({
+          where: {
+            owner_id_key_fingerprint: {
+              owner_id: admin.profileId,
+              key_fingerprint: fingerprint,
+            },
+          },
+          create: {
+            owner_id: admin.profileId,
+            ...commonData,
+          },
+          update: commonData,
+        });
+      }
+    }
+
+    // Soft-revoke keys explicitly deleted by administrator
+    await tx.managedApiKey.updateMany({
+      where: {
+        owner_id: admin.profileId,
+        revoked_at: null,
+        ...(activeRecordIds.length > 0 ? { record_id: { notIn: activeRecordIds } } : {}),
+      },
+      data: {
+        revoked_at: new Date(),
+        is_active: false,
+        is_selected: false,
+      },
+    });
+
+    await tx.quotaPoolState.upsert({
+      where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+      create: {
+        owner_id: admin.profileId,
+        pool_key: "default",
+        active_key_id: (next.activeKeyId || "env").slice(0, 128),
+      },
+      update: {
+        active_key_id: (next.activeKeyId || "env").slice(0, 128),
+      },
+    });
   });
-  // Read-back verification before reporting success.
+
   const verify = await readState();
   if (verify.customKeys.length !== next.customKeys.length || verify.activeKeyId !== next.activeKeyId) {
     throw new Error("Key store write could not be verified");

@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   const guard = await requireAdmin(request);
   if (!guard.ok) return guard.response;
   try {
-    const record = await getLatestSearchFromArchive();
+    const record = await getLatestSearchFromArchive(guard.admin.profileId);
     const ttlInfo = getArchiveTtlInfo();
 
     if (!record) {

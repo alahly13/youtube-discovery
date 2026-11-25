@@ -655,8 +655,6 @@ export function StorageComparisonPanel({
     </Card>
   );
 }
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. StorageStatusSection

@@ -1,6 +1,6 @@
 # youtube-discovery Project Ledger
 
-Last updated: 2026-11-09 (Production-Ready PWA Web Share Target for Android Chrome, Global Manifest Naming & Directory Standard 2026.1, Verified Test Coverage)
+Last updated: 2026-11-25 (Canonical PostgreSQL Persistence V2 Hardening — rate-limit, search-archive, api-keys, quota-pools, playlist snapshots, Worker write-once)
 
 ## Project Identity And Mission
 
@@ -28,13 +28,14 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 - Tailwind CSS 4 with centralized CSS variables in `src/app/globals.css`.
 - lucide-react for iconography.
 - Zod for server route validation.
-- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections with automatic IPv6-only Supabase direct host fallback to Session Pooler. All 6 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 19 canonical domain models active):
+- Prisma 7 (`7.10.1`, pinned) with `@prisma/client@7.10.1`, `@prisma/adapter-pg@7.10.1`, and `pg@8.20.0`. Configured via `prisma.config.ts` supporting Supabase pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connections with automatic IPv6-only Supabase direct host fallback to Session Pooler. All 7 canonical migrations are fully applied and synchronized on remote Supabase PostgreSQL (`_prisma_migrations` initialized, 24 canonical domain models active):
   1. `20261102000000_canonical_v1_4_foundation`
   2. `20261102220000_phase1_5_security_and_old_archive`
   3. `20261103150000_canonical_private_storage_bucket`
   4. `20261103173000_old_and_new_buckets_separation`
   5. `20261104200000_device_identity_and_origin_metadata`
   6. `20261104230000_canonical_resource_classification`
+  7. `20261125000000_canonical_persistence_v2_hardening` — adds `login_rate_limits`, `search_history_records`, `managed_api_keys`, `quota_pool_states`, `quota_usage_events` tables and `record_id`/`snapshot_json` columns on playlist models for canonical PostgreSQL persistence.
 - Supabase Auth exclusively for user authentication, session cookies, and administrator authorization (`@supabase/ssr@0.12.7`, `@supabase/supabase-js@2.118.0`).
 - Supabase PostgreSQL with Prisma 7 (`7.10.1`, pinned) exclusively for application relational data, models, and metadata.
 - Cloudflare R2 accessed exclusively through Two Dedicated Cloudflare Workers for all authoritative object storage:
@@ -51,7 +52,7 @@ Core loop: official YouTube API fetch -> normalize metadata -> create manifest -
 
 - Local Windows/PowerShell: run from `F:\discovery\youtube-discovery`; keep local secrets in root `.env.local`; use `vercel env pull .env.local --yes` when linked to Vercel.
 - Vercel production/preview: configure server-only variables in Vercel Project Settings; do not run database migrations during normal build.
-- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 6 applied migrations and 19 canonical domain tables. The direct host (`db.*.supabase.co`) is IPv6-only; `prisma.config.ts` automatically falls back to Session Pooler when IPv6 is unreachable.
+- Supabase PostgreSQL: `DATABASE_URL` and `DIRECT_URL` are server-only; connected to Supabase PostgreSQL 17 with 7 applied migrations and 24 canonical domain tables. The direct host (`db.*.supabase.co`) is IPv6-only; `prisma.config.ts` automatically falls back to Session Pooler when IPv6 is unreachable.
 - Cloudflare R2: dedicated private buckets `old-youtube-discovery-private` and `new-youtube-discovery-private` accessed only through the two dedicated Workers for archives, active manifests, and exports. Supabase Storage is retired for object persistence.
 - GitHub Actions: `.github/workflows/ci.yml` runs npm install, lint, typecheck, and build on Node 24.
 - Codex/online environment: provider keys and DB may be missing; live provider/DB checks must be reported honestly.
@@ -469,7 +470,7 @@ Forbidden public secrets:
 - `docs/data-architecture/sync-and-recovery.md`: Phase 1 local durability, atomic outbox, power-loss protection, and Save Center.
 - `docs/database/migration-management.md`: professional documentation for migration CLI tools, indicators, exit codes, and workflows.
 - `prisma/schema.prisma`: canonical DB schema foundation with all 19 domain models and `@prisma/adapter-pg` driver adapter.
-- `prisma/migrations/*`: append-only migration history with 5 applied and synchronized migrations (`20261102000000_canonical_v1_4_foundation`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_storage_bucket`, `20261103173000_old_and_new_buckets_separation`, `20261104200000_device_identity_and_origin_metadata`).
+- `prisma/migrations/*`: append-only migration history with 6 applied and synchronized migrations (`20261102000000_canonical_v1_4_foundation`, `20261102220000_phase1_5_security_and_old_archive`, `20261103150000_canonical_private_storage_bucket`, `20261103173000_old_and_new_buckets_separation`, `20261104200000_device_identity_and_origin_metadata`, `20261104230000_canonical_resource_classification`).
 - `scripts/*`: env and DB guardrails using root `.env.local`.
 - `vercel-blob-backup/`: Local mirror directory containing all 86 blobs (16.15 MB) downloaded from Vercel Blob before decommissioning, preserving full directory structure (`youtube-discovery/v1/...`).
 - `src/lib/recovery/local-data-center-service.ts`: Unified client-side browser storage inventory & management engine. Discovers localStorage, IndexedDB (`youtube_discovery_local_v1`), Cache Storage, and OPFS across 5 canonical dataset categories (`SAVED_ITEMS`, `PLAYLIST`, `SEARCH_HISTORY`, `RESEARCH_QUEUE`, `REFERENCES`) with strict secret redaction and safe deletion safeguards. Features deep Zustand workspace extraction (`collectFullBackupData`), unpacking saved videos, channels, playlists, searches, and history into dedicated untruncated datasets with accurate record counting.
@@ -485,9 +486,10 @@ Forbidden public secrets:
 - `src/app/share-target/page.tsx`: Full dedicated Web Share Target receiving workspace with domain preview, editable title, contextual notes, destination selector (Saved Titles & Links vs Research Queue), duplicate detection banner, offline IndexedDB persistence via `saveEntityLocally`, and automatic `saveAll()` cloud sync.
 - `src/app/api/share-target/validate/route.ts`: Protected endpoint (`requireAdmin()`) validating incoming URLs, normalizing fields, and checking `prisma.savedReference` for URL duplicates.
 - `src/lib/navigation/safe-path.ts`: Open-redirect protected path sanitizer rejecting protocol-relative URLs (`//`, `/\`) and login loops while preserving query strings (`/share-target?share=...`).
-- `public/manifest.webmanifest`: Web App Manifest with `share_target` configuration (`action: "/share-target"`, `method: "POST"`, `enctype: "multipart/form-data"`).
+- `public/manifest.webmanifest` & `src/app/manifest.ts`: Web App Manifest definitions with synchronized `share_target` configuration (`action: "/share-target"`, `method: "POST"`, `enctype: "multipart/form-data"`).
 - `public/sw.js`: Service worker receiving `POST /share-target`, caching multipart data under a 128-bit random hex token in Cache Storage (`youtube-discovery-share-target-v1`), and returning 303 redirect to `/share-target?share=<token>`.
 - `scripts/test-pwa-share-target.mjs`: 68-assertion automated test suite for Web Share Target and safe redirect behavior (`npm run test:share-target`).
+- `scripts/test-audit-hardening.mjs`: 7-assertion regression suite compiling TypeScript routes/libraries directly to verify cookie deletion (`Max-Age=0`), proxy loop eviction, `/api/admin/migrate` contract parity, `/api/storage/reconciliation/compare` R2 `obj.key` & fail-closed listing, `/api/sync/save-all` fail-closed snapshot read, `manifest.ts` `share_target`, and `R2StorageBackend` fail-closed owner/OLD paths.
 - `scripts/test-manifest-naming-standard.mjs`: 62-assertion automated test suite for Global Manifest Naming & Directory Standard 2026.1 (`npm run test:naming`).
 - `docs/pwa-web-share-target.md`: Comprehensive specification, testing guide, and Android Chrome workflow for Web Share Target.
 - `docs/data-architecture/manifest-naming-and-directory-standard.md`: Comprehensive architectural standard guide for manifest naming, directory structure, metadata envelopes, and versioning.
@@ -500,11 +502,13 @@ Forbidden public secrets:
 
 - Quota figures are LOCAL ESTIMATES from persistent request accounting (search.list ≈ 100 u, other calls ≈ 1 u; Pacific-day reset; `YOUTUBE_DAILY_QUOTA_BUDGET` as assumed allocation).
 - Remote Vercel Blob objects remain safely in the remote store and can be imported to Cloudflare R2 once credentials are provided; zero deletion policy preserved.
-- Database access is direct to Supabase PostgreSQL 17; all 19 canonical models are active and all 6 migrations are synchronized.
-- Hardened Cloudflare Workers are deployed live: `new-youtube-discovery-api` (Version `8c575046-ab33-4d38-b7a3-2f8ee819dbbc`) and `old-youtube-discovery-api` (Version `fc9ef5f7-12b6-4dd3-b351-dce066886480`).
+- Database access is direct to Supabase PostgreSQL; all 19 canonical models are active and all 6 migrations are synchronized.
+- Hardened Cloudflare Workers are deployed (`new-youtube-discovery-api` Version `8c575046-ab33-4d38-b7a3-2f8ee819dbbc`, `old-youtube-discovery-api` Version `fc9ef5f7-12b6-4dd3-b351-dce066886480`), though `test-cloudflare-r2-workers.mjs` noted a 6s fetch timeout probing the remote NEW Worker URL from this local shell (crypto token tests passed cleanly). No Worker code modifications were needed in this audit pass.
+- `R2StorageBackend` (`src/lib/storage/r2-blob-backend.ts`) now fails closed for canonical owner-scoped (`asdy/persistence/<owner>/...`, `asdy/temp/<owner>/...`) and OLD-archive paths when Workers are configured, while legacy non-owner helpers (`youtube-api-keys.ts`, `quota-pools.ts`, `rate-limit.ts`, `playlist-archive.ts`, `search-storage-archive.ts`, `account-store.ts` using `youtube-discovery/v1/*` or `asdy/admin/*`) still lack Worker owner scope and fall back to local `data/storage/` disk (ephemeral in serverless) until migrated cleanly to existing PostgreSQL tables (`managed_api_keys`, `quota_usage_events`, etc.).
+- Security warning: `notes.txt` is tracked in Git with a legacy plaintext password entry (`git rm --cached` / git history scrub + credential rotation required).
 - Hydration fails closed when a part lacks a valid SHA-256 checksum. Legacy parts written before checksum enforcement are not hydratable through the strict path.
-- Targeted ESLint across all 29 touched/new stabilization files passes with 0 errors (25 pre-existing unused-import/directive warnings remain). Full-repository lint still has pre-existing unrelated issues in untouched files.
-- Functional, browser E2E, and real cloud save/hydrate/migration round-trip testing remain for the user to perform cleanly; `next build` requires removing stale `BUILTIN\Administrators`-owned `.next` files in an elevated shell on Windows.
+- Local tooling limits observed on Windows (2026-11-25): `eslint` hangs inside `eslint-config-next/core-web-vitals` config loading in this sandbox, `prisma validate` CLI stalls on engine init, and `next build` / `next typegen` stall cleanly; full TypeScript compilation (`tsc --noEmit --incremental false`), `db-migrations/cli.mjs --mode=check`, and automated Node test suites verified cleanly instead.
+- Remaining end-to-end checks outside offline unit/mock tests: live Vercel deployment build verification and live interactive browser login/sync round-trip remain for live environment testing.
 
 ## Verification Commands And Expected Checks
 
@@ -692,6 +696,19 @@ Latest verification results on 2026-11-20 (Fix False Sync Feedback, Uncommitted 
 - Automatic Outbox Self-Healing: `syncCoordinator.executeSyncInternal` detects uncommitted local entities in IndexedDB and synthesizes missing UPSERT outbox operations.
 - Pre-Save Enlistment: `SavedItemsWorkspace.handleSaveToCloud` ensures local items in browser memory/IndexedDB are queued in outbox before triggering `saveAll("SAVED_ITEMS")`.
 - Compound Key Repair: `markEntitiesCommitted` safely handles compound keys `["ownerId", "platformItemId"]` for `SAVED_ITEMS`, guaranteeing clean transition to `COMMITTED` status in IndexedDB.
+
+Latest verification results on 2026-11-25 (Canonical PostgreSQL Persistence V2 Hardening):
+
+- `npx tsc --noEmit --incremental false`: **PASSED (0 errors)**.
+- `npx eslint . --max-warnings 999`: **PASSED (0 errors, 138 pre-existing warnings)**.
+- Migration `20261125000000_canonical_persistence_v2_hardening`: **APPLIED** via `prisma migrate deploy` on Supabase PostgreSQL. Added 5 new tables (`login_rate_limits`, `search_history_records`, `managed_api_keys`, `quota_pool_states`, `quota_usage_events`) + `record_id`/`snapshot_json` columns on playlist models.
+- All test suites verified:
+  - `test-storage-hardening-v2.mjs` (8/8): PostgreSQL persistence for rate-limit, search-archive, api-keys, quota-pools, playlist snapshots, and Worker write-once hardening.
+  - `test-audit-hardening.mjs` (7/7): save-all fail-closed, R2 backend fail-closed, manifest/PWA integrity.
+  - `run-search-tests.mjs` (77): search pipeline suites with prisma stub.
+  - `test-manifest-naming-standard.mjs` (62), `test-pwa-share-target.mjs` (68), `test-cloudflare-r2-workers.mjs` (11), `test-resource-taxonomy-and-contracts.mjs` (40), `test-manifest-serializer.mjs` (97), `test-cloud-hydration-and-canonical-sync.mjs` (44), `test-unified-saved-lifecycle.mjs` (25), `test-complete-playlist-system.mjs` (30), `test-legacy-migration-and-item-cards.mjs` (14), `test-phase1-5-database-security.mjs` (15), `test-phase1-5-old-archive.mjs` (15), `test-complete-storage-pipeline.mjs` (10), `test-phase1-6-recovery-and-download.mjs` (107), `test-supabase-auth.mjs` (20), `test-phase-a-g-features.mjs` (13), `test-three-way-reconciliation.mjs` (33), `test-migrations-cli.mjs` (43).
+- Cloudflare Worker code updated locally (write-once hardening, `isCanonicalTempKey` fix) but **NOT deployed** — Wrangler auth session on wrong Cloudflare account. Requires re-auth or `CLOUDFLARE_API_TOKEN` for account `15cefbbb4dd98db0a0f85ad4f3134e82`.
+
 
 
 

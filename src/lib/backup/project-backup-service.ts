@@ -29,6 +29,8 @@ export const CANONICAL_TABLE_ORDER = [
   "quota_usage_events",
   "audit_logs",
   "archived_manifests",
+  "login_rate_limits",
+  "quota_pool_states",
 ] as const;
 
 export interface FullBackupProgressReport {

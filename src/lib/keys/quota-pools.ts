@@ -1,8 +1,12 @@
 import "server-only";
 
-import type { StorageBackend, StorageBackend as BlobBackend } from "../storage/storage-backend";
+import crypto from "node:crypto";
+import type { Prisma } from "@prisma/client";
+import type { StorageBackend as BlobBackend } from "../storage/storage-backend";
 import { stableStringify } from "../storage/storage-backend";
-import { getNewStorageBackend, getBlobBackend } from "../storage/r2-blob-backend";
+import { getBlobBackend } from "../storage/r2-blob-backend";
+import { prisma } from "@/lib/db/prisma";
+import { resolveCanonicalAdminProfile } from "@/lib/auth/canonical-admin-owner";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -194,11 +198,39 @@ async function casUpdate(
 }
 
 export async function readPools(backend: BlobBackend): Promise<QuotaPoolsDoc> {
-  const doc = await readJson<QuotaPoolsDoc>(backend, QUOTA_POOLS_PATHNAME);
-  if (!doc || typeof doc !== "object" || !doc.pools || typeof doc.pools !== "object") {
-    return { version: 1, updatedAt: new Date().toISOString(), pools: {} };
+  if (poolsBackendOverride !== null) {
+    const doc = await readJson<QuotaPoolsDoc>(backend, QUOTA_POOLS_PATHNAME);
+    if (!doc || typeof doc !== "object" || !doc.pools || typeof doc.pools !== "object") {
+      return { version: 1, updatedAt: new Date().toISOString(), pools: {} };
+    }
+    return doc;
   }
-  return doc;
+
+  try {
+    const admin = await resolveCanonicalAdminProfile();
+    if (admin) {
+      const row = await prisma.quotaPoolState.findUnique({
+        where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+        select: { pools_json: true, updated_at: true },
+      });
+      if (row?.pools_json && typeof row.pools_json === "object" && !Array.isArray(row.pools_json)) {
+        return {
+          version: 1,
+          updatedAt: row.updated_at.toISOString(),
+          pools: row.pools_json as unknown as Record<string, QuotaPoolState>,
+        };
+      }
+      // Read-only legacy fallback check (never writes back to ephemeral/legacy blob path)
+      const legacy = await readJson<QuotaPoolsDoc>(backend, QUOTA_POOLS_PATHNAME).catch(() => null);
+      if (legacy && typeof legacy === "object" && legacy.pools && Object.keys(legacy.pools).length > 0) {
+        return legacy;
+      }
+    }
+  } catch {
+    // Graceful empty fallback if DB unavailable
+  }
+
+  return { version: 1, updatedAt: new Date().toISOString(), pools: {} };
 }
 
 export function isPoolBucketExhausted(
@@ -221,21 +253,49 @@ export async function markPoolBucketExhausted(
   evidence: string,
 ): Promise<void> {
   const until = Date.parse(nextPacificMidnightIso());
-  await casUpdate(backend, QUOTA_POOLS_PATHNAME, (current) => {
-    let doc: QuotaPoolsDoc;
-    try {
-      doc = current ? (JSON.parse(current) as QuotaPoolsDoc) : { version: 1, updatedAt: "", pools: {} };
-    } catch {
-      doc = { version: 1, updatedAt: "", pools: {} };
-    }
-    if (!doc.pools || typeof doc.pools !== "object") doc.pools = {};
-    const pool = doc.pools[poolKey] ?? emptyPoolState();
+
+  if (poolsBackendOverride !== null) {
+    await casUpdate(backend, QUOTA_POOLS_PATHNAME, (current) => {
+      let doc: QuotaPoolsDoc;
+      try {
+        doc = current ? (JSON.parse(current) as QuotaPoolsDoc) : { version: 1, updatedAt: "", pools: {} };
+      } catch {
+        doc = { version: 1, updatedAt: "", pools: {} };
+      }
+      if (!doc.pools || typeof doc.pools !== "object") doc.pools = {};
+      const pool = doc.pools[poolKey] ?? emptyPoolState();
+      pool[bucket] = { exhaustedUntil: until, evidence: evidence.slice(0, 300) };
+      doc.pools[poolKey] = pool;
+      doc.version = 1;
+      doc.updatedAt = new Date().toISOString();
+      return stableStringify(doc);
+    });
+    return;
+  }
+
+  try {
+    const admin = await resolveCanonicalAdminProfile();
+    if (!admin) return;
+    const currentDoc = await readPools(backend);
+    const pools = { ...(currentDoc.pools || {}) };
+    const pool = pools[poolKey] ? { ...pools[poolKey] } : emptyPoolState();
     pool[bucket] = { exhaustedUntil: until, evidence: evidence.slice(0, 300) };
-    doc.pools[poolKey] = pool;
-    doc.version = 1;
-    doc.updatedAt = new Date().toISOString();
-    return stableStringify(doc);
-  });
+    pools[poolKey] = pool;
+
+    await prisma.quotaPoolState.upsert({
+      where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+      create: {
+        owner_id: admin.profileId,
+        pool_key: "default",
+        pools_json: pools as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        pools_json: pools as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch {
+    // Non-fatal quota telemetry failure
+  }
 }
 
 export async function clearPoolBucketExhaustion(
@@ -243,20 +303,47 @@ export async function clearPoolBucketExhaustion(
   poolKey: string,
   bucket: QuotaBucket,
 ): Promise<void> {
-  await casUpdate(backend, QUOTA_POOLS_PATHNAME, (current) => {
-    let doc: QuotaPoolsDoc;
-    try {
-      doc = current ? (JSON.parse(current) as QuotaPoolsDoc) : { version: 1, updatedAt: "", pools: {} };
-    } catch {
-      doc = { version: 1, updatedAt: "", pools: {} };
-    }
-    if (!doc.pools) doc.pools = {};
-    const pool = doc.pools[poolKey] ?? emptyPoolState();
+  if (poolsBackendOverride !== null) {
+    await casUpdate(backend, QUOTA_POOLS_PATHNAME, (current) => {
+      let doc: QuotaPoolsDoc;
+      try {
+        doc = current ? (JSON.parse(current) as QuotaPoolsDoc) : { version: 1, updatedAt: "", pools: {} };
+      } catch {
+        doc = { version: 1, updatedAt: "", pools: {} };
+      }
+      if (!doc.pools) doc.pools = {};
+      const pool = doc.pools[poolKey] ?? emptyPoolState();
+      pool[bucket] = { exhaustedUntil: null, evidence: null };
+      doc.pools[poolKey] = pool;
+      doc.updatedAt = new Date().toISOString();
+      return stableStringify(doc);
+    });
+    return;
+  }
+
+  try {
+    const admin = await resolveCanonicalAdminProfile();
+    if (!admin) return;
+    const currentDoc = await readPools(backend);
+    const pools = { ...(currentDoc.pools || {}) };
+    const pool = pools[poolKey] ? { ...pools[poolKey] } : emptyPoolState();
     pool[bucket] = { exhaustedUntil: null, evidence: null };
-    doc.pools[poolKey] = pool;
-    doc.updatedAt = new Date().toISOString();
-    return stableStringify(doc);
-  });
+    pools[poolKey] = pool;
+
+    await prisma.quotaPoolState.upsert({
+      where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+      create: {
+        owner_id: admin.profileId,
+        pool_key: "default",
+        pools_json: pools as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        pools_json: pools as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch {
+    // Non-fatal cleanup
+  }
 }
 
 export interface RequestOutcome {
@@ -277,54 +364,151 @@ export interface RequestOutcome {
  */
 export async function recordRequestOutcome(backend: BlobBackend, outcome: RequestOutcome): Promise<void> {
   const day = pacificDayKey();
-  await casUpdate(backend, usagePathnameFor(day), (current) => {
-    const blank = (): UsageDoc => ({ version: 1, date: day, byKey: {}, byProject: {}, byProjectBucket: {}, lastRequest: null });
-    let doc: UsageDoc;
-    try {
-      doc = current ? (JSON.parse(current) as UsageDoc) : blank();
-    } catch {
-      doc = blank();
-    }
-    if (!doc.byKey) doc.byKey = {};
-    if (!doc.byProject) doc.byProject = {};
-    if (!doc.byProjectBucket) doc.byProjectBucket = {};
-    const key = doc.byKey[outcome.keyId] ?? { requests: 0, units: 0, errors: 0 };
+  const blank = (): UsageDoc => ({ version: 1, date: day, byKey: {}, byProject: {}, byProjectBucket: {}, lastRequest: null });
+
+  const mutateDoc = (doc: UsageDoc): UsageDoc => {
+    const next: UsageDoc = {
+      version: 1,
+      date: day,
+      byKey: { ...(doc.byKey || {}) },
+      byProject: { ...(doc.byProject || {}) },
+      byProjectBucket: { ...(doc.byProjectBucket || {}) },
+      lastRequest: {
+        at: new Date().toISOString(),
+        keyId: outcome.keyId,
+        poolKey: outcome.poolKey,
+        projectId: outcome.projectId,
+        operation: outcome.operation,
+        bucket: outcome.bucket,
+        units: outcome.units,
+        ok: outcome.ok,
+        errorReason: outcome.errorReason,
+      },
+    };
+    const key = next.byKey[outcome.keyId] ?? { requests: 0, units: 0, errors: 0 };
     key.requests += 1;
     key.units += outcome.units;
     if (!outcome.ok) key.errors += 1;
-    doc.byKey[outcome.keyId] = key;
-    const proj = doc.byProject[outcome.poolKey] ?? { requests: 0, units: 0, errors: 0 };
+    next.byKey[outcome.keyId] = key;
+
+    const proj = next.byProject[outcome.poolKey] ?? { requests: 0, units: 0, errors: 0 };
     proj.requests += 1;
     proj.units += outcome.units;
     if (!outcome.ok) proj.errors += 1;
-    doc.byProject[outcome.poolKey] = proj;
+    next.byProject[outcome.poolKey] = proj;
+
     const bucketKey = `${outcome.poolKey}#${outcome.bucket}`;
-    const bucketed = doc.byProjectBucket[bucketKey] ?? { requests: 0, units: 0, errors: 0 };
+    const bucketed = next.byProjectBucket[bucketKey] ?? { requests: 0, units: 0, errors: 0 };
     bucketed.requests += 1;
     bucketed.units += outcome.units;
     if (!outcome.ok) bucketed.errors += 1;
-    doc.byProjectBucket[bucketKey] = bucketed;
-    doc.lastRequest = {
-      at: new Date().toISOString(),
-      keyId: outcome.keyId,
-      poolKey: outcome.poolKey,
-      projectId: outcome.projectId,
-      operation: outcome.operation,
-      bucket: outcome.bucket,
-      units: outcome.units,
-      ok: outcome.ok,
-      errorReason: outcome.errorReason,
-    };
-    doc.date = day;
-    return stableStringify(doc);
-  });
+    next.byProjectBucket[bucketKey] = bucketed;
+    return next;
+  };
+
+  if (poolsBackendOverride !== null) {
+    await casUpdate(backend, usagePathnameFor(day), (current) => {
+      let doc: UsageDoc;
+      try {
+        doc = current ? (JSON.parse(current) as UsageDoc) : blank();
+      } catch {
+        doc = blank();
+      }
+      return stableStringify(mutateDoc(doc));
+    });
+    return;
+  }
+
+  try {
+    const admin = await resolveCanonicalAdminProfile();
+    if (!admin) return;
+    const row = await prisma.quotaPoolState.findUnique({
+      where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+      select: { usage_by_day_json: true },
+    });
+    const rawMap =
+      row?.usage_by_day_json && typeof row.usage_by_day_json === "object" && !Array.isArray(row.usage_by_day_json)
+        ? (row.usage_by_day_json as unknown as Record<string, UsageDoc>)
+        : {};
+    // Keep up to the most recent 7 Pacific days
+    const recentDays = Object.keys(rawMap).sort().slice(-6);
+    const trimmed: Record<string, UsageDoc> = {};
+    for (const d of recentDays) trimmed[d] = rawMap[d];
+    trimmed[day] = mutateDoc(rawMap[day] ?? blank());
+
+    await prisma.quotaPoolState.upsert({
+      where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+      create: {
+        owner_id: admin.profileId,
+        pool_key: "default",
+        usage_by_day_json: trimmed as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        usage_by_day_json: trimmed as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const keyRow =
+      outcome.keyId !== "env"
+        ? await prisma.managedApiKey.findFirst({
+            where: { owner_id: admin.profileId, record_id: outcome.keyId },
+            select: { id: true },
+          })
+        : null;
+    const reqSha = crypto
+      .createHash("sha256")
+      .update(`${day}:${outcome.operation}:${outcome.keyId}:${Date.now()}:${Math.random()}`)
+      .digest("hex");
+
+    await prisma.quotaUsageEvent.create({
+      data: {
+        owner_id: admin.profileId,
+        managed_api_key_id: keyRow?.id ?? null,
+        google_cloud_project_id: (outcome.projectId || outcome.poolKey || "default").slice(0, 64),
+        endpoint_name: outcome.operation.slice(0, 64),
+        operation_category: outcome.bucket,
+        quota_units: outcome.units,
+        http_status: outcome.ok ? 200 : 403,
+        request_sha256: reqSha,
+      },
+    });
+  } catch {
+    // Non-fatal usage logging
+  }
 }
 
 export async function readTodayUsage(backend: BlobBackend): Promise<UsageDoc> {
   const day = pacificDayKey();
-  const doc = await readJson<UsageDoc>(backend, usagePathnameFor(day));
-  if (doc && doc.date === day) return doc;
-  return { version: 1, date: day, byKey: {}, byProject: {}, byProjectBucket: {}, lastRequest: null };
+  const emptyDoc: UsageDoc = { version: 1, date: day, byKey: {}, byProject: {}, byProjectBucket: {}, lastRequest: null };
+
+  if (poolsBackendOverride !== null) {
+    const doc = await readJson<UsageDoc>(backend, usagePathnameFor(day));
+    if (doc && doc.date === day) return doc;
+    return emptyDoc;
+  }
+
+  try {
+    const admin = await resolveCanonicalAdminProfile();
+    if (admin) {
+      const row = await prisma.quotaPoolState.findUnique({
+        where: { owner_id_pool_key: { owner_id: admin.profileId, pool_key: "default" } },
+        select: { usage_by_day_json: true },
+      });
+      const rawMap =
+        row?.usage_by_day_json && typeof row.usage_by_day_json === "object" && !Array.isArray(row.usage_by_day_json)
+          ? (row.usage_by_day_json as unknown as Record<string, UsageDoc>)
+          : {};
+      const found = rawMap[day];
+      if (found && found.date === day) return found;
+
+      const legacy = await readJson<UsageDoc>(backend, usagePathnameFor(day)).catch(() => null);
+      if (legacy && legacy.date === day) return legacy;
+    }
+  } catch {
+    // Graceful empty fallback
+  }
+
+  return emptyDoc;
 }
 
 export function defaultBackend(): BlobBackend {

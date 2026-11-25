@@ -45,8 +45,14 @@ export async function GET(request: Request) {
   };
 
   try {
-    const backend = getNewStorageBackend();
-    username = await getLoginUsername(backend);
+    // Prefer canonical authenticated Supabase/Postgres profile identity;
+    // keep legacy account-store lookup only if profile username is blank.
+    if (guard.admin.username) {
+      username = guard.admin.username;
+    } else {
+      const backend = getNewStorageBackend();
+      username = await getLoginUsername(backend);
+    }
   } catch {
     // Status endpoint degrades gracefully; routes themselves enforce strictly.
   }

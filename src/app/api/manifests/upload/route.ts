@@ -142,8 +142,10 @@ export async function POST(request: Request) {
       const oldBackend = getOldStorageBackend();
 
       const serialized = Buffer.from(JSON.stringify(envelope, null, 2), "utf8");
+      // Rule Zero write-once enforcement: historical OLD archive objects are immutable.
       await oldBackend.putBytes(storagePath, serialized, {
         contentType: "application/json",
+        allowOverwrite: false,
       });
 
       // 3. Register in PostgreSQL archived_manifests
@@ -217,7 +219,9 @@ export async function POST(request: Request) {
       const batchId = `upload_${crypto.randomUUID()}`;
       const nowIso = new Date().toISOString();
 
-      // 2. Parse items and prepare canonical part + generation manifest + version pointer
+      // 2. Parse items and merge any currently committed generation records
+      // Rule Zero append-only guarantee: uploading a manifest into an existing dataset
+      // must NEVER discard previously committed items when advancing current_generation_id.
       let parsedItems: Record<string, unknown>[] = [];
       try {
         const parsed = JSON.parse(buffer.toString("utf8"));
@@ -225,12 +229,104 @@ export async function POST(request: Request) {
           parsedItems = parsed;
         } else if (parsed && Array.isArray(parsed.items)) {
           parsedItems = parsed.items;
+        } else if (parsed && Array.isArray(parsed.records)) {
+          parsedItems = parsed.records;
         } else {
           parsedItems = [parsed];
         }
       } catch {
         parsedItems = [{ rawFilename: filename, byteLength: buffer.length }];
       }
+
+      const r2Client = getR2WorkerStorageClient();
+      const newBackend = getNewStorageBackend();
+      const hasWorkerConfigured = Boolean(
+        process.env.R2_NEW_WORKER_URL?.trim() &&
+          (process.env.R2_NEW_WORKER_AUTH_SECRET?.trim() ||
+            process.env.WORKER_AUTH_SECRET?.trim() ||
+            process.env.R2_WORKER_AUTH_SECRET?.trim()),
+      );
+
+      if (process.env.VERCEL === "1" && !hasWorkerConfigured) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Cloudflare R2 NEW Worker is not configured on production server.",
+          },
+          { status: 503 },
+        );
+      }
+
+      const mergedByIdentity = new Map<string, Record<string, unknown>>();
+      const resolveItemIdentity = (rec: Record<string, unknown>, fallbackPrefix: string, idx: number): string => {
+        const candidates = [
+          rec.recordId,
+          rec.id,
+          rec.platformItemId,
+          rec.videoId,
+          rec.channelId,
+          rec.playlistId,
+        ];
+        for (const c of candidates) {
+          if (typeof c === "string" && c.trim().length > 0) return c.trim();
+        }
+        return `${fallbackPrefix}:${idx}`;
+      };
+
+      if (dataset.current_generation_id) {
+        const currentGen = await prisma.storageGeneration.findFirst({
+          where: {
+            id: dataset.current_generation_id,
+            owner_id: ownerId,
+          },
+          include: {
+            parts: { orderBy: { part_number: "asc" } },
+          },
+        });
+
+        if (currentGen && currentGen.parts.length > 0) {
+          for (const part of currentGen.parts) {
+            let partRaw: string | null = null;
+            if (hasWorkerConfigured) {
+              const obj = await r2Client.getObject("NEW", part.storage_path, { storageOwnerUuid });
+              partRaw = new TextDecoder("utf-8").decode(obj.data);
+            } else {
+              const diskBuf = await newBackend.getBytes(part.storage_path);
+              partRaw = diskBuf ? diskBuf.toString("utf8") : null;
+            }
+            if (!partRaw) {
+              return NextResponse.json(
+                {
+                  ok: false,
+                  error: `Refusing to supersede dataset generation ${currentGen.generation_number}: missing committed part ${part.storage_path}.`,
+                },
+                { status: 502 },
+              );
+            }
+            const partJson = JSON.parse(partRaw) as { items?: unknown[]; records?: unknown[] } | unknown[];
+            const existingArr = Array.isArray(partJson)
+              ? partJson
+              : Array.isArray(partJson.items)
+              ? partJson.items
+              : Array.isArray(partJson.records)
+              ? partJson.records
+              : [];
+            existingArr.forEach((raw, idx) => {
+              if (raw && typeof raw === "object") {
+                const rec = raw as Record<string, unknown>;
+                mergedByIdentity.set(resolveItemIdentity(rec, `prev_${part.part_number}`, idx), rec);
+              }
+            });
+          }
+        }
+      }
+
+      parsedItems.forEach((rec, idx) => {
+        if (rec && typeof rec === "object") {
+          mergedByIdentity.set(resolveItemIdentity(rec, `upload_${generationNumber}`, idx), rec);
+        }
+      });
+      const finalItems = Array.from(mergedByIdentity.values());
 
       const partStoragePath = buildPartKey(storageOwnerUuid, datasetType, generationId, 1);
       const manifestPath = buildManifestKey(storageOwnerUuid, datasetType, generationId);
@@ -244,9 +340,9 @@ export async function POST(request: Request) {
         generation_id: generationId,
         generation_number: generationNumber,
         part_number: 1,
-        record_count: parsedItems.length,
+        record_count: finalItems.length,
         created_at: nowIso,
-        items: parsedItems,
+        items: finalItems,
       };
       const partBuffer = Buffer.from(JSON.stringify(partPayload, null, 2), "utf8");
       const partSha256 = crypto.createHash("sha256").update(partBuffer).digest("hex").toLowerCase();
@@ -260,7 +356,7 @@ export async function POST(request: Request) {
         generation_number: generationNumber,
         parent_generation_id: dataset.current_generation_id || null,
         total_parts: 1,
-        total_records: parsedItems.length,
+        total_records: finalItems.length,
         total_bytes: partBuffer.length,
         aggregate_sha256: partSha256,
         created_at: nowIso,
@@ -269,7 +365,7 @@ export async function POST(request: Request) {
             part_number: 1,
             storage_path: partStoragePath,
             byte_count: partBuffer.length,
-            record_count: parsedItems.length,
+            record_count: finalItems.length,
             sha256: partSha256,
           },
         ],
@@ -290,14 +386,6 @@ export async function POST(request: Request) {
       const versionSha256 = crypto.createHash("sha256").update(versionBuffer).digest("hex").toLowerCase();
 
       // 3. Upload & verify in NEW bucket BEFORE DB commit (R2-before-DB authority rule)
-      const r2Client = getR2WorkerStorageClient();
-      const newBackend = getNewStorageBackend();
-      const hasWorkerConfigured = Boolean(
-        process.env.R2_NEW_WORKER_URL?.trim() &&
-          (process.env.R2_NEW_WORKER_AUTH_SECRET?.trim() ||
-            process.env.WORKER_AUTH_SECRET?.trim() ||
-            process.env.R2_WORKER_AUTH_SECRET?.trim()),
-      );
 
       let verifiedInR2 = false;
       if (hasWorkerConfigured) {
@@ -325,6 +413,8 @@ export async function POST(request: Request) {
         }
         verifiedInR2 = true;
       } else {
+        // Rule Zero: generation parts and generation manifest are strictly write-once;
+        // only dataset-root version.json acts as mutable head pointer.
         await newBackend.putBytes(partStoragePath, partBuffer, { contentType: "application/json", allowOverwrite: false });
         await newBackend.putBytes(manifestPath, genManifestBuffer, { contentType: "application/json", allowOverwrite: false });
         await newBackend.putBytes(versionPath, versionBuffer, { contentType: "application/json", allowOverwrite: true });
@@ -341,7 +431,7 @@ export async function POST(request: Request) {
             parent_generation_id: dataset.current_generation_id || null,
             state: "COMMITTED",
             total_parts: 1,
-            total_records: parsedItems.length,
+            total_records: finalItems.length,
             total_bytes: BigInt(partBuffer.length),
             aggregate_sha256: partSha256,
             committed_at: new Date(),
@@ -357,7 +447,7 @@ export async function POST(request: Request) {
             storage_path: partStoragePath,
             bucket_id: NEW_R2_BUCKET,
             byte_count: BigInt(partBuffer.length),
-            record_count: parsedItems.length,
+            record_count: finalItems.length,
             sha256: partSha256,
           },
         });
@@ -382,7 +472,7 @@ export async function POST(request: Request) {
         storagePath: partStoragePath,
         manifestPath,
         byteCount: partBuffer.length,
-        recordCount: parsedItems.length,
+        recordCount: finalItems.length,
         sha256: partSha256,
         verified: verifiedInR2,
       });
@@ -394,6 +484,14 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to upload manifest.";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    const status =
+      err instanceof Error &&
+      (err.name === "StorageConflictError" ||
+        message.includes("conflict") ||
+        message.includes("already exists") ||
+        message.includes("IMMUTABLE"))
+        ? 409
+        : 500;
+    return NextResponse.json({ ok: false, error: message }, { status });
   }
 }

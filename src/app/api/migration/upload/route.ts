@@ -78,6 +78,12 @@ export async function POST(request: Request) {
         );
       }
 
+      const workerConfigured = Boolean(
+        process.env.R2_NEW_WORKER_URL?.trim() &&
+          (process.env.R2_NEW_WORKER_AUTH_SECRET?.trim() ||
+            process.env.R2_WORKER_AUTH_SECRET?.trim())
+      );
+
       // 1. Upload each part
       for (const part of gen.parts) {
         if (!part.storagePath.startsWith(ownerPrefix)) {
@@ -93,30 +99,37 @@ export async function POST(request: Request) {
           await r2Client.putObject("NEW", part.storagePath, partBuffer, {
             contentType: "application/json",
             storageOwnerUuid,
-            allowOverwrite: true,
+            allowOverwrite: false,
           });
-        } catch {
+        } catch (workerErr) {
+          // If R2 Worker is configured, fail closed instead of masking onto ephemeral disk.
+          if (workerConfigured) {
+            throw workerErr;
+          }
           await storageBackend.putBytes(part.storagePath, partBuffer, {
             contentType: "application/json",
-            allowOverwrite: true,
+            allowOverwrite: false,
           });
         }
         verifyItems.push({ key: part.storagePath, sha256: partSha, byteCount: partBuffer.byteLength });
       }
 
-      // 2. Upload generation manifest.json
+      // 2. Upload generation manifest.json (strictly write-once; fail closed if Worker configured)
       const manifestBuffer = Buffer.from(gen.manifestJson, "utf-8");
       const manifestSha = crypto.createHash("sha256").update(manifestBuffer).digest("hex").toLowerCase();
       try {
         await r2Client.putObject("NEW", gen.manifestPath, manifestBuffer, {
           contentType: "application/json",
           storageOwnerUuid,
-          allowOverwrite: true,
+          allowOverwrite: false,
         });
-      } catch {
+      } catch (workerErr) {
+        if (workerConfigured) {
+          throw workerErr;
+        }
         await storageBackend.putBytes(gen.manifestPath, manifestBuffer, {
           contentType: "application/json",
-          allowOverwrite: true,
+          allowOverwrite: false,
         });
       }
       verifyItems.push({ key: gen.manifestPath, sha256: manifestSha, byteCount: manifestBuffer.byteLength });
@@ -142,7 +155,10 @@ export async function POST(request: Request) {
             storageOwnerUuid,
             allowOverwrite: true,
           });
-        } catch {
+        } catch (workerErr) {
+          if (workerConfigured) {
+            throw workerErr;
+          }
           await storageBackend.putBytes(gen.versionPointerPath, versionBuffer, {
             contentType: "application/json",
             allowOverwrite: true,
@@ -151,9 +167,9 @@ export async function POST(request: Request) {
         verifyItems.push({ key: gen.versionPointerPath, sha256: versionSha, byteCount: versionBuffer.byteLength });
       }
 
-      // 3B. Verify uploaded objects via Worker SHA-256 read-back when configured
+      // 3B. Verify uploaded objects via Worker SHA-256 read-back (fail closed when Worker configured)
       let verifiedInR2 = false;
-      try {
+      if (workerConfigured) {
         const verification = await r2Client.verifyBatch(`mig_${crypto.randomUUID()}`, verifyItems, {
           targetPrefix: ownerPrefix,
           storageOwnerUuid,
@@ -169,8 +185,16 @@ export async function POST(request: Request) {
           );
         }
         verifiedInR2 = true;
-      } catch {
-        // Local disk fallback mode skips Worker verifyBatch
+      } else {
+        try {
+          const verification = await r2Client.verifyBatch(`mig_${crypto.randomUUID()}`, verifyItems, {
+            targetPrefix: ownerPrefix,
+            storageOwnerUuid,
+          });
+          verifiedInR2 = verification.ok;
+        } catch {
+          // Local disk fallback mode skips Worker verifyBatch when Worker is unconfigured
+        }
       }
 
       // 4. Register historical generation in PostgreSQL using valid UUID primary keys

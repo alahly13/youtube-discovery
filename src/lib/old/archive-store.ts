@@ -122,8 +122,10 @@ export async function importArchivedManifest(
   const backend = getOldStorageBackend();
   const serialized = Buffer.from(JSON.stringify(envelope, null, 2), "utf8");
 
+  // Rule Zero write-once enforcement: never overwrite an existing OLD archive object.
   await backend.putBytes(storagePath, serialized, {
     contentType: "application/json",
+    allowOverwrite: false,
   });
 
   // 3. Persist record in database registry

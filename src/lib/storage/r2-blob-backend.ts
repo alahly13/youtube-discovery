@@ -185,7 +185,16 @@ export class R2StorageBackend implements BlobBackend {
     const storageOwnerUuid = this.resolveOwnerFromPath(clean);
     // Rule Zero defense-in-depth: immutable generation, part, pre-upgrade archive,
     // and OLD bucket historical keys can NEVER be overwritten silently.
+    // Exception: `before-app-updating/` root version pointers are mutable read
+    // indexes rewritten by every legacy-migration run (both canonical
+    // `<dataset>/before-app-updating/version.json` and legacy
+    // `before-app-updating/<dataset>/version.json` layouts). Generation/manifest
+    // objects inside that branch stay immutable via the guards below.
+    const isHistoricalRootPointer =
+      /\/before-app-updating\/version\.json$/.test(clean) ||
+      /\/before-app-updating\/[^/]+\/version\.json$/.test(clean);
     const isImmutableTarget =
+      !isHistoricalRootPointer &&
       !clean.includes("/temp/") &&
       (bucketKind === "OLD" ||
         clean.includes("/generations/") ||

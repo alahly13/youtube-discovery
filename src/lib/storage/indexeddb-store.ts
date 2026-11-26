@@ -1576,6 +1576,9 @@ export async function removeLocalSavedReference(
     };
 
     tx.oncomplete = () => {
+      void import("./opfs-store")
+        .then(({ removeOpfsRecord }) => removeOpfsRecord(cleanOwner, "references", cleanId))
+        .catch(() => {});
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
@@ -1610,6 +1613,12 @@ export async function removeLocalSavedReferencesBatch(
     }
 
     tx.oncomplete = () => {
+      const cleanedIds = ids.map((id) => String(id || "").trim()).filter(Boolean);
+      void import("./opfs-store")
+        .then(({ removeOpfsRecordsBatch }) =>
+          removeOpfsRecordsBatch(cleanOwner, "references", cleanedIds)
+        )
+        .catch(() => {});
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
@@ -1641,16 +1650,32 @@ export async function removeLocalSavedSearch(
 
   const db = await openLocalDatabase();
   return new Promise((resolve, reject) => {
-    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_SEARCHES]);
-    const store = tx.objectStore(IDB_STORES.SAVED_SEARCHES);
+    // SAVED_SEARCH records are stored under `entities_saved_references` (REFERENCES dataset)
+    // as well as legacy `entities_saved_searches`; clean both local stores cleanly without cloud tombstones.
+    const tx = createReadWriteTransaction(db, [
+      IDB_STORES.SAVED_SEARCHES,
+      IDB_STORES.SAVED_REFERENCES,
+    ]);
+    const searchesStore = tx.objectStore(IDB_STORES.SAVED_SEARCHES);
+    const refsStore = tx.objectStore(IDB_STORES.SAVED_REFERENCES);
 
     let deleted = false;
-    const req = store.delete(cleanId);
-    req.onsuccess = () => {
+    const req1 = searchesStore.delete(cleanId);
+    req1.onsuccess = () => {
+      deleted = true;
+    };
+    const req2 = refsStore.delete(cleanId);
+    req2.onsuccess = () => {
       deleted = true;
     };
 
     tx.oncomplete = () => {
+      void import("./opfs-store")
+        .then(async ({ removeOpfsRecord }) => {
+          await removeOpfsRecord(cleanOwner, "saved-searches", cleanId);
+          await removeOpfsRecord(cleanOwner, "references", cleanId);
+        })
+        .catch(() => {});
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
@@ -1673,18 +1698,30 @@ export async function removeLocalSavedSearchesBatch(
 
   const db = await openLocalDatabase();
   return new Promise((resolve, reject) => {
-    const tx = createReadWriteTransaction(db, [IDB_STORES.SAVED_SEARCHES]);
-    const store = tx.objectStore(IDB_STORES.SAVED_SEARCHES);
+    const tx = createReadWriteTransaction(db, [
+      IDB_STORES.SAVED_SEARCHES,
+      IDB_STORES.SAVED_REFERENCES,
+    ]);
+    const searchesStore = tx.objectStore(IDB_STORES.SAVED_SEARCHES);
+    const refsStore = tx.objectStore(IDB_STORES.SAVED_REFERENCES);
     let count = 0;
 
     for (const rawId of ids) {
       const cleanId = String(rawId || "").trim();
       if (!cleanId) continue;
-      store.delete(cleanId);
+      searchesStore.delete(cleanId);
+      refsStore.delete(cleanId);
       count++;
     }
 
     tx.oncomplete = () => {
+      const cleanedIds = ids.map((id) => String(id || "").trim()).filter(Boolean);
+      void import("./opfs-store")
+        .then(async ({ removeOpfsRecordsBatch }) => {
+          await removeOpfsRecordsBatch(cleanOwner, "saved-searches", cleanedIds);
+          await removeOpfsRecordsBatch(cleanOwner, "references", cleanedIds);
+        })
+        .catch(() => {});
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
@@ -1730,6 +1767,11 @@ export async function removeLocalSearchHistoryItem(
     };
 
     tx.oncomplete = () => {
+      void import("./opfs-store")
+        .then(async ({ removeOpfsRecord }) => {
+          await removeOpfsRecord(cleanOwner, "saved-search-history", cleanId);
+        })
+        .catch(() => {});
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {
@@ -1764,6 +1806,12 @@ export async function removeLocalSearchHistoryBatch(
     }
 
     tx.oncomplete = () => {
+      const cleanedIds = ids.map((id) => String(id || "").trim()).filter(Boolean);
+      void import("./opfs-store")
+        .then(async ({ removeOpfsRecordsBatch }) => {
+          await removeOpfsRecordsBatch(cleanOwner, "saved-search-history", cleanedIds);
+        })
+        .catch(() => {});
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent("yt-discovery-local-mutation", {

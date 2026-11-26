@@ -297,30 +297,44 @@ function isCanonicalTempKey(key: string, owner: string): boolean {
 }
 
 /**
- * Canonical mutable-pointer classifier for new-youtube-discovery-api.
- * Controls which object keys may be overwritten on update (dataset-root
- * `version.json` / `manifest.json` pointers ONLY).
- * Rule Zero guard: NEVER treat `/generations/`, `/parts/`, `/legacy/`,
- * `/before-app-updating/`, or `asdy/old/` manifests as mutable.
+ * Canonical mutability classifier for new-youtube-discovery-api.
+ * Controls which object keys may be overwritten on update.
+ *
+ * Rule Zero guards (immutable, write-once with SHA-idempotent race recovery):
+ *   - `/generations/<id>/manifest.json` + `/generations/<id>/parts/*` — committed
+ *     dataset generation data (including inside `before-app-updating/` branches).
+ *   - `/legacy/` archive objects.
+ *
+ * Mutable (may advance on every commit/run):
+ *   - Dataset-root `version.json` / `manifest.json` read pointers, both canonical
+ *     (`asdy/persistence/<owner>/<dataset>/...`) and legacy (`<owner>/persistence/...`).
+ *   - Historical `before-app-updating/` root version pointers — REWRITTEN by every
+ *     legacy-migration run (`/api/migration/upload`) to point at the newest
+ *     historical generation. Both layouts are accepted:
+ *       `asdy/persistence/<owner>/<dataset>/before-app-updating/version.json`
+ *       `asdy/persistence/<owner>/before-app-updating/<dataset>/version.json`
+ *     Generation/manifest objects inside that branch remain immutable via the
+ *     `/generations/` and `/parts/` guards above (a `before-app-updating/<x>/manifest.json`
+ *     is historical data, NOT a pointer, and stays write-once).
+ *   - Any other non-generation key keeps the previously deployed worker's
+ *     overwrite semantics (legacy compatibility state, CAS-guarded client-side).
  */
 function isMutableIndexKey(key: string): boolean {
   const clean = key.replace(/^\/+/, "");
   if (
     clean.includes("/generations/") ||
     clean.includes("/parts/") ||
-    clean.includes("/before-app-updating/") ||
-    clean.includes("/legacy/") ||
-    clean.startsWith("asdy/old/")
+    clean.includes("/legacy/")
   ) {
     return false;
   }
-  if (!clean.endsWith("/version.json") && !clean.endsWith("/manifest.json")) {
-    return false;
+  if (clean.includes("/before-app-updating/")) {
+    return (
+      /\/before-app-updating\/version\.json$/.test(clean) ||
+      /\/before-app-updating\/[^/]+\/version\.json$/.test(clean)
+    );
   }
-  return (
-    /^asdy\/persistence\/[^/]+\/[^/]+\/(?:version|manifest)\.json$/.test(clean) ||
-    /^[^/]+\/persistence\/(?:datasets\/[^/]+\/|[^/]+\/)(?:version|manifest)\.json$/.test(clean)
-  );
+  return clean.endsWith("/version.json") || clean.endsWith("/manifest.json");
 }
 
 const worker = {

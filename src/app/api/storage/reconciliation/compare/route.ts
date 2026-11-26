@@ -134,12 +134,171 @@ export interface CloudOnlyRecord {
   url?: string;
   query?: string;
   notes?: string;
+  settings?: Record<string, unknown>;
+  resourceSelection?: unknown;
+  filters?: Record<string, unknown>;
+  tags?: string[];
+  isPinned?: boolean;
+  resultsCount?: number;
+  videoCount?: number;
+  channelCount?: number;
+  playlistCount?: number;
+  quotaCostEstimate?: number;
+  topThumbnails?: string[];
+  manifestId?: string;
+  status?: string;
+  timestamp?: string;
   savedAt?: string;
   createdAt?: string;
+  updatedAt?: string;
   storageState: "CLOUD_ONLY";
   isHistorical?: boolean;
   generationId: string;
   partKey: string;
+  r2ManifestKey?: string;
+}
+
+/**
+ * Resolves a raw R2 manifest record's canonical discriminator so `REFERENCES`
+ * sub-views (`SAVED_TITLE`/`SAVED_LINK` vs `SAVED_SEARCH`) never leak into one another
+ * during 3-way reconciliation or cloud-only listing.
+ */
+function resolveCloudItemResourceType(
+  rawItem: Record<string, unknown>,
+  datasetType: CanonicalDatasetType
+): string {
+  const explicit = String(rawItem.resourceType || rawItem.savedKind || "").trim().toUpperCase();
+  if (explicit) return explicit;
+  if (datasetType === "SEARCH_HISTORY") return "SEARCH_HISTORY";
+  if (typeof rawItem.query === "string" || typeof rawItem.query_text === "string" || rawItem.settings) {
+    return "SAVED_SEARCH";
+  }
+  if (typeof rawItem.url === "string" && rawItem.url.trim().length > 0) {
+    return "SAVED_LINK";
+  }
+  if (datasetType === "REFERENCES") return "SAVED_TITLE";
+  return "VIDEO";
+}
+
+/**
+ * Enforces sub-dataset isolation inside multi-type datasets (`REFERENCES` hosts both
+ * `SAVED_TITLE`/`SAVED_LINK` and `SAVED_SEARCH`, which live on separate UI sections).
+ */
+function matchesResourceTypeFilter(
+  itemResourceType: string,
+  datasetType: CanonicalDatasetType,
+  filter?: string
+): boolean {
+  const normalizedFilter = String(filter || "").trim().toUpperCase();
+  if (!normalizedFilter || normalizedFilter === "ALL") return true;
+
+  if (datasetType === "REFERENCES") {
+    if (normalizedFilter === "SAVED_SEARCH" || normalizedFilter === "SAVED_SEARCHES") {
+      return itemResourceType === "SAVED_SEARCH";
+    }
+    if (
+      normalizedFilter === "SAVED_REFERENCES" ||
+      normalizedFilter === "SAVED_TITLES_LINKS" ||
+      normalizedFilter === "TITLES_LINKS"
+    ) {
+      return itemResourceType === "SAVED_TITLE" || itemResourceType === "SAVED_LINK";
+    }
+  }
+
+  return itemResourceType === normalizedFilter;
+}
+
+/**
+ * Projects a raw R2 record into a lossless `CloudOnlyRecord` so `CLOUD_ONLY` UI cards
+ * preserve thumbnails, counts, search settings, tags, pins, and generation metadata.
+ */
+function buildCloudOnlyRecordFromRaw(params: {
+  rawItem: Record<string, unknown>;
+  canonicalId: string;
+  resourceType: string;
+  generationId: string;
+  partKey: string;
+  isHistorical: boolean;
+  manifestKey?: string;
+}): CloudOnlyRecord {
+  const { rawItem, canonicalId, resourceType, generationId, partKey, isHistorical, manifestKey } = params;
+  const fallbackPrefix = isHistorical ? "hist_cloud" : "cloud";
+  const topThumbnails = Array.isArray(rawItem.topThumbnails)
+    ? rawItem.topThumbnails.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : undefined;
+  const tags = Array.isArray(rawItem.tags)
+    ? rawItem.tags.filter((item): item is string => typeof item === "string")
+    : undefined;
+
+  return {
+    id: canonicalId || `${fallbackPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    recordId: canonicalId || undefined,
+    resourceType,
+    title: String(
+      rawItem.title ||
+        rawItem.query ||
+        rawItem.query_text ||
+        (isHistorical ? "Historical Archive Item" : "Untitled Cloud Item")
+    ),
+    url: typeof rawItem.url === "string" ? rawItem.url : undefined,
+    query:
+      typeof rawItem.query === "string"
+        ? rawItem.query
+        : typeof rawItem.query_text === "string"
+          ? rawItem.query_text
+          : undefined,
+    notes: typeof rawItem.notes === "string" ? rawItem.notes : undefined,
+    settings:
+      rawItem.settings && typeof rawItem.settings === "object"
+        ? (rawItem.settings as Record<string, unknown>)
+        : undefined,
+    resourceSelection: rawItem.resourceSelection,
+    filters:
+      rawItem.filters && typeof rawItem.filters === "object"
+        ? (rawItem.filters as Record<string, unknown>)
+        : undefined,
+    tags,
+    isPinned: rawItem.isPinned === true ? true : undefined,
+    resultsCount:
+      typeof rawItem.resultsCount === "number"
+        ? rawItem.resultsCount
+        : typeof rawItem.resultCount === "number"
+          ? rawItem.resultCount
+          : typeof rawItem.itemCount === "number"
+            ? rawItem.itemCount
+            : undefined,
+    videoCount: typeof rawItem.videoCount === "number" ? rawItem.videoCount : undefined,
+    channelCount: typeof rawItem.channelCount === "number" ? rawItem.channelCount : undefined,
+    playlistCount: typeof rawItem.playlistCount === "number" ? rawItem.playlistCount : undefined,
+    quotaCostEstimate:
+      typeof rawItem.quotaCostEstimate === "number"
+        ? rawItem.quotaCostEstimate
+        : typeof rawItem.quotaUnits === "number"
+          ? rawItem.quotaUnits
+          : undefined,
+    topThumbnails,
+    manifestId: typeof rawItem.manifestId === "string" ? rawItem.manifestId : undefined,
+    status: typeof rawItem.status === "string" ? rawItem.status : undefined,
+    timestamp:
+      typeof rawItem.timestamp === "string"
+        ? rawItem.timestamp
+        : typeof rawItem.executedAt === "string"
+          ? rawItem.executedAt
+          : undefined,
+    savedAt: typeof rawItem.savedAt === "string" ? rawItem.savedAt : undefined,
+    createdAt:
+      typeof rawItem.createdAt === "string"
+        ? rawItem.createdAt
+        : typeof rawItem.savedAt === "string"
+          ? rawItem.savedAt
+          : undefined,
+    updatedAt: typeof rawItem.updatedAt === "string" ? rawItem.updatedAt : undefined,
+    storageState: "CLOUD_ONLY",
+    isHistorical,
+    generationId,
+    partKey,
+    r2ManifestKey: manifestKey,
+  };
 }
 
 interface LocalRecordInput {
@@ -461,6 +620,11 @@ export async function POST(request: Request) {
         let hasPendingMutationsInPart = false;
 
         for (const rawItem of partItems) {
+          const itemResourceType = resolveCloudItemResourceType(rawItem, datasetType);
+          if (!matchesResourceTypeFilter(itemResourceType, datasetType, resourceTypeFilter)) {
+            continue;
+          }
+
           const canonicalId = String(
             rawItem.platformItemId || rawItem.id || rawItem.recordId || ""
           ).trim();
@@ -471,6 +635,11 @@ export async function POST(request: Request) {
           if (canonicalId) allVerifiedPartItemIdentities.add(canonicalId);
           if (cleanPlatformId) allVerifiedPartItemIdentities.add(cleanPlatformId);
 
+          // For SEARCH_HISTORY, repeated runs share query text with distinct timestamps/IDs,
+          // so only match strictly by canonical ID — never collapse distinct searches by query.
+          const allowQueryFallback =
+            datasetType === "REFERENCES" && itemResourceType === "SAVED_SEARCH";
+
           let matchedLocal: LocalRecordInput | undefined;
           if (localRecordsById.has(canonicalId)) {
             matchedLocal = localRecordsById.get(canonicalId);
@@ -478,7 +647,7 @@ export async function POST(request: Request) {
             matchedLocal = localRecordsById.get(cleanPlatformId);
           } else if (normUrl && localRecordsByUrl.has(normUrl)) {
             matchedLocal = localRecordsByUrl.get(normUrl);
-          } else if (rawQ && localRecordsByQuery.has(rawQ)) {
+          } else if (allowQueryFallback && rawQ && localRecordsByQuery.has(rawQ)) {
             matchedLocal = localRecordsByQuery.get(rawQ);
           }
 
@@ -490,21 +659,16 @@ export async function POST(request: Request) {
             }
           } else {
             // Item exists in R2 Part but is missing from local collection -> CLOUD_ONLY
-            cloudOnlyRecords.push({
-              id: canonicalId || `cloud_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-              recordId: canonicalId,
-              resourceType: String(rawItem.resourceType || rawItem.savedKind || (rawItem.url ? "SAVED_LINK" : "SAVED_TITLE")),
-              title: String(rawItem.title || rawItem.query || "Untitled Cloud Item"),
-              url: rawItem.url as string | undefined,
-              query: (rawItem.query || rawItem.query_text) as string | undefined,
-              notes: rawItem.notes as string | undefined,
-              savedAt: rawItem.savedAt as string | undefined,
-              createdAt: rawItem.createdAt as string | undefined,
-              storageState: "CLOUD_ONLY",
-              isHistorical: false,
-              generationId: dbGen.id,
-              partKey,
-            });
+            cloudOnlyRecords.push(
+              buildCloudOnlyRecordFromRaw({
+                rawItem,
+                canonicalId,
+                resourceType: itemResourceType,
+                generationId: dbGen.id,
+                partKey,
+                isHistorical: false,
+              })
+            );
           }
         }
 
@@ -683,22 +847,24 @@ export async function POST(request: Request) {
               partResults.push(hPartResult);
               hParts.push(hPartResult);
 
-              // Add historical items to cloud-only collection if not present locally
+              // Add historical items to cloud-only collection if matching requested filter and not present locally
               for (const hItem of pItems) {
+                const hItemResourceType = resolveCloudItemResourceType(hItem, datasetType);
+                if (!matchesResourceTypeFilter(hItemResourceType, datasetType, resourceTypeFilter)) {
+                  continue;
+                }
                 const hId = String(hItem.platformItemId || hItem.id || hItem.recordId || "").trim();
                 if (hId && !localRecordsById.has(hId)) {
-                  cloudOnlyRecords.push({
-                    id: hId,
-                    recordId: hId,
-                    resourceType: String(hItem.resourceType || "VIDEO"),
-                    title: String(hItem.title || "Historical Archive Item"),
-                    url: hItem.url as string | undefined,
-                    createdAt: hItem.savedAt as string | undefined,
-                    storageState: "CLOUD_ONLY",
-                    isHistorical: true,
-                    generationId: hGenId,
-                    partKey: pKey,
-                  });
+                  cloudOnlyRecords.push(
+                    buildCloudOnlyRecordFromRaw({
+                      rawItem: hItem,
+                      canonicalId: hId,
+                      resourceType: hItemResourceType,
+                      generationId: hGenId,
+                      partKey: pKey,
+                      isHistorical: true,
+                    })
+                  );
                 }
               }
             }

@@ -52,6 +52,12 @@ import {
 } from "@/lib/search/local-search";
 import { formatDate, formatFullDateTime, formatRelativeDate } from "@/lib/utils/format";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
+import {
+  uploadDatasetToCloudWithVerifiedCleanup,
+  type CloudUploadFeedbackState,
+} from "@/lib/sync/verified-cloud-upload";
+import { CloudUploadFeedbackBanner } from "@/components/storage/cloud-upload-banner";
 import {
   removeLocalSearchHistoryItem,
   removeLocalSearchHistoryBatch,
@@ -143,9 +149,19 @@ export function HistoryWorkspace() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
-  /* ── Server Search Storage Archive Index ────────────────────────────── */
-  const [archiveItems, setArchiveItems] = useState<ArchiveIndexItem[]>([]);
-  const [, setLoadingArchive] = useState(false);
+  /* ── Authoritative Cloud History Archive (`GET /api/history`) ───────── */
+  const [cloudHistoryItems, setCloudHistoryItems] = useState<SearchHistoryItem[]>([]);
+  const [loadingCloudHistory, setLoadingCloudHistory] = useState(false);
+
+  /* ── Upload + Verified Auto-Cleanup Feedback Banner ──────────────────── */
+  const [uploadFeedback, setUploadFeedback] = useState<CloudUploadFeedbackState | null>(null);
+
+  /* ── Reactive Merged Dataset (`SEARCH_HISTORY`) ──────────────────────── */
+  const {
+    items: mergedHistoryItems,
+    pendingCount,
+    refresh: refreshLocalDataset,
+  } = useMergedDataset<SearchHistoryItem>("SEARCH_HISTORY", cloudHistoryItems);
 
   /* ── 3-Way Reconciliation & Cleanup State ────────────────────────────── */
   const [isComparing, setIsComparing] = useState(false);
@@ -153,7 +169,7 @@ export function HistoryWorkspace() {
   const [reconciliationMap, setReconciliationMap] = useState<
     Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
   >(new Map());
-  const [cloudOnlySearches, setCloudOnlySearches] = useState<SearchHistoryItem[]>([]);
+  const [reconciledCloudOnlySearches, setReconciledCloudOnlySearches] = useState<SearchHistoryItem[]>([]);
   const [generationSummaries, setGenerationSummaries] = useState<GenerationReconciliationSummary[]>([]);
   const [partResults, setPartResults] = useState<PartReconciliationResult[]>([]);
   const [artifactStats, setArtifactStats] = useState<ArtifactReconciliationStats | undefined>(undefined);
@@ -194,37 +210,28 @@ export function HistoryWorkspace() {
     }
   }
 
-  async function fetchSearchArchive() {
-    setLoadingArchive(true);
+  /**
+   * Loads the authoritative cloud-committed search history from Cloudflare R2 +
+   * Supabase PostgreSQL (`/api/history`). Items absent from local browser storage
+   * render under Section 3 with the `R2 Cloud` (`CLOUD_ONLY`) badge.
+   */
+  const fetchCloudHistory = useCallback(async () => {
+    setLoadingCloudHistory(true);
     try {
-      const res = await authFetch("/api/search-storage");
+      const res = await authFetch("/api/history");
       if (res.ok) {
-        const data = await res.json();
-        startTransition(() => {
-          setArchiveItems(data.items ?? []);
-        });
+        const data = (await res.json()) as { items?: SearchHistoryItem[] };
+        if (Array.isArray(data.items)) {
+          startTransition(() => {
+            setCloudHistoryItems(data.items || []);
+          });
+          return;
+        }
       }
-    } catch {
-      // Ignore network errors
-    } finally {
-      startTransition(() => setLoadingArchive(false));
-    }
-  }
-
-  useEffect(() => {
-    fetchServerManifests();
-    fetchSearchArchive();
-  }, []);
-
-  /* ── Unified Search Items (Zustand + Server Archive) ───────────────── */
-  const unifiedSearches = useMemo(() => {
-    const map = new Map<string, SearchHistoryItem>();
-    for (const item of searchHistory) {
-      map.set(item.id, item);
-    }
-    for (const arch of archiveItems) {
-      if (!map.has(arch.id)) {
-        map.set(arch.id, {
+      const legacyRes = await authFetch("/api/search-storage");
+      if (legacyRes.ok) {
+        const legacyData = (await legacyRes.json()) as { items?: ArchiveIndexItem[] };
+        const fallbackMapped: SearchHistoryItem[] = (legacyData.items ?? []).map((arch) => ({
           id: arch.id,
           title: arch.title,
           query: arch.query,
@@ -239,27 +246,87 @@ export function HistoryWorkspace() {
           status: arch.status,
           manifestId: arch.id,
           topThumbnails: arch.topThumbnails,
+        }));
+        startTransition(() => {
+          setCloudHistoryItems(fallbackMapped);
         });
+      }
+    } catch {
+      // Ignore transient offline/unauthenticated network errors cleanly
+    } finally {
+      startTransition(() => setLoadingCloudHistory(false));
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchServerManifests();
+    void fetchCloudHistory();
+  }, [fetchCloudHistory]);
+
+  /* ── Local Browser Search History Only (IndexedDB + Zustand Local) ───── */
+  const localBrowserSearches = useMemo(() => {
+    const map = new Map<string, SearchHistoryItem>();
+
+    for (const item of mergedHistoryItems) {
+      const tagged = item as SearchHistoryItem & {
+        _sourceLocation?: string;
+        _localStatus?: string;
+      };
+      if (
+        tagged._sourceLocation === "LOCAL" ||
+        tagged._sourceLocation === "BOTH" ||
+        tagged._localStatus === "LOCAL_PENDING"
+      ) {
+        map.set(item.id, item);
+      }
+    }
+
+    for (const item of searchHistory) {
+      if (!map.has(item.id)) {
+        map.set(item.id, item);
+      }
+    }
+
+    return Array.from(map.values());
+  }, [mergedHistoryItems, searchHistory]);
+
+  /* ── Combined Search Pool (Local Browser + R2 Cloud Archive) ──────────── */
+  const unifiedSearches = useMemo(() => {
+    const map = new Map<string, SearchHistoryItem>();
+    for (const item of localBrowserSearches) {
+      map.set(item.id, item);
+    }
+    for (const cloudItem of reconciledCloudOnlySearches) {
+      if (!map.has(cloudItem.id)) {
+        map.set(cloudItem.id, cloudItem);
+      }
+    }
+    for (const cloudItem of cloudHistoryItems) {
+      if (!map.has(cloudItem.id)) {
+        map.set(cloudItem.id, cloudItem);
       }
     }
     return Array.from(map.values());
-  }, [searchHistory, archiveItems]);
+  }, [localBrowserSearches, reconciledCloudOnlySearches, cloudHistoryItems]);
 
   // Run authentic 3-way reconciliation comparison against R2 and Supabase (Generation & Part Level)
   const runReconciliation = useCallback(async () => {
     setIsComparing(true);
     try {
-      const pendingIds = searchHistory
+      const pendingIds = localBrowserSearches
         .filter((s) => {
           const itemWithSync = s as SearchHistoryItem & {
             _localStatus?: string;
             _syncStatus?: string;
           };
-          return itemWithSync._localStatus === "LOCAL_PENDING" || itemWithSync._syncStatus === "LOCAL";
+          return (
+            itemWithSync._localStatus === "LOCAL_PENDING" ||
+            itemWithSync._syncStatus === "LOCAL"
+          );
         })
         .map((s) => s.id);
 
-      const localRecordsPayload = unifiedSearches.map((item) => {
+      const localRecordsPayload = localBrowserSearches.map((item) => {
         const itemWithSync = item as SearchHistoryItem & {
           _localStatus?: string;
           _syncStatus?: string;
@@ -320,29 +387,48 @@ export function HistoryWorkspace() {
           setArtifactStats(data.summary);
         }
 
-        // Process cloud-only searches
+        // Preserve full metadata for R2 Cloud-Only records returned by reconciler
         if (Array.isArray(data.cloudOnlyRecords)) {
           const parsedCloudOnly: SearchHistoryItem[] = (
             data.cloudOnlyRecords as Array<{
               id: string;
               title?: string;
               query?: string;
+              resourceSelection?: SearchHistoryItem["resourceSelection"];
               settings?: SearchHistoryItem["settings"];
+              resultsCount?: number;
+              videoCount?: number;
+              channelCount?: number;
+              playlistCount?: number;
+              quotaCostEstimate?: number;
+              topThumbnails?: string[];
+              manifestId?: string;
+              status?: SearchHistoryItem["status"];
+              timestamp?: string;
               createdAt?: string;
+              generationId?: string;
               cloudMeta?: { generationId?: string };
             }>
-          ).map((c) => ({
-            id: c.id,
-            title: c.title || c.query || c.id,
-            query: c.query || "",
-            timestamp: c.createdAt || new Date().toISOString(),
-            resourceSelection: "ALL",
-            settings: c.settings || { query: c.query || "" },
-            resultsCount: 0,
-            status: "complete",
-            manifestId: c.cloudMeta?.generationId || c.id,
-          }));
-          setCloudOnlySearches(parsedCloudOnly);
+          ).map((c) => {
+            const count = typeof c.resultsCount === "number" ? c.resultsCount : 0;
+            return {
+              id: c.id,
+              title: c.title || c.query || c.id,
+              query: c.query || c.title || "",
+              timestamp: c.timestamp || c.createdAt || new Date().toISOString(),
+              resourceSelection: c.resourceSelection || "ALL",
+              settings: c.settings || { query: c.query || "" },
+              resultsCount: count,
+              videoCount: c.videoCount,
+              channelCount: c.channelCount,
+              playlistCount: c.playlistCount,
+              quotaCostEstimate: c.quotaCostEstimate,
+              topThumbnails: c.topThumbnails,
+              status: c.status || (count === 0 ? "complete" : "complete"),
+              manifestId: c.manifestId || c.generationId || c.cloudMeta?.generationId || c.id,
+            };
+          });
+          setReconciledCloudOnlySearches(parsedCloudOnly);
         }
 
         showToast(
@@ -354,34 +440,39 @@ export function HistoryWorkspace() {
     } finally {
       setIsComparing(false);
     }
-  }, [unifiedSearches, searchHistory]);
+  }, [localBrowserSearches]);
 
   useEffect(() => {
-    if (unifiedSearches.length > 0) {
+    void runReconciliation();
+  }, [localBrowserSearches.length]);
+
+  // Listen for verified cloud uploads & automatic local cleanup (via SaveCenter or page CTA)
+  // so newly committed items immediately transition into Section 3 (`R2 Cloud` / `CLOUD_ONLY`).
+  useEffect(() => {
+    const refreshHistoryAfterCloudCommit = () => {
+      void fetchCloudHistory();
+      refreshLocalDataset();
       void runReconciliation();
-    }
-  }, [unifiedSearches.length]);
+    };
+    window.addEventListener("yt-discovery-cloud-save-success", refreshHistoryAfterCloudCommit);
+    window.addEventListener("yt-discovery-cloud-committed-cleanup", refreshHistoryAfterCloudCommit);
+    window.addEventListener("yt-discovery-hydration-changed", refreshHistoryAfterCloudCommit);
+    return () => {
+      window.removeEventListener("yt-discovery-cloud-save-success", refreshHistoryAfterCloudCommit);
+      window.removeEventListener("yt-discovery-cloud-committed-cleanup", refreshHistoryAfterCloudCommit);
+      window.removeEventListener("yt-discovery-hydration-changed", refreshHistoryAfterCloudCommit);
+    };
+  }, [fetchCloudHistory, refreshLocalDataset, runReconciliation]);
 
-  // Classify search items into 3 states
+  // Classify ONLY items currently stored in local browser storage.
+  // Never infer cloud commitment solely from runtime `item.manifestId`.
   const classifiedSearches = useMemo(() => {
-    return unifiedSearches.map((item) => {
+    return localBrowserSearches.map((item) => {
       const recon = reconciliationMap.get(item.id);
-      let storageState: StorageStateCategory = "LOCAL_ONLY";
-      let cleanupEligible = false;
-      let r2Verified = false;
-      let supabaseVerified = false;
-
-      if (recon) {
-        storageState = recon.storageState;
-        cleanupEligible = recon.cleanupEligible;
-        r2Verified = recon.r2Verified;
-        supabaseVerified = recon.supabaseVerified;
-      } else if (item.manifestId) {
-        storageState = "LOCAL_AND_CLOUD";
-        cleanupEligible = true;
-        r2Verified = true;
-        supabaseVerified = true;
-      }
+      const storageState: StorageStateCategory = recon ? recon.storageState : "LOCAL_ONLY";
+      const cleanupEligible = recon ? recon.cleanupEligible : false;
+      const r2Verified = recon ? recon.r2Verified : false;
+      const supabaseVerified = recon ? recon.supabaseVerified : false;
 
       return {
         ...item,
@@ -391,7 +482,38 @@ export function HistoryWorkspace() {
         _supabaseVerified: supabaseVerified,
       };
     });
-  }, [unifiedSearches, reconciliationMap]);
+  }, [localBrowserSearches, reconciliationMap]);
+
+  // Authoritative `CLOUD_ONLY` items (committed in R2/PostgreSQL and cleared from local browser storage).
+  const cloudOnlySearches = useMemo(() => {
+    const localIds = new Set(localBrowserSearches.map((s) => s.id));
+    const merged = new Map<string, SearchHistoryItem>();
+
+    for (const item of reconciledCloudOnlySearches) {
+      if (!localIds.has(item.id)) {
+        merged.set(item.id, item);
+      }
+    }
+    for (const item of cloudHistoryItems) {
+      if (localIds.has(item.id)) continue;
+      const existing = merged.get(item.id);
+      merged.set(
+        item.id,
+        existing
+          ? {
+              ...existing,
+              ...item,
+              resultsCount: Math.max(item.resultsCount || 0, existing.resultsCount || 0),
+              topThumbnails:
+                item.topThumbnails && item.topThumbnails.length > 0
+                  ? item.topThumbnails
+                  : existing.topThumbnails,
+            }
+          : item
+      );
+    }
+    return Array.from(merged.values());
+  }, [localBrowserSearches, reconciledCloudOnlySearches, cloudHistoryItems]);
 
   // Partition into 3 categories
   const localOnlyList = useMemo(() => {
@@ -497,7 +619,8 @@ export function HistoryWorkspace() {
 
   const handleDeleteItem = async (id: string) => {
     deleteSearchHistoryItem(id);
-    setArchiveItems((prev) => prev.filter((x) => x.id !== id));
+    setCloudHistoryItems((prev) => prev.filter((x) => x.id !== id));
+    setReconciledCloudOnlySearches((prev) => prev.filter((x) => x.id !== id));
     try {
       await authFetch(`/api/search-storage/${encodeURIComponent(id)}`, { method: "DELETE" });
     } catch {
@@ -505,15 +628,59 @@ export function HistoryWorkspace() {
     }
   };
 
+  /**
+   * Clears ONLY un-uploaded local browser storage entries (`searchHistory` + IndexedDB
+   * + OPFS), NEVER deleting existing R2 cloud generations or PostgreSQL cloud history.
+   */
   const handleClearAll = async () => {
+    const ownerId = syncCoordinator.getOwnerId();
+    const localIds = localBrowserSearches.map((item) => item.id).filter(Boolean);
     clearSearchHistory();
-    setArchiveItems([]);
+    if (ownerId && localIds.length > 0) {
+      await removeLocalSearchHistoryBatch(ownerId, localIds).catch(() => {});
+    }
     setIsClearModalOpen(false);
-    showToast("Cleared all search history.");
-    try {
-      await authFetch("/api/search-storage", { method: "DELETE" });
-    } catch {
-      // Ignore network errors
+    refreshLocalDataset();
+    showToast("Cleared local browser search cache only. Cloud R2 history remains preserved.");
+  };
+
+  /**
+   * Append-Only Verified Cloud Upload + Post-Commit Local Browser Cleanup:
+   *   1. Persists all local history records into IndexedDB + Outbox (`SEARCH_HISTORY`).
+   *   2. Appends a new immutable generation in R2 (`asdy/persistence/<ownerId>/saved-search-history/...`)
+   *      via the Cloudflare Worker without overwriting or deleting prior R2 cloud items.
+   *   3. Verifies SHA-256 read-back + PostgreSQL commit (`search_history_records`).
+   *   4. Automatically clears verified uploaded items from local browser storage
+   *      (IndexedDB + Zustand + OPFS) without emitting cloud DELETE tombstones.
+   *   5. Reloads `/api/history` so uploaded searches appear under Section 3 with `R2 Cloud` badge.
+   */
+  const handleUploadToR2Cloud = async () => {
+    const targets = localBrowserSearches;
+    if (targets.length === 0) {
+      showToast("All search history records are already saved in Cloudflare R2.");
+      return;
+    }
+
+    const res = await uploadDatasetToCloudWithVerifiedCleanup({
+      datasetType: "SEARCH_HISTORY",
+      auditResourceType: "SEARCH_HISTORY",
+      operationType: "APPEND",
+      localRecords: targets.map((item) => ({
+        id: item.id,
+        payload: item as unknown as Record<string, unknown>,
+      })),
+      removeLocalCopies: async (ownerId, verifiedIds) => {
+        const removed = await removeLocalSearchHistoryBatch(ownerId, verifiedIds);
+        removeLocalSearchHistoryBatchAfterCloudCommit(verifiedIds);
+        return removed;
+      },
+      onStageChange: setUploadFeedback,
+    });
+
+    if (res.ok) {
+      await fetchCloudHistory();
+      refreshLocalDataset();
+      void runReconciliation();
     }
   };
 
@@ -564,7 +731,7 @@ export function HistoryWorkspace() {
   };
 
   const handleExportHistory = () => {
-    const dataStr = JSON.stringify(searchHistory, null, 2);
+    const dataStr = JSON.stringify(unifiedSearches, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -575,9 +742,13 @@ export function HistoryWorkspace() {
     showToast("Exported search history to JSON file.");
   };
 
-  // Safe local cleanup (single history item)
+  // Safe local cleanup (single history item — resolves session owner dynamically)
   const handleSingleCleanup = async (item: SearchHistoryItem) => {
-    const ownerId = "asdy";
+    const ownerId = syncCoordinator.getOwnerId();
+    if (!ownerId) {
+      showToast("Session owner not resolved yet — wait for auth initialization.");
+      return;
+    }
     setIsCleaning(true);
     try {
       await removeLocalSearchHistoryItem(ownerId, item.id);
@@ -593,6 +764,8 @@ export function HistoryWorkspace() {
         }),
       });
       showToast(`Safe local cleanup complete for "${item.title || item.query}". Preserved in Cloudflare R2.`);
+      await fetchCloudHistory();
+      refreshLocalDataset();
       void runReconciliation();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Failed to clean up local search history entry.");
@@ -601,9 +774,13 @@ export function HistoryWorkspace() {
     }
   };
 
-  // Safe local cleanup (batch)
+  // Safe local cleanup (batch — resolves session owner dynamically)
   const handleBatchCleanup = async () => {
-    const ownerId = "asdy";
+    const ownerId = syncCoordinator.getOwnerId();
+    if (!ownerId) {
+      showToast("Session owner not resolved yet — wait for auth initialization.");
+      return;
+    }
     const targets = cleanupEligibleList.map((item) => item.id).filter(Boolean);
     if (targets.length === 0) return;
 
@@ -625,6 +802,8 @@ export function HistoryWorkspace() {
       showToast(
         `Safe local cleanup completed for ${count} verified search history entries. All cloud manifests in R2 remain completely intact.`
       );
+      await fetchCloudHistory();
+      refreshLocalDataset();
       void runReconciliation();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Failed to execute batch local cleanup.");
@@ -969,6 +1148,13 @@ export function HistoryWorkspace() {
       )}
 
       {/* 1. Storage Overview (4 Cards) */}
+      {/* Live Cloud Upload & Verified Local Cleanup Feedback */}
+      <CloudUploadFeedbackBanner
+        feedback={uploadFeedback}
+        onDismiss={() => setUploadFeedback(null)}
+      />
+
+      {/* 1. Three-State Storage Summary Strip */}
       <StorageOverview
         localOnlyCount={localOnlyList.length}
         localAndCloudCount={localAndCloudList.length}
@@ -977,7 +1163,7 @@ export function HistoryWorkspace() {
         cleanupEligibleCount={cleanupEligibleList.length}
         activeView={storageView}
         onSelectView={setStorageView}
-        isLoading={false}
+        isLoading={loadingCloudHistory}
       />
 
       {/* 2. Storage Comparison & Integrity Center */}
@@ -1076,28 +1262,55 @@ export function HistoryWorkspace() {
           </button>
         </div>
 
-        {activeTab === "searches" && unifiedSearches.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              className="h-8 gap-1.5 px-3 text-xs"
-              onClick={handleExportHistory}
-              title="Download entire search history as a JSON file"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Export JSON</span>
-            </Button>
-            <Button
-              variant="danger"
-              className="h-8 gap-1.5 px-3 text-xs"
-              onClick={() => setIsClearModalOpen(true)}
-              title="Clear all recorded search history"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              <span>Clear History</span>
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="primary"
+            className="h-8 gap-1.5 px-3 text-xs font-semibold shadow-xs"
+            onClick={() => void handleUploadToR2Cloud()}
+            disabled={Boolean(uploadFeedback?.isSaving) || localBrowserSearches.length === 0}
+            title="Upload local search history append-only to Cloudflare R2 & PostgreSQL, verify SHA-256, then clear local browser copies"
+          >
+            {uploadFeedback?.isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CloudUpload className="h-3.5 w-3.5" />
+            )}
+            <span>
+              {uploadFeedback?.isSaving
+                ? "Uploading to R2…"
+                : localBrowserSearches.length > 0
+                  ? `Upload to R2 Cloud (${localBrowserSearches.length})`
+                  : pendingCount > 0
+                    ? `Sync Pending (${pendingCount})`
+                    : "All Saved in R2 Cloud"}
+            </span>
+          </Button>
+          {activeTab === "searches" && unifiedSearches.length > 0 && (
+            <>
+              <Button
+                variant="secondary"
+                className="h-8 gap-1.5 px-3 text-xs"
+                onClick={handleExportHistory}
+                title="Download entire search history as a JSON file"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Export JSON</span>
+              </Button>
+              {localBrowserSearches.length > 0 && (
+                <Button
+                  variant="danger"
+                  className="h-8 gap-1.5 px-3 text-xs"
+                  onClick={() => setIsClearModalOpen(true)}
+                  title="Clear local browser search cache (cloud R2 archive remains preserved)"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Clear Local</span>
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* ── TAB 1: SEARCH HISTORY ─────────────────────────────────────── */}
@@ -1170,9 +1383,28 @@ export function HistoryWorkspace() {
             <StorageStatusSection
               category="LOCAL_ONLY"
               title="SECTION 1 — NEWLY ADDED — LOCAL BROWSER"
-              description="Stored strictly in this browser’s IndexedDB database. Pending upload to Cloudflare R2."
+              description="Stored in this browser’s IndexedDB & OPFS. Click Upload to R2 Cloud to commit append-only and verify before automatic local cleanup."
               count={visibleLocalOnly.length}
               icon={<HardDrive className="h-4 w-4 text-amber-500" />}
+              actionButton={
+                visibleLocalOnly.length > 0 ? (
+                  <Button
+                    type="button"
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void handleUploadToR2Cloud()}
+                    disabled={Boolean(uploadFeedback?.isSaving)}
+                    className="h-8 gap-1.5 text-xs font-semibold"
+                  >
+                    {uploadFeedback?.isSaving ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CloudUpload className="h-3.5 w-3.5" />
+                    )}
+                    <span>Upload & Verify ({visibleLocalOnly.length})</span>
+                  </Button>
+                ) : undefined
+              }
               emptyMessage="No local-only search history entries pending cloud commit."
             >
               <div className="space-y-4">

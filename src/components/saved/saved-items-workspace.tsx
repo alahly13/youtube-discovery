@@ -398,6 +398,7 @@ export function SavedItemsWorkspace() {
 
     if (typeof window !== "undefined") {
       window.addEventListener("yt-discovery-cloud-save-success", handleCloudSaveSuccess);
+      window.addEventListener("yt-discovery-cloud-committed-cleanup", handleCloudSaveSuccess);
       window.addEventListener("yt-discovery-hydration-changed", handleCloudSaveSuccess);
       window.addEventListener("yt-discovery-local-committed", handleCloudSaveSuccess);
       window.addEventListener("yt-discovery-local-mutation", handleCloudSaveSuccess);
@@ -407,6 +408,7 @@ export function SavedItemsWorkspace() {
       unsub();
       if (typeof window !== "undefined") {
         window.removeEventListener("yt-discovery-cloud-save-success", handleCloudSaveSuccess);
+        window.removeEventListener("yt-discovery-cloud-committed-cleanup", handleCloudSaveSuccess);
         window.removeEventListener("yt-discovery-hydration-changed", handleCloudSaveSuccess);
         window.removeEventListener("yt-discovery-local-committed", handleCloudSaveSuccess);
         window.removeEventListener("yt-discovery-local-mutation", handleCloudSaveSuccess);

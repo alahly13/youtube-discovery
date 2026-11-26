@@ -5057,3 +5057,78 @@ None — no AI code changed.
 ### Whether secrets were printed: No
 ### Whether migrations were created/applied: Yes — `20261125000000_canonical_persistence_v2_hardening` created and applied
 ### Whether `db:apply` was run: No (using `prisma migrate deploy`)
+
+---
+
+## 2026-11-26 — History Workspace & Consolidated References Hardening, Strictly Append-Only R2 Sync & Verified Auto-Cleanup
+
+- **Date/Time:** 2026-11-26 07:12 (+02:00)
+- **Agent/Model:** Antigravity Agent
+- **Task summary:** Hardened `/history` and `/saved-titles-links`, consolidated `/saved-searches` cleanly into `/saved-titles-links#saved-searches` beneath an explicit visual divider line, enforced strict append-only R2 cloud preservation (zero overwrites or cloud deletions on batch sync), wired automatic post-commit local browser cleanup (IndexedDB + OPFS + Zustand) transitioning verified uploaded items directly to the `R2 Cloud` (`CLOUD_ONLY`) badge, added authoritative `GET /api/history` and `GET /api/references`, and created/applied additive migration `20261125010000_search_history_and_saved_preset_enrichment`.
+
+### Reason / root cause
+1. **`/history` & `SEARCH_HISTORY`:** Previously lacked `useMergedDataset("SEARCH_HISTORY")`, had no one-click verified Upload-to-R2 CTA/feedback banner, mixed server archive records into the local bucket, falsely treated runtime `item.manifestId` as cloud proof, hardcoded `ownerId = "asdy"` in cleanup handlers, and `indexSearchHistory` in `/api/sync/save-all` omitted `record_id`, `resource_selection`, `filter_snapshot`, `raw_payload_json`, read `resultCount` instead of `resultsCount`, and used v5 UUIDs conflicting with `search-storage-archive` v4 UUIDs.
+2. **Cross-contamination & local cleanup inside `REFERENCES`:** `/api/storage/reconciliation/compare` ignored `resourceTypeFilter` inside `REFERENCES`, causing `SAVED_SEARCH` and `SAVED_TITLE`/`SAVED_LINK` records to appear in each other's `cloudOnlyRecords`; `removeLocalSavedSearch` only deleted from `entities_saved_searches` while leaving copies stuck in `entities_saved_references`; `SavedSearchesWorkspace` passed local Zustand items as `serverFallback`; and query-matching in reconciler risked collapsing distinct `SEARCH_HISTORY` runs sharing the same query string.
+3. **Append-only guarantee & auto-cleanup:** Client outbox `DELETE` operations could strip committed items from new generation snapshots in `mergeCloudAndIncomingRecords`, and `loadCommittedSnapshot` only backfilled DB rows for `SAVED_ITEMS`, omitting `REFERENCES` and `SEARCH_HISTORY`. After verified R2 + DB commit, local copies needed automatic cleanup so items transition cleanly to `R2 Cloud` badges.
+
+### Files changed
+- **Schema & Migration:**
+  - `prisma/schema.prisma`, `prisma/migrations/20261125010000_search_history_and_saved_preset_enrichment/migration.sql` (new additive migration applied to Supabase PostgreSQL)
+- **Backend API & Persistence:**
+  - `src/app/api/history/route.ts` (new `GET /api/history`)
+  - `src/app/api/references/route.ts` (new `GET /api/references?kind=titles_links|searches|all`)
+  - `src/app/api/sync/save-all/route.ts` (append-only `mergeCloudAndIncomingRecords` + `preserveNonEmptyMerge`, PostgreSQL DB union for `REFERENCES` & `SEARCH_HISTORY` in `loadCommittedSnapshot`, full `indexReferences` & `indexSearchHistory` metadata + UUID parity)
+  - `src/app/api/storage/reconciliation/compare/route.ts` (`matchesResourceTypeFilter`, `buildCloudOnlyRecordFromRaw`, ID-strict `SEARCH_HISTORY` matching, lossless cloud metadata)
+  - `src/lib/search-storage/search-storage-archive.ts` (UUID parity with `save-all`, rich column writes/reads, `item.itemType` count tracking)
+- **Browser Storage, OPFS & Sync Coordinator:**
+  - `src/lib/storage/opfs-store.ts` (new owner-scoped OPFS helper with safe SSR/unsupported fallback and cleanup)
+  - `src/lib/storage/indexeddb-store.ts` (dual-store cleanup for `removeLocalSavedSearch*` across `SAVED_SEARCHES` + `SAVED_REFERENCES`, OPFS mirror cleanup across all cleanup helpers)
+  - `src/lib/sync/save-receipt.ts`, `src/lib/sync/sync-coordinator.ts`, `src/lib/sync/verified-cloud-upload.ts` (new shared helper), `src/lib/state/youtube-workspace-store.ts` (`SEARCH_HISTORY` startup reconciliation & OPFS mirroring, automatic verified post-commit local browser cleanup & `yt-discovery-cloud-committed-cleanup` sync)
+- **UI & Navigation:**
+  - `src/components/storage/cloud-upload-banner.tsx` (new shared upload progress + SHA-256 verification banner)
+  - `src/components/history/history-workspace.tsx`, `src/components/saved/saved-titles-links-workspace.tsx`, `src/components/saved/saved-searches-workspace.tsx`, `src/components/saved/saved-items-workspace.tsx`
+  - `src/app/saved-titles-links/page.tsx`, `src/app/saved-searches/page.tsx` (redirect to `/saved-titles-links#saved-searches`), `src/components/layout/navigation.tsx`
+- **Tests & Ledgers:**
+  - `scripts/test-storage-hardening-v2.mjs` (expanded to 11/11 tests)
+  - `youtube_discovery_ledger.md`, `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Architecture impact
+Additive, strictly backward-compatible consolidation and hardening. Preserves existing R2 object paths (`asdy/persistence/<storageOwnerUuid>/saved-search-history/...`, `references/...`, `saved-items/...`), keeps historical `before-app-updating/` pointers & immutable objects protected (`isHistoricalRootPointer` update in `cloudflare/workers/new-youtube-discovery-api/src/index.ts` and `src/lib/storage/r2-blob-backend.ts`), and introduces zero new external packages.
+
+### Environment impact
+Zero new environment variables required. `.vercel/project.json` not present locally; production build runs via GitHub → Vercel integration on push.
+
+### Database/migration impact
+- Created and applied additive migration `20261125010000_search_history_and_saved_preset_enrichment` via `prisma migrate deploy`.
+- Synchronized 8/8 migrations (`node scripts/db-migrations/cli.mjs --mode=check`).
+
+### YouTube API/quota impact
+Zero YouTube Data API v3 calls altered.
+
+### AI scope/safety impact
+None — no AI code modified.
+
+### Verification run and results
+- `node ./node_modules/prisma/build/index.js validate` & `migrate deploy` & `generate`: **PASSED** (8/8 synchronized).
+- `node ./node_modules/typescript/bin/tsc --noEmit --incremental false`: **PASSED (0 errors)**.
+- `node scripts/test-storage-hardening-v2.mjs`: **11/11 PASSED**.
+- `node scripts/test-audit-hardening.mjs`: **7/7 PASSED**.
+- `node scripts/test-three-way-reconciliation.mjs`: **33 PASSED, 0 FAILED** (live PostgreSQL schema checks inclusive).
+- `node scripts/test-manifest-naming-standard.mjs`: **62 PASSED, 0 FAILED**.
+- `node scripts/test-resource-taxonomy-and-contracts.mjs`: **40 PASSED, 0 FAILED**.
+- `node scripts/test-complete-storage-pipeline.mjs`: **10 PASSED, 0 FAILED**.
+- `node scripts/test-unified-saved-lifecycle.mjs`: **25 Passed, 0 Failed**.
+- `node scripts/test-cloud-hydration-and-canonical-sync.mjs`: **44 Passed, 0 Failed**.
+
+### Blocked checks / omitted local builds
+- `eslint` on the 19-file list (`task-1380`) timed out on low-spec CPU; local `npm run build` / `next build` intentionally NOT executed per low-spec PC instructions (production build verified remotely via GitHub → Vercel push).
+- Live Cloudflare Worker deployment (`wrangler deploy`) still blocked locally by wrong Wrangler OAuth account (`CLOUDFLARE_API_TOKEN` needed for account `15cefbbb4dd98db0a0f85ad4f3134e82`).
+
+### Remaining risks/limitations
+- Cloudflare Worker updates in `cloudflare/workers/new-youtube-discovery-api/src/index.ts` remain uncommitted remotely until deployed with valid Cloudflare credentials.
+- Remote Vercel build result will be checked right after pushing to `origin/main`.
+
+### Whether secrets were printed: No
+### Whether migrations were created/applied: Yes — `20261125010000_search_history_and_saved_preset_enrichment` created and applied
+### Whether `db:apply` was run: No (applied via `prisma migrate deploy`)
+

@@ -451,9 +451,18 @@ export const useYouTubeWorkspaceStore = create<YouTubeWorkspaceStore>()(
         set((state) => {
           const owner = resolveLocalOwnerId(state.currentOwnerId);
           if (typeof window !== "undefined" && owner) {
-            saveEntityLocally(owner, "SEARCH_HISTORY", id, newItem as unknown as Record<string, unknown>, "APPEND")
+            const payload = {
+              ...(newItem as unknown as Record<string, unknown>),
+              recordId: id,
+            };
+            saveEntityLocally(owner, "SEARCH_HISTORY", id, payload, "APPEND")
               .then(() => syncCoordinator.refreshSummary())
               .catch(console.error);
+            void import("../storage/opfs-store")
+              .then(({ writeOpfsRecord }) =>
+                writeOpfsRecord(owner, "saved-search-history", id, payload)
+              )
+              .catch(() => {});
           }
           return {
             // Store up to 100 most recent searches in history
@@ -535,9 +544,10 @@ if (typeof window !== "undefined") {
     const owner = resolveLocalOwnerId(useYouTubeWorkspaceStore.getState().currentOwnerId);
     if (!owner) return;
     try {
-      const [localSaved, localRefs, pendingOps] = await Promise.all([
+      const [localSaved, localRefs, localHistory, pendingOps] = await Promise.all([
         getLocalEntities<NormalizedYouTubeDiscoveryItem>(owner, "SAVED_ITEMS").catch(() => []),
         getLocalEntities<Record<string, unknown>>(owner, "REFERENCES").catch(() => []),
+        getLocalEntities<SearchHistoryItem & { recordId?: string }>(owner, "SEARCH_HISTORY").catch(() => []),
         getPendingOperations(owner).catch(() => []),
       ]);
 
@@ -551,6 +561,11 @@ if (typeof window !== "undefined") {
           .filter((op) => op.datasetType === "REFERENCES" && op.operationType === "DELETE")
           .map((op) => op.entityId)
       );
+      const deletedHistory = new Set(
+        pendingOps
+          .filter((op) => op.datasetType === "SEARCH_HISTORY" && op.operationType === "DELETE")
+          .map((op) => op.entityId)
+      );
 
       const nextSavedItems = localSaved.filter((i) => !deletedSaved.has(i.platformItemId));
       const nextSavedSearches: SavedSearch[] = [];
@@ -560,6 +575,16 @@ if (typeof window !== "undefined") {
           nextSavedSearches.push(r as unknown as SavedSearch);
         }
       }
+      const nextSearchHistory: SearchHistoryItem[] = localHistory
+        .filter((h) => {
+          const hid = String(h.id || h.recordId || "").trim();
+          return Boolean(hid) && !deletedHistory.has(hid);
+        })
+        .map((h) => ({
+          ...h,
+          id: String(h.id || h.recordId),
+        }))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
       // If store has saved items that are not yet in IndexedDB, bridge them into IndexedDB and outbox
       const currentStoreItems = useYouTubeWorkspaceStore.getState().savedItems;
@@ -577,13 +602,44 @@ if (typeof window !== "undefined") {
         await syncCoordinator.refreshSummary().catch(() => {});
       }
 
-      if (nextSavedItems.length > 0 || localRefs.length > 0) {
+      // Bridge legacy Zustand-only search history entries into IndexedDB SEARCH_HISTORY + outbox
+      // ONLY when IndexedDB has no SEARCH_HISTORY entries and no active pending SEARCH_HISTORY ops
+      // (entries cleaned after verified cloud commit were already pruned from Zustand state).
+      const currentStoreHistory = useYouTubeWorkspaceStore.getState().searchHistory;
+      const hasHistoryOutbox = pendingOps.some((op) => op.datasetType === "SEARCH_HISTORY");
+      if (currentStoreHistory.length > 0 && localHistory.length === 0 && !hasHistoryOutbox) {
+        for (const histItem of currentStoreHistory) {
+          if (!histItem.id || deletedHistory.has(histItem.id)) continue;
+          await saveEntityLocally(
+            owner,
+            "SEARCH_HISTORY",
+            histItem.id,
+            {
+              ...(histItem as unknown as Record<string, unknown>),
+              recordId: histItem.id,
+            },
+            "APPEND"
+          ).catch(() => {});
+        }
+        await syncCoordinator.refreshSummary().catch(() => {});
+      }
+
+      if (
+        nextSavedItems.length > 0 ||
+        localRefs.length > 0 ||
+        localHistory.length > 0 ||
+        deletedHistory.size > 0
+      ) {
         useYouTubeWorkspaceStore.setState((prev) => ({
           savedItems: localSaved.length > 0 || deletedSaved.size > 0 ? nextSavedItems : prev.savedItems,
           savedSearches:
             nextSavedSearches.length > 0 || deletedRefs.size > 0
               ? nextSavedSearches
               : prev.savedSearches,
+          searchHistory:
+            localHistory.length > 0 || deletedHistory.size > 0
+              ? nextSearchHistory
+              : prev.searchHistory,
         }));
       }
     } catch {
@@ -606,4 +662,17 @@ if (typeof window !== "undefined") {
   window.addEventListener("yt-discovery-hydration-changed", () => void reconcileWorkspaceStoreFromIndexedDb());
   window.addEventListener("yt-discovery-owner-changed", () => void reconcileWorkspaceStoreFromIndexedDb());
   window.addEventListener("yt-discovery-local-committed", () => void reconcileWorkspaceStoreFromIndexedDb());
+  window.addEventListener("yt-discovery-cloud-committed-cleanup", (event: Event) => {
+    const detail = (event as CustomEvent<{ datasetType?: string; entityIds?: string[] }>).detail;
+    const ids = Array.isArray(detail?.entityIds) ? detail.entityIds : [];
+    if (ids.length === 0) return;
+    const state = useYouTubeWorkspaceStore.getState();
+    if (detail?.datasetType === "SAVED_ITEMS") {
+      state.removeLocalItemsBatchAfterCloudCommit(ids);
+    } else if (detail?.datasetType === "REFERENCES") {
+      state.removeLocalSavedSearchesBatchAfterCloudCommit(ids);
+    } else if (detail?.datasetType === "SEARCH_HISTORY") {
+      state.removeLocalSearchHistoryBatchAfterCloudCommit(ids);
+    }
+  });
 }

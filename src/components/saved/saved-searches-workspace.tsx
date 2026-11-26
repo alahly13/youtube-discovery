@@ -24,8 +24,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useYouTubeWorkspaceStore } from "@/lib/state/youtube-workspace-store";
 import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
+import { authFetch } from "@/lib/client/auth-fetch";
 import { classifyResourceRecord } from "@/lib/resources/resource-taxonomy";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import {
+  uploadDatasetToCloudWithVerifiedCleanup,
+  type CloudUploadFeedbackState,
+} from "@/lib/sync/verified-cloud-upload";
+import { CloudUploadFeedbackBanner } from "@/components/storage/cloud-upload-banner";
 import {
   removeLocalSavedSearch,
   removeLocalSavedSearchesBatch,
@@ -87,26 +93,60 @@ export function SavedSearchesWorkspace() {
     (s) => s.removeLocalSavedSearchesBatchAfterCloudCommit
   );
 
-  const serverFallback = useMemo(
-    () =>
-      storeSavedSearches.map((s) => ({
-        ...s,
-        recordId: s.id,
-        resourceType: "SAVED_SEARCH",
-        resourceId: s.id,
-      })),
-    [storeSavedSearches]
-  );
+  // Authoritative R2 Cloud + PostgreSQL presets (`SAVED_SEARCH` strictly isolated from SAVED_TITLE/SAVED_LINK)
+  const [cloudSearchPresets, setCloudSearchPresets] = useState<Array<SavedSearch & Record<string, unknown>>>([]);
+  const [uploadFeedback, setUploadFeedback] = useState<CloudUploadFeedbackState | null>(null);
 
   const { items: mergedRefs, pendingCount, isLoading: isDatasetLoading, refresh } = useMergedDataset<
     SavedSearch & Record<string, unknown>
-  >("REFERENCES", serverFallback);
+  >("REFERENCES", cloudSearchPresets);
 
+  const fetchCloudSearches = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/references?kind=searches");
+      if (!res.ok) return;
+      const data = (await res.json()) as { items?: Array<SavedSearch & Record<string, unknown>> };
+      if (Array.isArray(data.items)) {
+        setCloudSearchPresets(data.items);
+      }
+    } catch {
+      // Keep local view resilient on offline/auth race
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchCloudSearches();
+  }, [fetchCloudSearches]);
+
+  // Strictly track local browser `SAVED_SEARCH` items (IndexedDB `REFERENCES` + unbridged Zustand)
   const savedSearches = useMemo(() => {
-    return mergedRefs.filter((item) =>
-      isSavedSearchRecord(item as unknown as Record<string, unknown>)
-    );
-  }, [mergedRefs]);
+    const map = new Map<string, SavedSearch & Record<string, unknown>>();
+    for (const item of mergedRefs) {
+      const tagged = item as SavedSearch & {
+        _sourceLocation?: string;
+        _localStatus?: string;
+      };
+      if (
+        (tagged._sourceLocation === "LOCAL" ||
+          tagged._sourceLocation === "BOTH" ||
+          tagged._localStatus === "LOCAL_PENDING") &&
+        isSavedSearchRecord(item as unknown as Record<string, unknown>)
+      ) {
+        map.set(item.id, item);
+      }
+    }
+    for (const s of storeSavedSearches) {
+      if (!map.has(s.id)) {
+        map.set(s.id, {
+          ...s,
+          recordId: s.id,
+          resourceType: "SAVED_SEARCH",
+          resourceId: s.id,
+        });
+      }
+    }
+    return Array.from(map.values());
+  }, [mergedRefs, storeSavedSearches]);
 
   const [query, setQuery] = useState("");
   const [storageView, setStorageView] = useState<StorageView>("all");
@@ -126,7 +166,7 @@ export function SavedSearchesWorkspace() {
   const [reconciliationMap, setReconciliationMap] = useState<
     Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
   >(new Map());
-  const [cloudOnlySearches, setCloudOnlySearches] = useState<SavedSearch[]>([]);
+  const [reconciledCloudOnlySearches, setReconciledCloudOnlySearches] = useState<SavedSearch[]>([]);
   const [generationSummaries, setGenerationSummaries] = useState<GenerationReconciliationSummary[]>([]);
   const [partResults, setPartResults] = useState<PartReconciliationResult[]>([]);
   const [artifactStats, setArtifactStats] = useState<ArtifactReconciliationStats | undefined>(undefined);
@@ -212,11 +252,12 @@ export function SavedSearchesWorkspace() {
           setArtifactStats(data.summary);
         }
 
-        // Process cloud-only searches
+        // Process cloud-only searches strictly filtered to SAVED_SEARCH
         if (Array.isArray(data.cloudOnlyRecords)) {
           const parsedCloudOnly: SavedSearch[] = (
             data.cloudOnlyRecords as Array<{
               id: string;
+              resourceType?: string;
               title?: string;
               query?: string;
               resourceSelection?: unknown;
@@ -225,21 +266,23 @@ export function SavedSearchesWorkspace() {
               createdAt?: string;
               isPinned?: boolean;
             }>
-          ).map((c) => ({
-            id: c.id,
-            title: c.title || c.query || c.id,
-            query: c.query || "",
-            resourceSelection:
-              typeof c.resourceSelection === "string"
-                ? (c.resourceSelection as SavedSearch["resourceSelection"])
-                : "ALL",
-            settings: c.settings || { query: c.query || "" },
-            notes: c.notes,
-            createdAt: c.createdAt || new Date().toISOString(),
-            isPinned: Boolean(c.isPinned),
-            _storageState: "CLOUD_ONLY",
-          }));
-          setCloudOnlySearches(parsedCloudOnly);
+          )
+            .filter((c) => !c.resourceType || c.resourceType === "SAVED_SEARCH")
+            .map((c) => ({
+              id: c.id,
+              title: c.title || c.query || c.id,
+              query: c.query || "",
+              resourceSelection:
+                typeof c.resourceSelection === "string"
+                  ? (c.resourceSelection as SavedSearch["resourceSelection"])
+                  : "ALL",
+              settings: c.settings || { query: c.query || "" },
+              notes: c.notes,
+              createdAt: c.createdAt || new Date().toISOString(),
+              isPinned: Boolean(c.isPinned),
+              _storageState: "CLOUD_ONLY",
+            }));
+          setReconciledCloudOnlySearches(parsedCloudOnly);
         }
 
         setSyncNotice(
@@ -253,23 +296,60 @@ export function SavedSearchesWorkspace() {
     }
   }, [savedSearches]);
 
+  // Combine authoritative CLOUD_ONLY Saved Searches across R2 reconciler + /api/references?kind=searches
+  const cloudOnlySearches = useMemo(() => {
+    const localIdSet = new Set(savedSearches.map((s) => s.id));
+    const byId = new Map<string, SavedSearch>();
+
+    for (const s of reconciledCloudOnlySearches) {
+      if (s.id && !localIdSet.has(s.id)) {
+        byId.set(s.id, s);
+      }
+    }
+    for (const s of cloudSearchPresets) {
+      if (s.id && !localIdSet.has(s.id)) {
+        byId.set(s.id, {
+          ...(byId.get(s.id) ?? {}),
+          ...s,
+          query: s.query || "",
+          resourceSelection:
+            typeof s.resourceSelection === "string"
+              ? (s.resourceSelection as SavedSearch["resourceSelection"])
+              : "ALL",
+          settings: s.settings || { query: s.query || "" },
+          _storageState: "CLOUD_ONLY",
+        } as SavedSearch);
+      }
+    }
+    return Array.from(byId.values());
+  }, [savedSearches, reconciledCloudOnlySearches, cloudSearchPresets]);
+
   // Run reconciliation automatically on mount
   useEffect(() => {
     void runReconciliation();
   }, [savedSearches.length]);
 
-  // Listen for local mutations
+  // Listen for local mutations & verified cloud-commit cleanup events
   useEffect(() => {
     const handleMutation = () => {
       refresh();
     };
+    const handleCloudCommit = () => {
+      void fetchCloudSearches();
+      refresh();
+      void runReconciliation();
+    };
     window.addEventListener("yt-discovery-local-mutation", handleMutation);
-    window.addEventListener("yt-discovery-cloud-save-success", handleMutation);
+    window.addEventListener("yt-discovery-cloud-save-success", handleCloudCommit);
+    window.addEventListener("yt-discovery-cloud-committed-cleanup", handleCloudCommit);
+    window.addEventListener("yt-discovery-hydration-changed", handleCloudCommit);
     return () => {
       window.removeEventListener("yt-discovery-local-mutation", handleMutation);
-      window.removeEventListener("yt-discovery-cloud-save-success", handleMutation);
+      window.removeEventListener("yt-discovery-cloud-save-success", handleCloudCommit);
+      window.removeEventListener("yt-discovery-cloud-committed-cleanup", handleCloudCommit);
+      window.removeEventListener("yt-discovery-hydration-changed", handleCloudCommit);
     };
-  }, [refresh]);
+  }, [fetchCloudSearches, refresh, runReconciliation]);
 
   // Classify local searches into 3 states
   const classifiedSearches = useMemo(() => {
@@ -374,18 +454,47 @@ export function SavedSearchesWorkspace() {
     void runReconciliation();
   };
 
+  /**
+   * Append-Only Verified Upload + Post-Commit Local Cleanup for Saved Searches (`REFERENCES`):
+   * Preserves all existing R2/PostgreSQL cloud records, verifies SHA-256 + DB commit,
+   * clears verified local browser copies (IndexedDB `SAVED_SEARCHES` + `SAVED_REFERENCES`, OPFS, Zustand),
+   * and transitions cards cleanly to the `R2 Cloud` (`CLOUD_ONLY`) badge.
+   */
   const handleSaveToCloud = async () => {
     setSyncing(true);
     setSyncNotice(null);
     try {
-      const res = await syncCoordinator.saveAll();
-      setSyncNotice(
-        res.ok
-          ? `Cloud R2 & PostgreSQL committed (${res.syncedCount} operation(s)). All existing cloud items preserved.`
-          : res.error || "Cloud sync did not complete; edits remain safe locally."
-      );
-      refresh();
-      void runReconciliation();
+      const res = await uploadDatasetToCloudWithVerifiedCleanup({
+        datasetType: "REFERENCES",
+        auditResourceType: "SAVED_SEARCH",
+        operationType: "UPSERT",
+        localRecords: savedSearches.map((s) => ({
+          id: s.id,
+          payload: {
+            ...(s as unknown as Record<string, unknown>),
+            recordId: s.id,
+            resourceType: "SAVED_SEARCH",
+            resourceId: s.id,
+          },
+        })),
+        removeLocalCopies: async (ownerId, verifiedIds) => {
+          const removed = await removeLocalSavedSearchesBatch(ownerId, verifiedIds);
+          removeLocalSavedSearchesBatchAfterCloudCommit(verifiedIds);
+          return removed;
+        },
+        onStageChange: setUploadFeedback,
+      });
+
+      if (res.ok) {
+        setSyncNotice(
+          `Committed & verified in Cloud R2 (${res.uploadedCount} saved, ${res.cleanedCount} cleaned locally). Prior cloud items preserved.`
+        );
+        await fetchCloudSearches();
+        refresh();
+        void runReconciliation();
+      } else if (res.error) {
+        setSyncNotice(res.error);
+      }
     } finally {
       setSyncing(false);
     }
@@ -603,6 +712,11 @@ export function SavedSearchesWorkspace() {
 
   return (
     <div className="space-y-6">
+      <CloudUploadFeedbackBanner
+        feedback={uploadFeedback}
+        onDismiss={() => setUploadFeedback(null)}
+      />
+
       {/* 1. Storage Overview (4 Cards) */}
       <StorageOverview
         localOnlyCount={localOnlyList.length}
@@ -657,10 +771,10 @@ export function SavedSearchesWorkspace() {
             <Button
               type="button"
               variant="secondary"
-              disabled={syncing || pendingCount === 0}
+              disabled={syncing || (pendingCount === 0 && savedSearches.length === 0)}
               onClick={() => void handleSaveToCloud()}
               className="h-9 gap-1.5 px-3 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-black border-amber-500 font-bold"
-              title="Commit local Saved Search changes to Cloudflare R2 & PostgreSQL"
+              title="Append local Saved Searches to Cloudflare R2 (preserves prior cloud items), verify SHA-256, and clear verified local copies"
             >
               {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CloudUpload className="h-3.5 w-3.5" />}
               <span>Save to Cloud R2</span>

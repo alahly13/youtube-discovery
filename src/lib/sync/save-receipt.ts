@@ -65,6 +65,7 @@ export interface SaveDatasetReceipt {
   dbCommitConfirmed: boolean;
   localCleanupDone: boolean;
   idempotentReplay: boolean;
+  syncedEntityIds?: string[];
 }
 
 export interface SaveReceipt {

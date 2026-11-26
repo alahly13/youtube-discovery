@@ -33,6 +33,10 @@ import {
   saveEntityLocally,
   getDatasetCatalogEntry,
   migrateLocalOwnerId,
+  removeLocalSavedItemsBatch,
+  removeLocalSavedReferencesBatch,
+  removeLocalSavedSearchesBatch,
+  removeLocalSearchHistoryBatch,
   type PendingOperation,
   type PendingOperationsSummary,
   type CanonicalDatasetType,
@@ -916,6 +920,38 @@ class SyncCoordinator {
                 originDeviceLabel: deviceMeta.originDeviceLabel,
               }
             );
+
+            // Automatic Verified Post-Commit Local Browser Cleanup (2026 Architecture):
+            // ONLY after R2 SHA-256 read-back verification (`verifiedCount >= partsCount`)
+            // and PostgreSQL atomic commit succeed, clear the verified local browser cache
+            // (IndexedDB + OPFS + Zustand) without emitting cloud DELETE tombstones.
+            // Cloud R2 + DB copies stay untouched and render with the `R2 Cloud` badge.
+            const isVerifiedCommit = (r.verifiedCount ?? 0) >= (r.partsCount ?? 0);
+            if (isVerifiedCommit) {
+              const ds = r.datasetType as CanonicalDatasetType;
+              if (ds === "SAVED_ITEMS") {
+                await removeLocalSavedItemsBatch(this.ownerId, r.syncedEntityIds);
+              } else if (ds === "REFERENCES") {
+                await removeLocalSavedReferencesBatch(this.ownerId, r.syncedEntityIds);
+                await removeLocalSavedSearchesBatch(this.ownerId, r.syncedEntityIds);
+              } else if (ds === "SEARCH_HISTORY") {
+                await removeLocalSearchHistoryBatch(this.ownerId, r.syncedEntityIds);
+              }
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(
+                  new CustomEvent("yt-discovery-cloud-committed-cleanup", {
+                    detail: {
+                      datasetType: ds,
+                      entityIds: r.syncedEntityIds,
+                      generationId: r.generationId,
+                    },
+                  })
+                );
+              }
+            } else {
+              localCleanupDone = false;
+              cleanupPendingWarning = true;
+            }
           } catch {
             localCleanupDone = false;
             cleanupPendingWarning = true;
@@ -939,6 +975,7 @@ class SyncCoordinator {
           dbCommitConfirmed: true,
           localCleanupDone,
           idempotentReplay: Boolean(r.idempotentReplay),
+          syncedEntityIds: Array.isArray(r.syncedEntityIds) ? r.syncedEntityIds : [],
         });
       }
 

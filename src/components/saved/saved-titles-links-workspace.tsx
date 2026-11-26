@@ -32,7 +32,13 @@ import {
   type ResourceType,
 } from "@/lib/resources/resource-taxonomy";
 import { useMergedDataset } from "@/lib/storage/use-merged-dataset";
+import { authFetch } from "@/lib/client/auth-fetch";
 import { syncCoordinator } from "@/lib/sync/sync-coordinator";
+import {
+  uploadDatasetToCloudWithVerifiedCleanup,
+  type CloudUploadFeedbackState,
+} from "@/lib/sync/verified-cloud-upload";
+import { CloudUploadFeedbackBanner } from "@/components/storage/cloud-upload-banner";
 import { undoRedoService } from "@/lib/undo-redo/undo-redo-service";
 import { UndoRedoControls } from "@/components/ui/undo-redo-controls";
 import { formatDate } from "@/lib/utils/format";
@@ -87,6 +93,7 @@ export interface SavedReferenceRecord {
   originDeviceLabel?: string;
   _localStatus?: string;
   _syncStatus?: string;
+  _sourceLocation?: "LOCAL" | "CLOUD" | "BOTH";
   _storageState?: StorageStateCategory;
   _cleanupEligible?: boolean;
   _r2Verified?: boolean;
@@ -162,12 +169,16 @@ function recordTimestamp(record: SavedReferenceRecord): number {
 }
 
 export function SavedTitlesLinksWorkspace() {
+  // Authoritative R2 Cloud + PostgreSQL records (`SAVED_TITLE` & `SAVED_LINK` strictly filtered)
+  const [cloudReferenceRecords, setCloudReferenceRecords] = useState<SavedReferenceRecord[]>([]);
+  const [uploadFeedback, setUploadFeedback] = useState<CloudUploadFeedbackState | null>(null);
+
   const {
     items,
     pendingCount,
     isLoading: isDatasetLoading,
     refresh,
-  } = useMergedDataset<SavedReferenceRecord>("REFERENCES");
+  } = useMergedDataset<SavedReferenceRecord>("REFERENCES", cloudReferenceRecords);
 
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
@@ -186,7 +197,7 @@ export function SavedTitlesLinksWorkspace() {
   const [reconciliationMap, setReconciliationMap] = useState<
     Map<string, { storageState: StorageStateCategory; cleanupEligible: boolean; r2Verified: boolean; supabaseVerified: boolean }>
   >(new Map());
-  const [cloudOnlyItems, setCloudOnlyItems] = useState<SavedReferenceRecord[]>([]);
+  const [reconciledCloudOnlyItems, setReconciledCloudOnlyItems] = useState<SavedReferenceRecord[]>([]);
   const [generationSummaries, setGenerationSummaries] = useState<GenerationReconciliationSummary[]>([]);
   const [partResults, setPartResults] = useState<PartReconciliationResult[]>([]);
   const [artifactStats, setArtifactStats] = useState<ArtifactReconciliationStats | undefined>(undefined);
@@ -196,9 +207,34 @@ export function SavedTitlesLinksWorkspace() {
   const [isCleaning, setIsCleaning] = useState(false);
   const [singleCleanupTarget, setSingleCleanupTarget] = useState<SavedReferenceRecord | null>(null);
 
-  // Filter local items strictly to titles and links
+  const fetchCloudReferences = useCallback(async () => {
+    try {
+      const res = await authFetch("/api/references?kind=titles_links");
+      if (!res.ok) return;
+      const data = (await res.json()) as { items?: SavedReferenceRecord[] };
+      if (Array.isArray(data.items)) {
+        setCloudReferenceRecords(
+          data.items.filter((record) => referenceKindOf(record) !== null)
+        );
+      }
+    } catch {
+      // Keep local view resilient on offline/auth race
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchCloudReferences();
+  }, [fetchCloudReferences]);
+
+  // Filter local browser items strictly to titles & links stored in IndexedDB/Outbox
   const localReferences = useMemo(() => {
     return items
+      .filter(
+        (record) =>
+          record._sourceLocation === "LOCAL" ||
+          record._sourceLocation === "BOTH" ||
+          record._localStatus === "LOCAL_PENDING"
+      )
       .map((record) => ({ record, kind: referenceKindOf(record) }))
       .filter(
         (entry): entry is { record: SavedReferenceRecord; kind: ReferenceKind } =>
@@ -234,7 +270,8 @@ export function SavedTitlesLinksWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           datasetType: "REFERENCES",
-          resourceType: kindFilter === "ALL" ? undefined : kindFilter,
+          // Enforce strict isolation from SAVED_SEARCH records in REFERENCES reconciliation
+          resourceType: kindFilter === "ALL" ? "SAVED_TITLES_LINKS" : kindFilter,
           localContext: {
             ownerId: syncCoordinator.getOwnerId() || undefined,
             pendingEntityIds: pendingIds,
@@ -271,7 +308,7 @@ export function SavedTitlesLinksWorkspace() {
           setArtifactStats(data.summary);
         }
 
-        // Process cloud-only items
+        // Process cloud-only items strictly filtered to SAVED_TITLE & SAVED_LINK
         if (Array.isArray(data.cloudOnlyRecords)) {
           const parsedCloudOnly: SavedReferenceRecord[] = (
             data.cloudOnlyRecords as Array<{
@@ -284,19 +321,21 @@ export function SavedTitlesLinksWorkspace() {
               createdAt?: string;
               savedAt?: string;
             }>
-          ).map((c) => ({
-            id: c.id,
-            recordId: c.recordId,
-            resourceType: c.resourceType,
-            savedKind: c.resourceType === "SAVED_LINK" ? "SAVED_LINK" : "SAVED_TITLE",
-            title: c.title || "Untitled",
-            url: c.url,
-            notes: c.notes,
-            createdAt: c.createdAt,
-            savedAt: c.savedAt,
-            _storageState: "CLOUD_ONLY",
-          }));
-          setCloudOnlyItems(parsedCloudOnly);
+          )
+            .map((c) => ({
+              id: c.id,
+              recordId: c.recordId || c.id,
+              resourceType: c.resourceType as ResourceType | undefined,
+              savedKind: (c.resourceType === "SAVED_LINK" || c.url ? "SAVED_LINK" : "SAVED_TITLE") as ReferenceKind,
+              title: c.title || "Untitled",
+              url: c.url,
+              notes: c.notes,
+              createdAt: c.createdAt,
+              savedAt: c.savedAt,
+              _storageState: "CLOUD_ONLY" as const,
+            }))
+            .filter((record) => referenceKindOf(record) !== null);
+          setReconciledCloudOnlyItems(parsedCloudOnly);
         }
 
         setStatusMessage(
@@ -310,23 +349,52 @@ export function SavedTitlesLinksWorkspace() {
     }
   }, [localReferences, kindFilter]);
 
+  // Combine authoritative CLOUD_ONLY items across R2 reconciler + /api/references
+  const cloudOnlyItems = useMemo(() => {
+    const localIdSet = new Set(localReferences.map(({ record }) => recordIdOf(record)));
+    const byId = new Map<string, SavedReferenceRecord>();
+
+    for (const c of reconciledCloudOnlyItems) {
+      const cid = recordIdOf(c);
+      if (cid && !localIdSet.has(cid) && referenceKindOf(c) !== null) {
+        byId.set(cid, c);
+      }
+    }
+    for (const c of cloudReferenceRecords) {
+      const cid = recordIdOf(c);
+      if (cid && !localIdSet.has(cid) && referenceKindOf(c) !== null) {
+        byId.set(cid, { ...(byId.get(cid) ?? {}), ...c, _storageState: "CLOUD_ONLY" });
+      }
+    }
+    return Array.from(byId.values());
+  }, [localReferences, reconciledCloudOnlyItems, cloudReferenceRecords]);
+
   // Run reconciliation automatically on mount or when local items change
   useEffect(() => {
     void runReconciliation();
-  }, [items.length]);
+  }, [localReferences.length]);
 
-  // Listen for local mutations
+  // Listen for local mutations & verified cloud cleanup events
   useEffect(() => {
     const handleMutation = () => {
       refresh();
     };
+    const handleCloudCommit = () => {
+      void fetchCloudReferences();
+      refresh();
+      void runReconciliation();
+    };
     window.addEventListener("yt-discovery-local-mutation", handleMutation);
-    window.addEventListener("yt-discovery-cloud-save-success", handleMutation);
+    window.addEventListener("yt-discovery-cloud-save-success", handleCloudCommit);
+    window.addEventListener("yt-discovery-cloud-committed-cleanup", handleCloudCommit);
+    window.addEventListener("yt-discovery-hydration-changed", handleCloudCommit);
     return () => {
       window.removeEventListener("yt-discovery-local-mutation", handleMutation);
-      window.removeEventListener("yt-discovery-cloud-save-success", handleMutation);
+      window.removeEventListener("yt-discovery-cloud-save-success", handleCloudCommit);
+      window.removeEventListener("yt-discovery-cloud-committed-cleanup", handleCloudCommit);
+      window.removeEventListener("yt-discovery-hydration-changed", handleCloudCommit);
     };
-  }, [refresh]);
+  }, [fetchCloudReferences, refresh, runReconciliation]);
 
   // Classify references into 3 states
   const classifiedReferences = useMemo(() => {
@@ -689,23 +757,42 @@ export function SavedTitlesLinksWorkspace() {
     }
   };
 
+  /**
+   * Append-Only Verified Upload + Post-Commit Local Cleanup for Saved Titles & Links (`REFERENCES`):
+   * Preserves all existing R2/PostgreSQL cloud records, verifies SHA-256 + DB commit,
+   * clears verified local browser copies (IndexedDB + OPFS), and transitions cards to `R2 Cloud`.
+   */
   const handleSaveAll = async () => {
     setSyncing(true);
     setStatusMessage(null);
     try {
-      const result = await syncCoordinator.saveAll();
-      if (result.ok) {
+      const res = await uploadDatasetToCloudWithVerifiedCleanup({
+        datasetType: "REFERENCES",
+        auditResourceType: "SAVED_TITLES_LINKS",
+        operationType: "UPSERT",
+        localRecords: localReferences.map(({ record, kind }) => ({
+          id: recordIdOf(record),
+          payload: {
+            ...(record as unknown as Record<string, unknown>),
+            recordId: recordIdOf(record),
+            resourceType: kind,
+            savedKind: kind,
+          },
+        })),
+        removeLocalCopies: async (ownerId, verifiedIds) =>
+          removeLocalSavedReferencesBatch(ownerId, verifiedIds),
+        onStageChange: setUploadFeedback,
+      });
+
+      if (res.ok) {
         setStatusMessage(
-          `Committed to Cloud R2 & PostgreSQL (${result.syncedCount} operation(s)). All existing cloud items preserved.`
+          `Committed & verified in Cloud R2 (${res.uploadedCount} saved, ${res.cleanedCount} cleaned locally). Prior cloud data preserved.`
         );
+        await fetchCloudReferences();
         refresh();
         void runReconciliation();
-      } else {
-        setStatusMessage(
-          result.errorCategory
-            ? `[${result.errorCategory}] ${result.error || "Cloud sync failed — local edits preserved."}`
-            : result.error || "Cloud sync did not complete."
-        );
+      } else if (res.error) {
+        setStatusMessage(res.error);
       }
     } finally {
       setSyncing(false);
@@ -830,6 +917,11 @@ export function SavedTitlesLinksWorkspace() {
 
   return (
     <div className="space-y-6">
+      <CloudUploadFeedbackBanner
+        feedback={uploadFeedback}
+        onDismiss={() => setUploadFeedback(null)}
+      />
+
       {/* 1. Storage Overview (4 Cards) */}
       <StorageOverview
         localOnlyCount={localOnlyList.length}
@@ -904,9 +996,9 @@ export function SavedTitlesLinksWorkspace() {
                 type="button"
                 variant="secondary"
                 onClick={handleSaveAll}
-                disabled={syncing || pendingCount === 0}
+                disabled={syncing || (pendingCount === 0 && localReferences.length === 0)}
                 className="h-9 gap-1.5 px-3 text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-black border-amber-500 font-bold"
-                title="Append eligible local items to Cloudflare R2 (preserves all existing cloud items)"
+                title="Append local Saved Titles & Links to Cloudflare R2 (preserves all prior cloud items), verify SHA-256, and clear verified local copies"
               >
                 {syncing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

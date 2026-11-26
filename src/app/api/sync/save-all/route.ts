@@ -578,9 +578,118 @@ async function loadCommittedSnapshot(params: {
         });
       }
     }
+  } else if (params.datasetType === "REFERENCES") {
+    const [existingRefs, existingPresets] = await Promise.all([
+      prisma.savedReference.findMany({ where: { owner_id: params.ownerId } }),
+      prisma.savedSearchPreset.findMany({ where: { owner_id: params.ownerId } }),
+    ]);
+
+    for (const ref of existingRefs) {
+      const key = ref.record_id || ref.id;
+      if (!recordsMap.has(key)) {
+        recordsMap.set(key, {
+          id: key,
+          recordId: key,
+          resourceType: ref.resource_type || (ref.url ? "SAVED_LINK" : "SAVED_TITLE"),
+          savedKind: ref.resource_type || (ref.url ? "SAVED_LINK" : "SAVED_TITLE"),
+          resourceId: ref.resource_id || key,
+          title: ref.title,
+          url: ref.url ?? undefined,
+          notes: ref.notes ?? undefined,
+          tags: ref.tags ?? [],
+          isPinned: ref.is_pinned,
+          savedAt: ref.saved_at.toISOString(),
+          createdAt: ref.created_at.toISOString(),
+          updatedAt: ref.updated_at.toISOString(),
+        });
+      }
+    }
+
+    for (const preset of existingPresets) {
+      const key = preset.record_id || preset.id;
+      if (!recordsMap.has(key)) {
+        recordsMap.set(key, {
+          id: key,
+          recordId: key,
+          resourceType: "SAVED_SEARCH",
+          savedKind: "SAVED_SEARCH",
+          resourceId: preset.resource_id || key,
+          title: preset.title,
+          query: preset.query_text,
+          notes: preset.notes ?? undefined,
+          settings: preset.search_settings,
+          resourceSelection: preset.resource_selection ?? "ALL",
+          filters: preset.filter_snapshot ?? undefined,
+          isPinned: preset.is_pinned,
+          tags: preset.tags ?? [],
+          savedAt: preset.saved_at.toISOString(),
+          createdAt: preset.created_at.toISOString(),
+          updatedAt: preset.updated_at.toISOString(),
+        });
+      }
+    }
+  } else if (params.datasetType === "SEARCH_HISTORY") {
+    const existingHistory = await prisma.searchHistoryRecord.findMany({
+      where: { owner_id: params.ownerId },
+      orderBy: { executed_at: "desc" },
+      take: 1000,
+    });
+
+    for (const hist of existingHistory) {
+      const key = hist.record_id || hist.manifest_id || hist.id;
+      if (!recordsMap.has(key)) {
+        const rawPayload =
+          hist.raw_payload_json && typeof hist.raw_payload_json === "object"
+            ? (hist.raw_payload_json as Record<string, unknown>)
+            : {};
+        recordsMap.set(key, {
+          ...rawPayload,
+          id: key,
+          recordId: key,
+          title: hist.title || hist.query_text,
+          query: hist.query_text,
+          status: hist.status || "complete",
+          settings: hist.search_settings,
+          resourceSelection: hist.resource_selection ?? "ALL",
+          filters: hist.filter_snapshot ?? undefined,
+          resultsCount: hist.result_count,
+          videoCount: hist.video_count,
+          channelCount: hist.channel_count,
+          playlistCount: hist.playlist_count,
+          topThumbnails: hist.top_thumbnails_json,
+          quotaCostEstimate: hist.quota_units_consumed,
+          manifestId: hist.manifest_id,
+          isPinned: hist.is_pinned,
+          timestamp: hist.executed_at.toISOString(),
+          createdAt: hist.executed_at.toISOString(),
+        });
+      }
+    }
   }
 
   return Array.from(recordsMap.values());
+}
+
+/**
+ * Merges incoming record fields over an existing committed cloud record without
+ * allowing null/undefined/empty values to clobber richer fields already stored in R2.
+ */
+function preserveNonEmptyMerge(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === "string" && v.trim() === "" && typeof existing[k] === "string" && existing[k]) {
+      continue;
+    }
+    if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && (existing[k] as unknown[]).length > 0) {
+      continue;
+    }
+    merged[k] = v;
+  }
+  return merged;
 }
 
 /**
@@ -639,35 +748,32 @@ function mergeCloudAndIncomingRecords(
     if (!key) continue;
 
     if (byIdentity.has(key)) {
-      // Idempotent merge: preserve cloud record, overlay newer incoming fields
+      // Idempotent append-safe merge: preserve existing cloud fields & layer newer non-empty data
       const existing = byIdentity.get(key)!;
-      byIdentity.set(key, { ...existing, ...sanitized });
+      byIdentity.set(key, preserveNonEmptyMerge(existing, sanitized));
     } else {
       // Genuinely new record: append to collection
       byIdentity.set(key, sanitized);
     }
   }
 
-  // 3. Process explicit delta operations
+  // 3. Process delta operations — STRICTLY APPEND-ONLY CLOUD RULE (2026)
+  // Sync uploads must NEVER delete or overwrite prior committed cloud items in R2 or PostgreSQL.
+  // Any DELETE operations in a client outbox only affect local browser state and must NOT prune
+  // committed R2 cloud snapshots or historical archive records during sync/save-all.
   const deletedPlatformItemIds: string[] = [];
   for (const op of operations) {
     if (op.operationType === "DELETE") {
-      deletedPlatformItemIds.push(op.entityId);
-      byIdentity.delete(op.entityId);
-      for (const [key, rec] of byIdentity.entries()) {
-        if (key === op.entityId || recordIdentityKeys(rec).includes(op.entityId)) {
-          byIdentity.delete(key);
-        }
-      }
+      // Preserve existing cloud item cleanly; outbox op still clears once committed.
       continue;
     }
 
-    // UPSERT or APPEND: idempotent update or add
+    // UPSERT or APPEND: idempotent update or append
     const sanitized = sanitizeRecordForStorage(op.payload, datasetType, op.entityId);
     const key = getEntityKey(sanitized, datasetType) || op.entityId;
     if (byIdentity.has(key)) {
       const existing = byIdentity.get(key)!;
-      byIdentity.set(key, { ...existing, ...sanitized });
+      byIdentity.set(key, preserveNonEmptyMerge(existing, sanitized));
     } else {
       byIdentity.set(key, sanitized);
     }
@@ -691,8 +797,8 @@ function mergeCloudAndIncomingRecords(
     existingRecordsCount,
     addedRecordsCount,
     updatedRecordsCount,
-    deletedPlatformItemIds,
-    deletedEntityIds: Array.from(new Set(deletedPlatformItemIds)),
+    deletedPlatformItemIds: [],
+    deletedEntityIds: [],
   };
 }
 
@@ -816,6 +922,7 @@ async function indexReferences(
     ownerId: string;
     datasetId: string;
     generationId: string;
+    manifestKey: string;
     records: Record<string, unknown>[];
     originDeviceId: string | null;
     originDeviceLabel: string | null;
@@ -842,17 +949,26 @@ async function indexReferences(
       const id = toDatabaseUuid(`saved-search:${params.ownerId}:${recordId}`);
       searchIds.push(recordId);
 
+      // Persist full R2 generation provenance alongside canonical search preset metadata
+      // so consolidated /saved-titles-links#saved-searches renders rich R2 Cloud cards.
       const data = {
         owner_id: params.ownerId,
         title: readString(record, "title", "name") || "Untitled search",
         query_text: readString(record, "query", "queryText") || "",
+        notes: readString(record, "notes", "description"),
         search_settings: (record.settings as Prisma.InputJsonValue) ?? {},
+        resource_selection:
+          (record.resourceSelection as Prisma.InputJsonValue | undefined) ?? undefined,
         filter_snapshot:
           (record.filters as Prisma.InputJsonValue | undefined) ?? undefined,
         is_pinned: record.isPinned === true,
         tags: Array.isArray(record.tags)
           ? record.tags.filter((tag): tag is string => typeof tag === "string")
           : [],
+        dataset_id: params.datasetId,
+        generation_id: params.generationId,
+        r2_manifest_key: params.manifestKey.slice(0, 1024),
+        last_run_at: parseDate(record.lastRunAt) ?? undefined,
         record_id: recordId,
         resource_type: "SAVED_SEARCH",
         resource_id: readString(record, "resourceId") || recordId,
@@ -884,6 +1000,11 @@ async function indexReferences(
         record_id: recordId,
         resource_type: normalized.resourceType,
         resource_id: readString(record, "resourceId") || recordId,
+        tags: Array.isArray(record.tags)
+          ? record.tags.filter((tag): tag is string => typeof tag === "string")
+          : [],
+        is_pinned: record.isPinned === true,
+        r2_manifest_key: params.manifestKey.slice(0, 1024),
         origin_device_id: originDeviceId,
         origin_device_label: originDeviceLabel,
         saved_at: savedAt,
@@ -1218,11 +1339,21 @@ async function indexResearchQueue(
   }
 }
 
+/**
+ * Compatibility helper matching search-storage-archive's historical UUID layout
+ * so canonical save-all upserts never create duplicate search_history_records rows.
+ */
+function toLegacyArchiveHistoryUuid(seed: string): string {
+  const hex = crypto.createHash("sha256").update(seed, "utf8").digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 async function indexSearchHistory(
   tx: Prisma.TransactionClient,
   params: {
     ownerId: string;
     generationId: string;
+    manifestKey: string;
     records: Record<string, unknown>[];
     deletedIds?: string[];
   }
@@ -1232,16 +1363,95 @@ async function indexSearchHistory(
     const queryText = (readString(record, "query", "queryText") || "").slice(0, 512);
     if (!rawId || !queryText) continue;
 
-    const id = toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`);
+    const v5Uuid = toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`);
+    const v4ArchiveUuid = toLegacyArchiveHistoryUuid(`search-history:${params.ownerId}:${rawId}`);
+    const manifestId = (readString(record, "manifestId") || rawId).slice(0, 64);
+
+    // Resolve any existing PostgreSQL archive row first (created via either /api/search-storage
+    // or a previous /api/sync/save-all run) so metadata upgrades never duplicate rows or drop manifest payloads.
+    const existing = await tx.searchHistoryRecord.findFirst({
+      where: {
+        owner_id: params.ownerId,
+        OR: [
+          { record_id: rawId.slice(0, 128) },
+          { id: v5Uuid },
+          { id: v4ArchiveUuid },
+          { manifest_id: manifestId },
+        ],
+      },
+      select: {
+        id: true,
+        raw_payload_json: true,
+        is_pinned: true,
+      },
+    });
+
+    const targetId = existing?.id ?? v5Uuid;
+    const existingRaw =
+      existing?.raw_payload_json && typeof existing.raw_payload_json === "object"
+        ? (existing.raw_payload_json as Record<string, unknown>)
+        : null;
+
+    const topThumbnails = Array.isArray(record.topThumbnails)
+      ? record.topThumbnails
+          .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          .slice(0, 8)
+      : [];
+
+    const resultsCount = Math.max(
+      0,
+      Math.floor(readNumber(record, "resultsCount", "resultCount", "itemCount") ?? 0)
+    );
+    const title = (readString(record, "title") || queryText).slice(0, 512);
+    const status = (readString(record, "status") || (resultsCount === 0 ? "empty" : "complete")).slice(0, 32);
+
+    const mergedRawPayload: Record<string, unknown> = {
+      ...(existingRaw ?? {}),
+      id: rawId,
+      recordId: rawId,
+      title,
+      query: queryText,
+      resourceSelection: record.resourceSelection ?? existingRaw?.resourceSelection ?? "ALL",
+      settings: (record.settings as Record<string, unknown> | undefined) ?? existingRaw?.settings ?? {},
+      resultsCount,
+      videoCount: Math.max(0, Math.floor(readNumber(record, "videoCount") ?? 0)),
+      channelCount: Math.max(0, Math.floor(readNumber(record, "channelCount") ?? 0)),
+      playlistCount: Math.max(0, Math.floor(readNumber(record, "playlistCount") ?? 0)),
+      topThumbnails,
+      quotaCostEstimate: Math.max(
+        0,
+        Math.floor(readNumber(record, "quotaUnits", "quotaCostEstimate") ?? 100)
+      ),
+      status,
+      timestamp:
+        readString(record, "timestamp", "executedAt", "createdAt") ||
+        (typeof existingRaw?.createdAt === "string" ? existingRaw.createdAt : new Date().toISOString()),
+      manifestId,
+    };
 
     const data = {
       owner_id: params.ownerId,
+      title,
       query_text: queryText,
+      status,
       search_settings: (record.settings as Prisma.InputJsonValue) ?? {},
-      result_count: Math.max(0, Math.floor(readNumber(record, "resultCount") ?? 0)),
-      quota_units_consumed: Math.max(0, Math.floor(readNumber(record, "quotaUnits", "quotaCostEstimate") ?? 100)),
-      manifest_id: (readString(record, "manifestId") || rawId).slice(0, 64),
+      result_count: resultsCount,
+      video_count: Math.max(0, Math.floor(readNumber(record, "videoCount") ?? 0)),
+      channel_count: Math.max(0, Math.floor(readNumber(record, "channelCount") ?? 0)),
+      playlist_count: Math.max(0, Math.floor(readNumber(record, "playlistCount") ?? 0)),
+      top_thumbnails_json: topThumbnails as Prisma.InputJsonValue,
+      quota_units_consumed: Math.max(
+        0,
+        Math.floor(readNumber(record, "quotaUnits", "quotaCostEstimate") ?? 100)
+      ),
+      manifest_id: manifestId,
       generation_id: params.generationId,
+      r2_manifest_key: params.manifestKey.slice(0, 1024),
+      is_pinned: record.isPinned === true || existing?.is_pinned === true,
+      record_id: rawId.slice(0, 128),
+      resource_selection: (record.resourceSelection as Prisma.InputJsonValue | undefined) ?? "ALL",
+      filter_snapshot: (record.filters as Prisma.InputJsonValue | undefined) ?? undefined,
+      raw_payload_json: mergedRawPayload as Prisma.InputJsonValue,
       executed_at:
         parseDate(record.timestamp) ||
         parseDate(record.executedAt) ||
@@ -1250,8 +1460,8 @@ async function indexSearchHistory(
     };
 
     await tx.searchHistoryRecord.upsert({
-      where: { id },
-      create: { id, ...data },
+      where: { id: targetId },
+      create: { id: targetId, ...data },
       update: data,
     });
   }
@@ -1259,14 +1469,16 @@ async function indexSearchHistory(
   // Only delete explicitly tombstoned history records (never wipe all rows).
   const deletedHistoryIds = params.deletedIds || [];
   if (deletedHistoryIds.length > 0) {
-    const deletedHistoryUuids = deletedHistoryIds.map((rawId) =>
-      toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`)
-    );
+    const deletedHistoryUuids = deletedHistoryIds.flatMap((rawId) => [
+      toDatabaseUuid(`search-history:${params.ownerId}:${rawId}`),
+      toLegacyArchiveHistoryUuid(`search-history:${params.ownerId}:${rawId}`),
+    ]);
     await tx.searchHistoryRecord.deleteMany({
       where: {
         owner_id: params.ownerId,
         OR: [
           { id: { in: deletedHistoryUuids } },
+          { record_id: { in: deletedHistoryIds } },
           { manifest_id: { in: deletedHistoryIds } },
         ],
       },
@@ -1732,6 +1944,7 @@ export async function POST(request: Request) {
               ownerId: profile.id,
               datasetId: dataset.id,
               generationId,
+              manifestKey,
               records: snapshotRecords,
               originDeviceId: batchOriginDeviceId,
               originDeviceLabel: batchOriginDeviceLabel,
@@ -1755,6 +1968,7 @@ export async function POST(request: Request) {
             await indexSearchHistory(tx, {
               ownerId: profile.id,
               generationId,
+              manifestKey,
               records: snapshotRecords,
               deletedIds: mergedSnapshot.deletedEntityIds,
             });

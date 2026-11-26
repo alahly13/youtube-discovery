@@ -45,6 +45,9 @@ const TARGET_FILES = [
   "src/lib/search-storage/search-storage-archive.ts",
   "src/lib/manifests/local-manifest-store.ts",
   "src/app/api/sync/save-all/route.ts",
+  "src/app/api/history/route.ts",
+  "src/app/api/references/route.ts",
+  "src/app/api/storage/reconciliation/compare/route.ts",
 ];
 
 function compileTargets() {
@@ -827,6 +830,7 @@ async function run() {
         },
         storageManifestPart: { create: async ({ data }) => data },
         savedReference: {
+          findMany: async () => [],
           upsert: async ({ create }) => create,
           deleteMany: async (args) => {
             deleteCalls.push({ model: "savedReference", args });
@@ -834,6 +838,7 @@ async function run() {
           },
         },
         savedSearchPreset: {
+          findMany: async () => [],
           upsert: async ({ create }) => create,
           deleteMany: async (args) => {
             deleteCalls.push({ model: "savedSearchPreset", args });
@@ -992,6 +997,506 @@ async function run() {
       assert.equal(usageEvents.length, 1);
       const today = await poolsMod.readTodayUsage({});
       assert.equal(today.byKey[added.id]?.units, 100);
+    });
+
+    // 9. REFERENCES append-only preservation: DELETE outbox ops + new items never delete or overwrite existing R2/DB records
+    await test("9. REFERENCES save-all preserves prior R2+DB items strictly append-only even when DELETE op arrives", async () => {
+      const saveAllMod = projectRequire(
+        path.join(tmpDir, "src", "app", "api", "sync", "save-all", "route.js")
+      );
+      const uploadedParts = new Map();
+      const deleteCallsLocal = [];
+      const upsertedPresets = [];
+
+      prismaState = {
+        $transaction: async (cb) => cb(prismaState),
+        userProfile: {
+          findFirst: async () => ({
+            id: profileUuid,
+            auth_user_id: "auth-u-1",
+            storage_owner_uuid: ownerUuid,
+            username: "asdy",
+            role: "admin",
+          }),
+        },
+        saveSyncBatch: {
+          findUnique: async () => null,
+          create: async ({ data }) => ({ id: "batch-uuid-9", ...data }),
+          upsert: async ({ create }) => ({ id: "batch-uuid-9", ...create }),
+          update: async () => ({}),
+        },
+        storageDataset: {
+          findFirst: async () => ({
+            id: "ds-ref-9",
+            owner_id: profileUuid,
+            dataset_type: "REFERENCES",
+            current_revision: 1n,
+            current_generation_id: null,
+          }),
+          updateMany: async () => ({ count: 1 }),
+        },
+        storageGeneration: {
+          findFirst: async () => null,
+          create: async ({ data }) => data,
+        },
+        storageManifestPart: { create: async ({ data }) => data },
+        savedReference: {
+          findMany: async () => [
+            {
+              id: "ref-old-uuid",
+              record_id: "ref_old_1",
+              resource_type: "SAVED_LINK",
+              resource_id: "ref_old_1",
+              title: "Existing Cloud Reference",
+              url: "https://example.com/existing",
+              notes: "Keep forever",
+              tags: ["cloud"],
+              is_pinned: false,
+              saved_at: new Date("2026-11-20T00:00:00Z"),
+              created_at: new Date("2026-11-20T00:00:00Z"),
+              updated_at: new Date("2026-11-20T00:00:00Z"),
+            },
+          ],
+          upsert: async ({ create }) => create,
+          deleteMany: async (args) => {
+            deleteCallsLocal.push({ model: "savedReference", args });
+            return { count: 0 };
+          },
+        },
+        savedSearchPreset: {
+          findMany: async () => [],
+          upsert: async ({ create }) => {
+            upsertedPresets.push(create);
+            return create;
+          },
+          deleteMany: async (args) => {
+            deleteCallsLocal.push({ model: "savedSearchPreset", args });
+            return { count: 0 };
+          },
+        },
+        auditLog: { create: async ({ data }) => data },
+      };
+
+      mockR2Client = {
+        listObjects: async () => ({ objects: [], truncated: false, isTruncated: false }),
+        listAllObjects: async () => ({ objects: [], truncated: false, incomplete: false }),
+        getObject: async () => {
+          throw Object.assign(new Error("Not found"), { status: 404 });
+        },
+        uploadBatch: async (batchId, _dt, items) => {
+          for (const it of items) {
+            uploadedParts.set(it.key, it.data);
+          }
+          return {
+            ok: true,
+            batchId,
+            uploadedCount: items.length,
+            receipts: items.map((it) => ({
+              key: it.key,
+              sha256: crypto.createHash("sha256").update(it.data).digest("hex"),
+              size: it.data.length,
+              etag: `"mock-etag"`,
+              uploaded: new Date().toISOString(),
+            })),
+          };
+        },
+        verifyBatch: async (_b, items) => ({ ok: true, verifiedCount: items.length, failures: [] }),
+        putObject: async (_bucket, key, buf) => {
+          uploadedParts.set(key, buf);
+          return { ok: true, key, sha256: crypto.createHash("sha256").update(buf).digest("hex"), bytes: buf.length };
+        },
+      };
+
+      const req = new Request("http://localhost:3000/api/sync/save-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          batchId: "b_ref_append_9",
+          datasets: [
+            {
+              datasetType: "REFERENCES",
+              idempotencyKey: "idem_ref_append_9",
+              operations: [
+                {
+                  operationId: "op_ref_del",
+                  entityId: "ref_old_1",
+                  operationType: "DELETE",
+                  payload: {},
+                },
+                {
+                  operationId: "op_ref_new_search",
+                  entityId: "srch_preset_1",
+                  operationType: "UPSERT",
+                  payload: {
+                    id: "srch_preset_1",
+                    recordId: "srch_preset_1",
+                    resourceType: "SAVED_SEARCH",
+                    title: "Quantum Documentary Search",
+                    query: "quantum entanglement 2026",
+                    notes: "Separated section preset",
+                    resourceSelection: "video",
+                    settings: { safeSearch: "none" },
+                    isPinned: true,
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const res = await saveAllMod.POST(req);
+      const body = await res.json();
+      assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(body)}`);
+      assert.equal(deleteCallsLocal.length, 0, "Append-only save-all must NEVER call deleteMany");
+      assert.equal(upsertedPresets.length, 1);
+      assert.equal(upsertedPresets[0].notes, "Separated section preset");
+      assert.ok(String(upsertedPresets[0].r2_manifest_key || "").includes(`asdy/persistence/${ownerUuid}/references/generations/`));
+
+      const partKey = Array.from(uploadedParts.keys()).find((k) => k.includes("/parts/"));
+      assert.ok(partKey, "Expected part object uploaded to R2");
+      const partJson = JSON.parse(uploadedParts.get(partKey).toString("utf8"));
+      const rawRecords = Array.isArray(partJson.records)
+        ? partJson.records
+        : Array.isArray(partJson.items)
+          ? partJson.items
+          : [];
+      const partIds = rawRecords.map((r) => r.recordId || r.id);
+      assert.ok(partIds.includes("ref_old_1"), "Existing cloud reference must remain preserved in new R2 generation");
+      assert.ok(partIds.includes("srch_preset_1"), "New saved search preset appended cleanly");
+    });
+
+    // 10. SEARCH_HISTORY lossless persistence + GET /api/history & GET /api/references separation
+    await test("10. SEARCH_HISTORY persists full counts/thumbnails & GET /api/history + /api/references isolate views cleanly", async () => {
+      const saveAllMod = projectRequire(
+        path.join(tmpDir, "src", "app", "api", "sync", "save-all", "route.js")
+      );
+      const historyRouteMod = projectRequire(
+        path.join(tmpDir, "src", "app", "api", "history", "route.js")
+      );
+      const referencesRouteMod = projectRequire(
+        path.join(tmpDir, "src", "app", "api", "references", "route.js")
+      );
+
+      const historyDb = new Map();
+      const r2Objects = new Map();
+
+      prismaState = {
+        $transaction: async (cb) => cb(prismaState),
+        userProfile: {
+          findFirst: async () => ({
+            id: profileUuid,
+            auth_user_id: "auth-u-1",
+            storage_owner_uuid: ownerUuid,
+            username: "asdy",
+            role: "admin",
+          }),
+        },
+        saveSyncBatch: {
+          findUnique: async () => null,
+          create: async ({ data }) => ({ id: "batch-uuid-10", ...data }),
+          upsert: async ({ create }) => ({ id: "batch-uuid-10", ...create }),
+          update: async () => ({}),
+        },
+        storageDataset: {
+          findFirst: async () => ({
+            id: "ds-hist-10",
+            owner_id: profileUuid,
+            dataset_type: "SEARCH_HISTORY",
+            current_revision: 0n,
+            current_generation_id: null,
+          }),
+          updateMany: async () => ({ count: 1 }),
+        },
+        storageGeneration: {
+          findFirst: async () => null,
+          create: async ({ data }) => data,
+        },
+        storageManifestPart: { create: async ({ data }) => data },
+        searchHistoryRecord: {
+          findMany: async () => Array.from(historyDb.values()),
+          findFirst: async ({ where }) =>
+            Array.from(historyDb.values()).find((r) =>
+              (where.OR || []).some((cond) => cond.record_id === r.record_id || cond.id === r.id)
+            ) || null,
+          upsert: async ({ where, create }) => {
+            const row = {
+              id: where.id,
+              updated_at: new Date(),
+              ...create,
+            };
+            historyDb.set(where.id, row);
+            return row;
+          },
+          deleteMany: async () => ({ count: 0 }),
+        },
+        savedReference: {
+          findMany: async () => [
+            {
+              id: "ref-uuid-1",
+              record_id: "ref_1",
+              resource_type: "SAVED_LINK",
+              resource_id: "ref_1",
+              title: "Saved Link Only",
+              url: "https://example.org/doc",
+              notes: null,
+              tags: [],
+              is_pinned: false,
+              r2_manifest_key: `asdy/persistence/${ownerUuid}/references/generations/g1/manifest.json`,
+              generation_id: "g1",
+              saved_at: new Date(),
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        },
+        savedSearchPreset: {
+          findMany: async () => [
+            {
+              id: "preset-uuid-1",
+              record_id: "srch_1",
+              resource_type: "SAVED_SEARCH",
+              resource_id: "srch_1",
+              title: "Saved Preset Only",
+              query_text: "machine learning 2026",
+              notes: "Notes",
+              search_settings: { query: "machine learning 2026" },
+              resource_selection: "video",
+              filter_snapshot: null,
+              is_pinned: true,
+              tags: [],
+              r2_manifest_key: `asdy/persistence/${ownerUuid}/references/generations/g1/manifest.json`,
+              generation_id: "g1",
+              saved_at: new Date(),
+              created_at: new Date(),
+              updated_at: new Date(),
+            },
+          ],
+        },
+        auditLog: { create: async ({ data }) => data },
+      };
+
+      mockR2Client = {
+        listObjects: async () => ({ objects: [], truncated: false, isTruncated: false }),
+        listAllObjects: async () => ({ objects: [], truncated: false, incomplete: false }),
+        getObject: async (_bucket, key) => {
+          const buf = r2Objects.get(key);
+          if (!buf) throw Object.assign(new Error("Not found"), { status: 404 });
+          return {
+            data: buf,
+            meta: { etag: `"etag"` },
+            sha256: crypto.createHash("sha256").update(buf).digest("hex"),
+          };
+        },
+        uploadBatch: async (batchId, _dt, items) => {
+          for (const it of items) r2Objects.set(it.key, it.data);
+          return {
+            ok: true,
+            batchId,
+            uploadedCount: items.length,
+            receipts: items.map((it) => ({
+              key: it.key,
+              sha256: crypto.createHash("sha256").update(it.data).digest("hex"),
+              size: it.data.length,
+              etag: `"mock-etag"`,
+              uploaded: new Date().toISOString(),
+            })),
+          };
+        },
+        verifyBatch: async (_b, items) => ({ ok: true, verifiedCount: items.length, failures: [] }),
+        putObject: async (_bucket, key, buf) => {
+          r2Objects.set(key, buf);
+          return { ok: true, key, sha256: crypto.createHash("sha256").update(buf).digest("hex"), bytes: buf.length };
+        },
+      };
+
+      const syncRes = await saveAllMod.POST(
+        new Request("http://localhost:3000/api/sync/save-all", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            batchId: "b_hist_10",
+            datasets: [
+              {
+                datasetType: "SEARCH_HISTORY",
+                idempotencyKey: "idem_hist_10",
+                operations: [
+                  {
+                    operationId: "op_h1",
+                    entityId: "hist_rich_1",
+                    operationType: "APPEND",
+                    payload: {
+                      id: "hist_rich_1",
+                      title: "AI Compiler Design",
+                      query: "ai compiler design 2026",
+                      resourceSelection: "video",
+                      resultsCount: 42,
+                      videoCount: 30,
+                      channelCount: 8,
+                      playlistCount: 4,
+                      topThumbnails: ["https://i.ytimg.com/vi/abc/hqdefault.jpg"],
+                      status: "complete",
+                    },
+                  },
+                ],
+              },
+            ],
+          }),
+        })
+      );
+      assert.equal(syncRes.status, 200);
+      const storedHist = Array.from(historyDb.values())[0];
+      assert.equal(storedHist.result_count, 42, "resultsCount preserved into result_count");
+      assert.equal(storedHist.video_count, 30, "videoCount preserved");
+      assert.equal(storedHist.title, "AI Compiler Design");
+
+      const histGetRes = await historyRouteMod.GET(new Request("http://localhost:3000/api/history"));
+      const histGetBody = await histGetRes.json();
+      assert.equal(histGetBody.ok, true);
+      assert.equal(histGetBody.items.length, 1);
+      assert.equal(histGetBody.items[0]._storageState, "CLOUD_ONLY");
+      assert.equal(histGetBody.items[0].resultsCount, 42);
+      assert.equal(histGetBody.items[0].topThumbnails[0], "https://i.ytimg.com/vi/abc/hqdefault.jpg");
+
+      const refsTitlesRes = await referencesRouteMod.GET(
+        new Request("http://localhost:3000/api/references?kind=titles_links")
+      );
+      const refsTitlesBody = await refsTitlesRes.json();
+      assert.equal(refsTitlesBody.items.length, 1);
+      assert.equal(refsTitlesBody.items[0].resourceType, "SAVED_LINK");
+
+      const refsSearchesRes = await referencesRouteMod.GET(
+        new Request("http://localhost:3000/api/references?kind=searches")
+      );
+      const refsSearchesBody = await refsSearchesRes.json();
+      assert.equal(refsSearchesBody.items.length, 1);
+      assert.equal(refsSearchesBody.items[0].resourceType, "SAVED_SEARCH");
+    });
+
+    // 11. reconciliation/compare isolates SAVED_SEARCH vs SAVED_TITLES_LINKS cleanly
+    await test("11. reconciliation/compare filters resourceType inside REFERENCES cleanly", async () => {
+      const compareMod = projectRequire(
+        path.join(tmpDir, "src", "app", "api", "storage", "reconciliation", "compare", "route.js")
+      );
+      const genId = "gen_iso_1";
+      const partKey = `asdy/persistence/${ownerUuid}/references/generations/${genId}/parts/part-0001.json`;
+      const manifestKey = `asdy/persistence/${ownerUuid}/references/generations/${genId}/manifest.json`;
+      const partBuf = Buffer.from(
+        JSON.stringify({
+          records: [
+            { id: "link_cloud_1", resourceType: "SAVED_LINK", title: "Link 1", url: "https://example.com" },
+            { id: "search_cloud_1", resourceType: "SAVED_SEARCH", title: "Search 1", query: "rust wasm" },
+          ],
+        }),
+        "utf8"
+      );
+
+      prismaState = {
+        userProfile: {
+          findFirst: async () => ({
+            id: profileUuid,
+            auth_user_id: "auth-u-1",
+            storage_owner_uuid: ownerUuid,
+            username: "asdy",
+            role: "admin",
+          }),
+        },
+        storageDataset: {
+          findFirst: async () => ({
+            id: "ds-ref-iso",
+            owner_id: profileUuid,
+            dataset_type: "REFERENCES",
+            current_generation_id: genId,
+            current_revision: 1n,
+          }),
+        },
+        storageGeneration: {
+          findMany: async () => [
+            {
+              id: genId,
+              generation_number: 1,
+              state: "COMMITTED",
+              manifest_key: manifestKey,
+              parts: [
+                {
+                  id: "part-1",
+                  part_number: 1,
+                  storage_path: partKey,
+                  sha256: crypto.createHash("sha256").update(partBuf).digest("hex"),
+                  byte_size: partBuf.length,
+                  item_count: 2,
+                  min_item_id: null,
+                  max_item_id: null,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const manifestBuf = Buffer.from(
+        JSON.stringify({ generationId: genId, parts: [{ storagePath: partKey }] }),
+        "utf8"
+      );
+
+      mockR2Client = {
+        listObjects: async () => ({ objects: [], truncated: false, isTruncated: false }),
+        listAllObjects: async () => ({
+          objects: [
+            { key: manifestKey, size: manifestBuf.length, etag: `"m1"` },
+            { key: partKey, size: partBuf.length, etag: `"e1"` },
+          ],
+          truncated: false,
+          incomplete: false,
+        }),
+        getObject: async (_b, key) => {
+          if (key === manifestKey) {
+            return {
+              data: manifestBuf,
+              meta: { etag: `"m1"` },
+              sha256: crypto.createHash("sha256").update(manifestBuf).digest("hex"),
+            };
+          }
+          if (key === partKey) {
+            return {
+              data: partBuf,
+              meta: { etag: `"e1"` },
+              sha256: crypto.createHash("sha256").update(partBuf).digest("hex"),
+            };
+          }
+          throw Object.assign(new Error("Not found"), { status: 404 });
+        },
+      };
+
+      const resTitles = await compareMod.POST(
+        new Request("http://localhost:3000/api/storage/reconciliation/compare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            datasetType: "REFERENCES",
+            resourceType: "SAVED_TITLES_LINKS",
+            localRecords: [],
+          }),
+        })
+      );
+      const bodyTitles = await resTitles.json();
+      assert.equal(bodyTitles.cloudOnlyRecords.length, 1);
+      assert.equal(bodyTitles.cloudOnlyRecords[0].id, "link_cloud_1");
+
+      const resSearches = await compareMod.POST(
+        new Request("http://localhost:3000/api/storage/reconciliation/compare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            datasetType: "REFERENCES",
+            resourceType: "SAVED_SEARCH",
+            localRecords: [],
+          }),
+        })
+      );
+      const bodySearches = await resSearches.json();
+      assert.equal(bodySearches.cloudOnlyRecords.length, 1);
+      assert.equal(bodySearches.cloudOnlyRecords[0].id, "search_cloud_1");
     });
 
     console.log(`\n══════════════════════════════════════════════════════════════`);

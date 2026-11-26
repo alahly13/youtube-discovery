@@ -75,6 +75,19 @@ function toHistoryUuid(ownerId: string, recordId: string): string {
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
+/**
+ * Computes the deterministic UUID v5 variant used by `/api/sync/save-all`
+ * so direct archive lookups & sync reads always resolve the same database row.
+ */
+function toSyncHistoryUuid(ownerId: string, recordId: string): string {
+  const hash = crypto
+    .createHash("sha256")
+    .update(`search-history:${ownerId}:${recordId}`)
+    .digest("hex");
+  const variant = ((parseInt(hash[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-${variant}${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
 function entryToMetadata(entry: IndexEntry): StoredSearchMetadata | null {
   const m = entry.meta;
   if (!m || typeof m !== "object") return null;
@@ -183,19 +196,36 @@ export async function listSearchArchiveIndex(
           continue;
         }
         const canonicalId = row.record_id || row.manifest_id || row.id;
+        const thumbnails = Array.isArray(row.top_thumbnails_json)
+          ? row.top_thumbnails_json.filter((item): item is string => typeof item === "string")
+          : [];
+        const statusValue =
+          row.status === "failed" ||
+          row.status === "partial" ||
+          row.status === "empty" ||
+          row.status === "complete"
+            ? row.status
+            : row.result_count === 0
+              ? "empty"
+              : "complete";
+
         byId.set(canonicalId, {
           id: canonicalId,
-          title: row.query_text,
+          title: row.title || row.query_text,
           query: row.query_text,
           resourceSelection:
             (row.resource_selection as unknown as YouTubeSearchResourceSelection) ?? "ALL",
           settings: (row.search_settings as Partial<YouTubeSearchSettings>) ?? {},
           itemCount: row.result_count,
+          videoCount: row.video_count,
+          channelCount: row.channel_count,
+          playlistCount: row.playlist_count,
           quotaCostEstimate: row.quota_units_consumed,
-          status: row.result_count === 0 ? "empty" : "complete",
+          status: statusValue,
           createdAt: row.executed_at.toISOString(),
           searchedAt: row.executed_at.getTime(),
           expiresAt: null,
+          topThumbnails: thumbnails,
         });
       }
     }
@@ -253,20 +283,48 @@ export async function saveSearchToArchive(
     throw new Error("Unable to resolve administrator profile for search archive.");
   }
 
-  const dbId = toHistoryUuid(admin.profileId, id);
+  const v4DbId = toHistoryUuid(admin.profileId, id);
+  const v5DbId = toSyncHistoryUuid(admin.profileId, id);
   const itemsCount = payload.manifest.itemCount ?? payload.manifest.normalizedItems?.length ?? 0;
   const quotaUnits = Math.max(0, Math.floor(payload.manifest.quotaCostEstimate ?? 100));
+  const counts = { video: 0, channel: 0, playlist: 0 };
+  const topThumbnails: string[] = [];
+  for (const item of payload.manifest.normalizedItems ?? []) {
+    if (item.itemType === "channel") counts.channel += 1;
+    else if (item.itemType === "playlist") counts.playlist += 1;
+    else counts.video += 1;
+    if (topThumbnails.length < 6 && typeof item.thumbnailUrl === "string" && item.thumbnailUrl) {
+      topThumbnails.push(item.thumbnailUrl);
+    }
+  }
+
+  const existingRow = await prisma.searchHistoryRecord.findFirst({
+    where: {
+      owner_id: admin.profileId,
+      OR: [{ record_id: id.slice(0, 128) }, { id: v4DbId }, { id: v5DbId }],
+    },
+    select: { id: true, is_pinned: true, generation_id: true, r2_manifest_key: true },
+  });
+  const dbId = existingRow?.id ?? v4DbId;
+  const manifestStatus = payload.manifest.status || (itemsCount === 0 ? "empty" : "complete");
 
   await prisma.searchHistoryRecord.upsert({
     where: { id: dbId },
     create: {
       id: dbId,
       owner_id: admin.profileId,
+      title: record.title.slice(0, 512),
       query_text: record.query.slice(0, 512),
+      status: String(manifestStatus).slice(0, 32),
       search_settings: record.settings as unknown as Prisma.InputJsonValue,
       result_count: itemsCount,
+      video_count: counts.video,
+      channel_count: counts.channel,
+      playlist_count: counts.playlist,
+      top_thumbnails_json: topThumbnails as Prisma.InputJsonValue,
       quota_units_consumed: quotaUnits,
       manifest_id: (payload.manifest.manifestId || id).slice(0, 64),
+      is_pinned: false,
       executed_at: new Date(now),
       record_id: id.slice(0, 128),
       resource_selection: record.resourceSelection as unknown as Prisma.InputJsonValue,
@@ -275,9 +333,15 @@ export async function saveSearchToArchive(
       expires_at: null,
     },
     update: {
+      title: record.title.slice(0, 512),
       query_text: record.query.slice(0, 512),
+      status: String(manifestStatus).slice(0, 32),
       search_settings: record.settings as unknown as Prisma.InputJsonValue,
       result_count: itemsCount,
+      video_count: counts.video,
+      channel_count: counts.channel,
+      playlist_count: counts.playlist,
+      top_thumbnails_json: topThumbnails as Prisma.InputJsonValue,
       quota_units_consumed: quotaUnits,
       manifest_id: (payload.manifest.manifestId || id).slice(0, 64),
       executed_at: new Date(now),
@@ -301,10 +365,11 @@ export async function getSearchFromArchive(
     const admin = await resolveCanonicalAdminProfile(ownerProfileId);
     if (admin) {
       const dbUuid = toHistoryUuid(admin.profileId, id);
+      const syncUuid = toSyncHistoryUuid(admin.profileId, id);
       const row = await prisma.searchHistoryRecord.findFirst({
         where: {
           owner_id: admin.profileId,
-          OR: [{ id: dbUuid }, { record_id: id }, { manifest_id: id }],
+          OR: [{ id: dbUuid }, { id: syncUuid }, { record_id: id }, { manifest_id: id }],
         },
       });
       if (row) {
@@ -346,10 +411,11 @@ export async function deleteSearchFromArchive(
     const admin = await resolveCanonicalAdminProfile(ownerProfileId);
     if (!admin) return false;
     const dbUuid = toHistoryUuid(admin.profileId, id);
+    const syncUuid = toSyncHistoryUuid(admin.profileId, id);
     const res = await prisma.searchHistoryRecord.deleteMany({
       where: {
         owner_id: admin.profileId,
-        OR: [{ id: dbUuid }, { record_id: id }, { manifest_id: id }],
+        OR: [{ id: dbUuid }, { id: syncUuid }, { record_id: id }, { manifest_id: id }],
       },
     });
     return res.count > 0;

@@ -730,7 +730,8 @@ Latest verification results on 2026-11-26 (History & Consolidated Saved Referenc
   - `test-complete-storage-pipeline.mjs` (**10 PASSED, 0 FAILED**).
   - `test-unified-saved-lifecycle.mjs` (**25 Passed, 0 Failed**).
   - `test-cloud-hydration-and-canonical-sync.mjs` (**44 Passed, 0 Failed**).
-- Note on blocked checks: full repo `eslint` (`task-1380`) timed out on low-spec CPU and local `next build` / `npm run build` was intentionally omitted per hardware-resource instructions; production build verification runs remotely on Vercel upon pushing to `origin/main`. Cloudflare Worker live deploy remains pending Cloudflare account auth/API token.
+- `test-cloudflare-r2-workers.mjs` (**11 PASSED, 0 FAILED**) and Wrangler `--dry-run` builds for both `new-youtube-discovery-api` (31.24 KiB / gzip 6.38 KiB) and `old-youtube-discovery-api` (16.72 KiB / gzip 4.38 KiB): **PASSED** after hardening both Workers (version `1.1.0`, strict path sanitization, zero-byte rejection, conditional GET `.body` guards, `Vary: Origin`, `X-Payload-SHA256`, and OLD-token `storage_owner_uuid` check).
+- Note on blocked checks: full repo `eslint` (`task-1380`) timed out on low-spec CPU and local `next build` / `npm run build` was intentionally omitted per hardware-resource instructions; production build verification ran remotely via Vercel GitHub integration (`success`). Cloudflare Worker live deploy remains pending user execution with valid Cloudflare account auth/API token (`15cefbbb4dd98db0a0f85ad4f3134e82`).
 
 
 

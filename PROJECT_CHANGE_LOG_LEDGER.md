@@ -5132,3 +5132,33 @@ None — no AI code modified.
 ### Whether migrations were created/applied: Yes — `20261125010000_search_history_and_saved_preset_enrichment` created and applied
 ### Whether `db:apply` was run: No (applied via `prisma migrate deploy`)
 
+---
+
+## 2026-11-26 — Cloudflare Worker Security & Integrity Hardening (`new` & `old` API Workers)
+
+- **Date/Time:** 2026-11-26 07:55 (+02:00)
+- **Agent/Model:** Antigravity Agent
+- **Task summary:** Hardened both `cloudflare/workers/new-youtube-discovery-api/src/index.ts` and `cloudflare/workers/old-youtube-discovery-api/src/index.ts` (v1.1.0), verified both bundles with Wrangler `--dry-run`, and re-verified `test-storage-hardening-v2.mjs` + `test-cloudflare-r2-workers.mjs`.
+
+### Files changed
+- `cloudflare/workers/new-youtube-discovery-api/src/index.ts`
+- `cloudflare/workers/old-youtube-discovery-api/src/index.ts`
+- `youtube_discovery_ledger.md`, `PROJECT_CHANGE_LOG_LEDGER.md`
+
+### Technical details
+- Added `Vary: Origin` and exposed `X-Payload-SHA256` on CORS headers and `GET`/`HEAD` responses in both Workers; bumped `/health` version to `1.1.0`.
+- Hardened `sanitizeKey()` in both Workers against double slashes (`//`), control bytes (`\x00-\x1f`, `\x7f`), and relative dot segments (`.`, `..`).
+- Rejected 0-byte empty uploads (`400 WORKER_INVALID_REQUEST`) in `/v1/batches/upload` & single `PUT` (`new-youtube-discovery-api`) and `PUT` (`old-youtube-discovery-api`).
+- Harmonized single `PUT` idempotent/conflict responses in `new-youtube-discovery-api` (`sha256` included on idempotent 200; `WORKER_IMMUTABLE_CONFLICT` code on 409) and restricted write-temp mutability strictly to `isCanonicalTempKey(key, owner)`.
+- Added conditional R2 `GET` body presence guard (`!("body" in obj) || !obj.body` -> HTTP 304) in both Workers and required `claims.storage_owner_uuid` presence on every `old-youtube-discovery-api` capability token.
+
+### Verification run and results
+- `wrangler deploy --dry-run --config cloudflare/workers/new-youtube-discovery-api/wrangler.jsonc`: **PASSED** (31.24 KiB / gzip 6.38 KiB)
+- `wrangler deploy --dry-run --config cloudflare/workers/old-youtube-discovery-api/wrangler.jsonc`: **PASSED** (16.72 KiB / gzip 4.38 KiB)
+- `node scripts/test-storage-hardening-v2.mjs`: **11/11 PASSED**
+- `node scripts/test-cloudflare-r2-workers.mjs`: **11 PASSED, 0 FAILED**
+
+### Whether secrets were printed: No
+### Whether migrations were created/applied: No (no DB schema change in this Worker step)
+### Whether `db:apply` was run: No
+

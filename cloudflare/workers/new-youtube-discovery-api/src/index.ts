@@ -211,6 +211,7 @@ function getCorsHeaders(request: Request, env: Env): Headers {
     : DEFAULT_ALLOWED_ORIGINS;
 
   const headers = new Headers();
+  headers.set("Vary", "Origin");
   if (allowed.includes(origin)) {
     headers.set("Access-Control-Allow-Origin", origin);
   } else if (!origin) {
@@ -218,7 +219,7 @@ function getCorsHeaders(request: Request, env: Env): Headers {
   }
   headers.set("Access-Control-Allow-Methods", "GET, HEAD, PUT, POST, DELETE, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, Range, X-Custom-Metadata");
-  headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Type, Content-Range, ETag");
+  headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Type, Content-Range, ETag, X-Payload-SHA256");
   headers.set("Access-Control-Max-Age", "86400");
   return headers;
 }
@@ -244,10 +245,19 @@ function jsonResponse(data: unknown, status = 200, corsHeaders: Headers): Respon
 }
 
 function sanitizeKey(raw: string): string {
-  // Strip leading slashes and prevent directory traversal
+  // Strip leading slashes and reject directory traversal, control chars, or dot segments
   const key = decodeURIComponent(raw).replace(/^\/+/, "");
-  if (key.includes("..") || key.includes("\\")) {
-    throw new Error("Invalid object key: path traversal not permitted.");
+  if (
+    key.includes("..") ||
+    key.includes("\\") ||
+    key.includes("//") ||
+    /[\x00-\x1f\x7f]/.test(key)
+  ) {
+    throw new Error("Invalid object key: unsafe path characters or traversal not permitted.");
+  }
+  const segments = key.split("/");
+  if (segments.some((seg) => seg === "." || seg === "..")) {
+    throw new Error("Invalid object key: relative path segments are not permitted.");
   }
   return key;
 }
@@ -368,7 +378,7 @@ const worker = {
           ok: true,
           worker: WORKER_IDENTITY,
           bucket_kind: BUCKET_KIND,
-          version: "1.0.0",
+          version: "1.1.0",
           backend: "cloudflare-r2",
           binding_configured: Boolean(env.NEW_BUCKET),
           timestamp: new Date().toISOString(),
@@ -578,6 +588,14 @@ const worker = {
             bytes = new TextEncoder().encode(item.content);
           }
 
+          if (bytes.byteLength === 0) {
+            return jsonResponse(
+              { code: "WORKER_INVALID_REQUEST", error: `Object '${key}' payload cannot be empty (0 bytes).` },
+              400,
+              cors
+            );
+          }
+
           if (bytes.byteLength > MAX_SINGLE_OBJECT_BYTES) {
             return jsonResponse(
               { code: "WORKER_PAYLOAD_TOO_LARGE", error: `Object '${key}' is ${bytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte per-object limit.` },
@@ -656,8 +674,7 @@ const worker = {
 
           const isImmutable =
             !isMutableIndexKey(w.key) &&
-            !isCanonicalTempKey(w.key, owner) &&
-            !(owner && w.key.startsWith(`${owner}/temp/`));
+            !isCanonicalTempKey(w.key, owner);
           const uploadedObj = await env.NEW_BUCKET.put(w.key, w.bytes, {
             httpMetadata: { contentType: w.contentType },
             customMetadata: {
@@ -948,9 +965,16 @@ const worker = {
 
         // Buffer the body so size and SHA-256 are verified before any write.
         const requestBytes = new Uint8Array(await request.arrayBuffer());
+        if (requestBytes.byteLength === 0) {
+          return jsonResponse(
+            { code: "WORKER_INVALID_REQUEST", error: "Payload cannot be empty (0 bytes)." },
+            400,
+            cors
+          );
+        }
         if (requestBytes.byteLength > MAX_SINGLE_OBJECT_BYTES) {
           return jsonResponse(
-            { error: `Payload is ${requestBytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte object limit.` },
+            { code: "WORKER_PAYLOAD_TOO_LARGE", error: `Payload is ${requestBytes.byteLength} bytes, exceeding the ${MAX_SINGLE_OBJECT_BYTES} byte object limit.` },
             413,
             cors
           );
@@ -972,6 +996,7 @@ const worker = {
                 size: existing.size,
                 etag: existing.httpEtag,
                 uploaded: existing.uploaded.toISOString(),
+                sha256: computedHex,
                 idempotent: true,
               },
               200,
@@ -979,7 +1004,10 @@ const worker = {
             );
           }
           return jsonResponse(
-            { error: `Immutable object '${key}' already exists with different content.` },
+            {
+              code: "WORKER_IMMUTABLE_CONFLICT",
+              error: `Immutable object '${key}' already exists with different content.`,
+            },
             409,
             cors
           );
@@ -988,8 +1016,7 @@ const worker = {
         const ownerUuid = authCheck.claims.storage_owner_uuid;
         const isImmutable =
           !isMutableIndexKey(key) &&
-          !isCanonicalTempKey(key, ownerUuid) &&
-          !(ownerUuid && key.startsWith(`${ownerUuid}/temp/`));
+          !isCanonicalTempKey(key, ownerUuid);
 
         const customMetadata: Record<string, string> = {
           storage_owner_uuid: authCheck.claims.storage_owner_uuid,
@@ -1082,11 +1109,18 @@ const worker = {
         obj.writeHttpMetadata(headers);
         headers.set("ETag", obj.httpEtag);
         headers.set("Cache-Control", "private, no-store");
+        if (obj.customMetadata?.sha256) {
+          headers.set("X-Payload-SHA256", obj.customMetadata.sha256);
+        }
         if (!headers.has("Content-Type")) {
           headers.set("Content-Type", "application/octet-stream");
         }
         if (obj.size !== undefined) {
           headers.set("Content-Length", String(obj.size));
+        }
+
+        if (!("body" in obj) || !obj.body) {
+          return new Response(null, { headers, status: 304 });
         }
 
         return new Response(obj.body, { headers, status: 200 });
@@ -1115,6 +1149,9 @@ const worker = {
         headers.set("ETag", headObj.httpEtag);
         headers.set("Content-Length", String(headObj.size));
         headers.set("Cache-Control", "private, no-store");
+        if (headObj.customMetadata?.sha256) {
+          headers.set("X-Payload-SHA256", headObj.customMetadata.sha256);
+        }
         return new Response(null, { status: 200, headers });
       }
 
